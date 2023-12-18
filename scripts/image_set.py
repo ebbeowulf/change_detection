@@ -10,6 +10,8 @@ def read_image_csv(images_txt):
 
     all_images=[]
     for ln_ in A:
+        if len(ln_)<2:
+            continue
         if ln_[-1]=='\n':
             ln_=ln_[:-1]
         if ln_[0]=='#':
@@ -25,6 +27,7 @@ def read_image_csv(images_txt):
             image={'rot': quat, 'trans': trans, 'name': ln_s[-1], 'id': int(ln_s[0])}
             all_images.append(image)
     return all_images
+
 
 class create_image_vector():
     def __init__(self, clip_csv:str):

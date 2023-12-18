@@ -78,7 +78,7 @@ class average_grid(grid2D):
             self.grid.append([])
 
     def add_value(self, X, Y, value, cell_radius=None):
-        if type(value)==np.array:
+        if type(value)==np.ndarray:
             if self.num_dim==0:
                 self.num_dim=len(value)
             elif self.num_dim!=len(value):
