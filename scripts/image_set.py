@@ -4,6 +4,13 @@ import pdb
 import tf
 import copy
 
+def get_world_pose(trans, quat):
+    mm=tf.transformations.quaternion_matrix(quat)
+    R=np.transpose(mm)
+    pose=np.matmul(-R[:3,:3],trans)
+    R[:3,3]=pose
+    return pose, R
+
 def read_image_csv(images_txt):
     with open(images_txt,"r") as fin:
         A=fin.readlines()
@@ -24,10 +31,17 @@ def read_image_csv(images_txt):
         if len(ln_s)==10:
             quat=[float(ln_s[2]),float(ln_s[3]), float(ln_s[4]), float(ln_s[1])]
             trans=[float(ln_s[5]),float(ln_s[6]),float(ln_s[7])]
-            image={'rot': quat, 'trans': trans, 'name': ln_s[-1], 'id': int(ln_s[0])}
+            world_pose, rotM = get_world_pose(trans, quat)
+            image={'rot': quat, 'trans': trans, 'name': ln_s[-1], 'id': int(ln_s[0]), 'global_pose': world_pose, 'global_poseM': rotM}
             all_images.append(image)
     return all_images
 
+def plot_path(P, M, color_path=[0,1,0], color_direction=[1,0,0]):
+
+    forward=np.matmul(M,[0,0,0.3,1])
+    for idx in range(len(P)):
+        plt.plot([P[idx,0],forward[idx,0]],[P[idx,1],forward[idx,1]],color=color_direction)
+    plt.plot(P1[:,0],P1[:,1],color=color_path)
 
 class create_image_vector():
     def __init__(self, clip_csv:str):
@@ -76,9 +90,7 @@ class get_neighboring_images():
                 trans=im['trans']
                 rot=im['rot']
                 break
-        base_relativeM=np.matmul(tf.transformations.translation_matrix(trans),tf.transformations.quaternion_matrix(rot))
-        linear=[dist,0,0,1.0]
-        tgt_pose=np.matmul(base_relativeM,linear)
+        tgt_pose=np.matmul(im['global_poseM'],[0,0,dist,1.0])
         return tgt_pose
 
     def get_related_poses(self, tgt_pose:np.array, max_dist:float=2, angle_dist:float=0.5):
@@ -90,6 +102,7 @@ class get_neighboring_images():
                 continue
 
             # Create a vector representing the direction of the camera
+
             M1=tf.transformations.quaternion_matrix(im['rot'])
             V1=np.matmul(M1,[1,0,0,1])[:3]
             V2=tgt_pose[:3]-np.array(im['trans'])
