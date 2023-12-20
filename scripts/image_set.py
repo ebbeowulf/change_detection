@@ -31,8 +31,8 @@ class create_image_vector():
             if A[i][-1]=='\n':
                 A[i]=A[i][:-1]
         
-        self.labels_=A[0].split(', ')[1:]
-        self.set_base_label_mask([])
+        self.labels_=np.array(A[0].split(', ')[1:])
+        self.set_label_mask([],True)
 
         self.results={}
         for ln in A[1:]:
@@ -42,14 +42,26 @@ class create_image_vector():
                 arr[idx]=float(val)
             self.results[lnS[0]]=arr
     
-    def set_base_label_mask(self, base_list:list):
+    def build_mean_vector(self):
+        arr=np.zeros((self.labels_.shape[0],len(self.results.keys())),dtype=float)
+        for idx, key in enumerate(self.results.keys()):
+            arr[:,idx]=self.results[key]
+        return arr.mean(1)
+        
+    def set_label_mask(self, object_list:list, set_base_mask=False):
         self.object_label_mask=[]
         self.base_label_mask=[]
         for idx, lbl in enumerate(self.labels_):
-            if lbl in base_list:
-                self.base_label_mask.append(idx)
+            if set_base_mask:
+                if lbl in object_list:
+                    self.base_label_mask.append(idx)
+                else:
+                    self.object_label_mask.append(idx)
             else:
-                self.object_label_mask.append(idx)
+                if lbl in object_list:
+                    self.object_label_mask.append(idx)
+                else:
+                    self.base_label_mask.append(idx)
 
     def get_vector(self, image_name:str, use_base_mask=False):
         if image_name in self.results:
@@ -73,15 +85,22 @@ class create_image_vector():
         return arr
 
     def create_gaussian_model(self, image_list, use_base_mask=False):
-        arr=self.get_array(image_list, use_base_mask)
-        cov=np.cov(arr)
-        return {'mean': arr.mean(1).reshape((arr.shape[0],1)),
-                'cov': cov, 
-                'stdev': arr.std(1),
-                'inv_cov': np.linalg.inv(cov) }
+        try:
+            arr=self.get_array(image_list, use_base_mask)
+            cov=np.cov(arr)
+            model={'mean': arr.mean(1).reshape((arr.shape[0],1)),
+                    'cov': cov, 
+                    'stdev': arr.std(1),
+                    'inv_cov': np.linalg.inv(cov) }
+            return model
+        except Exception as e:
+            return None
 
-    def get_labels(self):
-        return copy.copy(self.labels_)
+    def get_labels(self, use_base_mask=False):
+        if use_base_mask:
+            return self.labels_[self.base_label_mask]
+        else:
+            return self.labels_[self.object_label_mask]
 
 
 class image_set():
@@ -123,7 +142,7 @@ class image_set():
         for key in self.all_images.keys():
             self.all_images[key]['center_pose']=np.matmul(self.all_images[key]['global_poseM'],V)
 
-    def get_pose_by_name(self, im_name):
+    def get_pose_by_name(self, key):
         if key in self.all_images:
             return self.all_images[key]['center_pose']
         return None
