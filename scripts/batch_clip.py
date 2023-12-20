@@ -3,15 +3,41 @@ from PIL import Image
 import open_clip
 import argparse
 import pdb
-from image_set import read_image_csv
+#from image_set import read_image_csv
 
 labels=["desk chair", "computer printer", "plant", "tv", "computer monitor", "printer paper", "binder", "keys", "food", "painting", 
         "poster", "book", "keyboard", "laptop computer", "robot", 
         "cart", "flag", "camera", "fire extinguisher", "mess"]
 
+def read_image_csv(images_txt):
+    with open(images_txt,"r") as fin:
+        A=fin.readlines()
+
+    all_images=[]
+    for ln_ in A:
+        if len(ln_)<2:
+            continue
+        if ln_[-1]=='\n':
+            ln_=ln_[:-1]
+        if ln_[0]=='#':
+            continue
+        if ',' in ln_:
+            ln_s=ln_.split(', ')
+        else:
+            ln_s=ln_.split(' ')
+
+        if len(ln_s)==10:
+            quat=[float(ln_s[2]),float(ln_s[3]), float(ln_s[4]), float(ln_s[1])]
+            trans=[float(ln_s[5]),float(ln_s[6]),float(ln_s[7])]
+            image={'rot': quat, 'trans': trans, 'name': ln_s[-1], 'id': int(ln_s[0])}
+            all_images.append(image)
+    return all_images
+
 class process_images():
     def __init__(self, labels):
+        self.device=torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.model, _, self.preprocess = open_clip.create_model_and_transforms('ViT-B-32', pretrained='laion2b_s34b_b79k')
+        #self.model.to(self.device)
         self.tokenizer = open_clip.get_tokenizer('ViT-B-32')
         self.labels=labels
         self.text=self.tokenizer(self.labels)
@@ -22,6 +48,7 @@ class process_images():
         return (100.0 * image_features @ text_features.T)
 
     def process_image(self, image:Image):
+        #image.to(self.device)
         with torch.no_grad(), torch.cuda.amp.autocast():
             image_features = self.model.encode_image(image)
             text_features = self.model.encode_text(self.text)
