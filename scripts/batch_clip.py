@@ -5,9 +5,9 @@ import argparse
 import pdb
 from image_set import read_image_csv
 
-labels=["desk chair", "computer printer", "plant", "tv", "computer monitor", "printer paper", "binder", "keys", "food", "painting", 
-        "poster", "book", "keyboard", "laptop computer", "robot", 
-        "cart", "flag", "camera", "fire extinguisher", "mess"]
+labels=["chair", "printer", "plant", "tv", "monitor", "paper", "binder", "keys", "food", "painting", 
+        "poster", "book", "keyboard", "laptop", "robot", "cart", "flag", "fire extinguisher", 
+        "desk", "table", "phone", "clothing", "backpack", "cabinet"]
 
 class process_images():
     def __init__(self, labels):
