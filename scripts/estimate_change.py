@@ -6,6 +6,15 @@ import tf
 from image_set import image_set, create_image_vector
 
 FILTER_SIZE=5
+BASE_OBJECTS=['cabinet', 'carpet', 'wood', 'wall', 'tile', 'linoleum', 'floor', 'desk', 'table']
+
+def gaussian_pdf_std(mean, stdev, V):
+    return np.exp(-0.5*np.power((mean[:]-V)/stdev,2))
+
+def gaussian_pdf_multi(mean, inverse_cov, V):
+    deltaV=mean-V
+    A1=np.matmul(deltaV.transpose(),inverse_cov)
+    return np.exp(-0.5*np.matmul(A1,deltaV))
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -19,7 +28,10 @@ if __name__ == '__main__':
     P_change=image_set(args.images_change,1.5)
     clip_initial=create_image_vector(args.clip_initial)
     clip_change=create_image_vector(args.clip_change)
+    clip_initial.set_base_label_mask(BASE_OBJECTS)
+    clip_change.set_base_label_mask(BASE_OBJECTS)
 
+    all_scores=[]
     for idx in range(1,len(P_change.all_images),FILTER_SIZE):
         #Get the target pose
         tgt_pose=P_change.get_pose_by_id(idx)
@@ -31,12 +43,20 @@ if __name__ == '__main__':
         rel_initial=P_initial.get_related_poses(tgt_pose)
         rel_change=P_change.get_related_poses(tgt_pose)
 
-        #Build the associated vector
-        clipV_arr_initial=clip_initial.get_array(rel_initial)
-        clipV_arr_change=clip_change.get_array(rel_change)
+        object_model=clip_initial.create_gaussian_model(rel_initial,False)
+        base_model=clip_initial.create_gaussian_model(rel_initial,True)
 
-        # Simplify vectors
-        V_initial=clipV_arr_initial.sum(1)/len(rel_initial)
-        V_change=clipV_arr_change.sum(1)/len(rel_change)
-        
-        pdb.set_trace()
+        score=0
+        for im in rel_change:
+            try:
+                objectV=clip_change.get_vector(im,False)
+                baseV=clip_change.get_vector(im,True)
+                if objectV is None or baseV is None:
+                    continue
+                objectS=gaussian_pdf_multi(object_model['mean'], object_model['inv_cov'], objectV)
+                baseS=gaussian_pdf_multi(base_model['mean'], base_model['inv_cov'], baseV)
+                score+=np.log(objectS+1e-6)-np.log(baseS+1e-6)        
+            except Exception as e:
+                pdb.set_trace()
+        all_scores.append([idx,score])
+    pdb.set_trace()
