@@ -32,6 +32,7 @@ class create_image_vector():
                 A[i]=A[i][:-1]
         
         self.labels_=A[0].split(', ')[1:]
+        self.set_base_label_mask([])
 
         self.results={}
         for ln in A[1:]:
@@ -41,18 +42,47 @@ class create_image_vector():
                 arr[idx]=float(val)
             self.results[lnS[0]]=arr
     
-    def get_labels(self):
-        return copy.copy(self.labels_)
+    def set_base_label_mask(self, base_list:list):
+        self.object_label_mask=[]
+        self.base_label_mask=[]
+        for idx, lbl in enumerate(self.labels_):
+            if lbl in base_list:
+                self.base_label_mask.append(idx)
+            else:
+                self.object_label_mask.append(idx)
 
-    def get_array(self, image_list:list):
+    def get_vector(self, image_name:str, use_base_mask=False):
+        if image_name in self.results:
+            if use_base_mask:
+                return self.results[image_name][self.base_label_mask]
+            else:
+                return self.results[image_name][self.object_label_mask]
+        return None
+
+    def get_array(self, image_list:list, use_base_mask=False):
         arr=None
         for im in image_list:
             if im in self.results:
+                V=self.get_vector(im,use_base_mask)
+                if V is None:
+                    continue
                 if arr is None:
-                    arr = self.results[im]
+                    arr = V
                 else:
-                    arr = np.hstack((arr,self.results[im]))
+                    arr = np.hstack((arr,V))
         return arr
+
+    def create_gaussian_model(self, image_list, use_base_mask=False):
+        arr=self.get_array(image_list, use_base_mask)
+        cov=np.cov(arr)
+        return {'mean': arr.mean(1).reshape((arr.shape[0],1)),
+                'cov': cov, 
+                'stdev': arr.std(1),
+                'inv_cov': np.linalg.inv(cov) }
+
+    def get_labels(self):
+        return copy.copy(self.labels_)
+
 
 class image_set():
     def __init__(self, images_csv:str, fake_depth=None):
