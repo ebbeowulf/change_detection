@@ -48,21 +48,22 @@ def get_all_poses(all_images):
                 R=np.transpose(mm)
                 pose=np.matmul(-R[:3,:3],dct[id]['trans'])
                 P.append(pose)
-                mm[:3,3]=pose
-                M.append(mm)
+                # mm[:3,3]=pose
+                R[:3,3]=pose
+                M.append(R)
                 nm.append(dct[id]['name'])
         except Exception as e:
             pdb.set_trace()
 
-    return np.array(P),np.array(Q),nm
+    return np.array(P),np.array(M),nm
 
-def calculate_transform(colmap_matrix, pose_quat, pose_trans):
-    pdb.set_trace()
-    mm=tf.transformations.quaternion_matrix(pose_quat)
-    mm[:3,3]=pose_trans
-    T=np.matmul(mm,np.linalg.inv(colmap_matrix))
-    return T
-
+# def calculate_transform(colmap_matrix, pose_quat, pose_trans):
+#     pdb.set_trace()
+#     mm=tf.transformations.quaternion_matrix(pose_quat)
+#     mm[:3,3]=pose_trans
+#     T=np.matmul(mm,np.linalg.inv(colmap_matrix))
+#     return T
+    
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     #parser.add_argument('transforms1',type=str,help='location of transforms csv file to process')
@@ -84,13 +85,12 @@ if __name__ == '__main__':
     #P1=np.array([ mm[:3,3] for mm in M1 ])
     
 
-    forward=np.matmul(M1,[0.3,0,0,1])
-    pdb.set_trace()
+    forward=np.matmul(M1,[0,0,0.3,1])
     for idx in range(len(P1)):
         plt.plot([P1[idx,0],forward[idx,0]],[P1[idx,1],forward[idx,1]],color=[1,0,0])
-    new_mask=[ 'change' in x for x in N_colmap ]
+    new_mask=[ 'change' in x for x in N1 ]
 
-    plt.plot(P1[:,0],P1[:,1],color=[1,0,0])
+    plt.plot(P1[:,0],P1[:,1],color=[0,1,0])
     plt.plot(P1[new_mask,0],P1[new_mask,1])
     plt.show()
 
