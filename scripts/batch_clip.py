@@ -7,7 +7,7 @@ import pdb
 
 labels=["chair", "printer", "plant", "tv", "monitor", "paper", "binder", "keys", "food", "painting", 
         "poster", "book", "keyboard", "laptop", "robot", "cart", "flag", "fire extinguisher", 
-        "desk", "table", "phone", "clothing", "backpack", "cabinet"]
+        "desk", "table", "phone", "clothing", "backpack", "cabinet", "carpet", "wood", "wall", "tile", "linoleum", "floor"]
 
 def read_image_csv(images_txt):
     with open(images_txt,"r") as fin:

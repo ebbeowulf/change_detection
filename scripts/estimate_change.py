@@ -14,7 +14,7 @@ def gaussian_pdf_std(mean, stdev, V):
 def gaussian_pdf_multi(mean, inverse_cov, V):
     deltaV=mean-V
     A1=np.matmul(deltaV.transpose(),inverse_cov)
-    return np.exp(-0.5*np.matmul(A1,deltaV))
+    return float(np.exp(-0.5*np.matmul(A1,deltaV)))
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -46,17 +46,24 @@ if __name__ == '__main__':
         object_model=clip_initial.create_gaussian_model(rel_initial,False)
         base_model=clip_initial.create_gaussian_model(rel_initial,True)
 
-        score=0
+        score=[0,0,0]
         for im in rel_change:
             try:
                 objectV=clip_change.get_vector(im,False)
                 baseV=clip_change.get_vector(im,True)
                 if objectV is None or baseV is None:
                     continue
-                objectS=gaussian_pdf_multi(object_model['mean'], object_model['inv_cov'], objectV)
-                baseS=gaussian_pdf_multi(base_model['mean'], base_model['inv_cov'], baseV)
-                score+=np.log(objectS+1e-6)-np.log(baseS+1e-6)        
+                objectS=np.log(gaussian_pdf_multi(object_model['mean'], object_model['inv_cov'], objectV)+1e-6)
+                baseS=np.log(gaussian_pdf_multi(base_model['mean'], base_model['inv_cov'], baseV)+1e-6)
+                score[0]+=objectS
+                score[1]+=baseS
+                score[2]+=objectS-baseS
             except Exception as e:
                 pdb.set_trace()
-        all_scores.append([idx,score])
+        all_scores.append([idx,score[0],score[1],score[2]])
+    AS=np.array(all_scores)
+    plt.plot(AS[:,0],AS[:,1])
+    plt.plot(AS[:,0],AS[:,2])
+    plt.plot(AS[:,0],AS[:,3])
+    plt.savefig("mygraph.png")
     pdb.set_trace()
