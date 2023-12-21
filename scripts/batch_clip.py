@@ -3,6 +3,7 @@ from PIL import Image
 import open_clip
 import argparse
 import pdb
+import os
 #from image_set import read_image_csv
 
 labels=["chair", "printer", "plant", "tv", "monitor", "paper", "binder", "keys", "food", "painting", 
@@ -65,7 +66,6 @@ class process_images():
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('images_csv',type=str,help='location of image csv file to process')
     parser.add_argument('image_dir',type=str,help='location of images in file system')
     parser.add_argument('output_file',type=str,help='location of output file to save')
     parser.add_argument('--softmax', action='store_true')
@@ -74,7 +74,8 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     PI=process_images(labels)
-    all_images=read_image_csv(args.images_csv)
+    all_images=os.listdir()
+    # all_images=read_image_csv(args.images_csv)
 
     with open(args.output_file,'w') as fout:
         print("image_name ", file=fout, end='')
@@ -84,13 +85,13 @@ if __name__ == '__main__':
 
         # Now - for each image get the probability and 
         for im in all_images:
-            res=PI.read_and_process_image(args.image_dir+'/'+im['name'],args.softmax)
-            print(res)
+            try:
+                res=PI.read_and_process_image(args.image_dir+'/'+im['name'],args.softmax)
+                print(res)
 
-            print(im['name'], file=fout, end='')
-            for val in res:
-                print(', %f'%(val),file=fout, end='')
-            print("",file=fout)
-
-
-
+                print(im['name'], file=fout, end='')
+                for val in res:
+                    print(', %f'%(val),file=fout, end='')
+                print("",file=fout)
+            except Exception as e:
+                print("Error reading %s - skipping"%(im))

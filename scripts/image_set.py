@@ -1,22 +1,45 @@
 #!/usr/bin/env python3
 import numpy as np
 import pdb
-import tf
 import copy
+from scipy.spatial.transform import Rotation as R
 
 def get_world_pose(trans, quat):
-    mm=tf.transformations.quaternion_matrix(quat)
-    R=np.transpose(mm)
-    pose=np.matmul(-R[:3,:3],trans)
-    R[:3,3]=pose
-    return pose, R
+    mm=np.identity(4)
+    mm[:3,:3]=R.from_quat(quat).as_matrix()
+    # mm=tf.transformations.quaternion_matrix(quat)
+    mmT=np.transpose(mm)
+    pose=np.matmul(-mmT[:3,:3],trans)
+    mmT[:3,3]=pose
+    return pose, mmT
+    
+def read_image_csv(images_txt):
+    with open(images_txt,"r") as fin:
+        A=fin.readlines()
 
-def plot_path(P, M, color_path=[0,1,0], color_direction=[1,0,0]):
+    all_images={}
+    for ln_ in A:
+        if len(ln_)<2:
+            continue
+        if ln_[-1]=='\n':
+            ln_=ln_[:-1]
+        if ln_[0]=='#':
+            continue
+        if ',' in ln_:
+            ln_s=ln_.split(', ')
+        else:
+            ln_s=ln_.split(' ')
 
-    forward=np.matmul(M,[0,0,0.3,1])
-    for idx in range(len(P)):
-        plt.plot([P[idx,0],forward[idx,0]],[P[idx,1],forward[idx,1]],color=color_direction)
-    plt.plot(P1[:,0],P1[:,1],color=color_path)
+        if len(ln_s)==10:
+            # We will assume a format of {rootname}_{image_id}.png in the image name
+            id_str=ln_s[-1].split('_')[1].split('.')[0]
+            id=int(id_str)
+            quat=[float(ln_s[2]),float(ln_s[3]), float(ln_s[4]), float(ln_s[1])]
+            trans=[float(ln_s[5]),float(ln_s[6]),float(ln_s[7])]
+            world_pose, rotM = get_world_pose(trans, quat)
+            image={'rot': quat, 'trans': trans, 'id': id, 'global_pose': world_pose, 'global_poseM': rotM, 'name': ln_s[-1]}
+            all_images[ln_s[-1]]=image
+    return all_images
 
 def dist(A:np.array):
     return np.sqrt(np.power(A,2).sum())
@@ -105,36 +128,9 @@ class create_image_vector():
 
 class image_set():
     def __init__(self, images_csv:str, fake_depth=None):
-        self.read_image_csv(images_csv)
+        self.all_images = read_image_csv(images_csv)
         self.set_fake_depth(fake_depth)
         # if set_fake_depth:
-    
-    def read_image_csv(self, images_txt):
-        with open(images_txt,"r") as fin:
-            A=fin.readlines()
-
-        self.all_images={}
-        for ln_ in A:
-            if len(ln_)<2:
-                continue
-            if ln_[-1]=='\n':
-                ln_=ln_[:-1]
-            if ln_[0]=='#':
-                continue
-            if ',' in ln_:
-                ln_s=ln_.split(', ')
-            else:
-                ln_s=ln_.split(' ')
-
-            if len(ln_s)==10:
-                # We will assume a format of {rootname}_{image_id}.png in the image name
-                id_str=ln_s[-1].split('_')[1].split('.')[0]
-                id=int(id_str)
-                quat=[float(ln_s[2]),float(ln_s[3]), float(ln_s[4]), float(ln_s[1])]
-                trans=[float(ln_s[5]),float(ln_s[6]),float(ln_s[7])]
-                world_pose, rotM = get_world_pose(trans, quat)
-                image={'rot': quat, 'trans': trans, 'id': id, 'global_pose': world_pose, 'global_poseM': rotM, 'name': ln_s[-1]}
-                self.all_images[ln_s[-1]]=image
 
     def set_fake_depth(self, fixed_depth:float):
         # Z is forward in the camera frame
