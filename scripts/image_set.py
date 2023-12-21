@@ -4,43 +4,31 @@ import pdb
 import copy
 from scipy.spatial.transform import Rotation as R
 
-def get_world_pose(trans, quat):
-    mm=np.identity(4)
-    mm[:3,:3]=R.from_quat(quat).as_matrix()
-    # mm=tf.transformations.quaternion_matrix(quat)
-    mmT=np.transpose(mm)
-    pose=np.matmul(-mmT[:3,:3],trans)
-    mmT[:3,3]=pose
-    return pose, mmT
-    
-def read_image_csv(images_txt):
-    with open(images_txt,"r") as fin:
+def read_depthP_csv(fName):
+    with open(fName,"r") as fin:
         A=fin.readlines()
 
     all_images={}
-    for ln_ in A:
-        if len(ln_)<2:
+    for ln_ in A:        
+        if len(ln_)<2 or 'PX' in ln_:
             continue
         if ln_[-1]=='\n':
             ln_=ln_[:-1]
-        if ln_[0]=='#':
-            continue
-        if ',' in ln_:
-            ln_s=ln_.split(', ')
-        else:
-            ln_s=ln_.split(' ')
-
-        if len(ln_s)==10:
-            # We will assume a format of {rootname}_{image_id}.png in the image name
-            id_str=ln_s[-1].split('_')[1].split('.')[0]
-            id=int(id_str)
-            quat=[float(ln_s[2]),float(ln_s[3]), float(ln_s[4]), float(ln_s[1])]
-            trans=[float(ln_s[5]),float(ln_s[6]),float(ln_s[7])]
-            world_pose, rotM = get_world_pose(trans, quat)
-            image={'rot': quat, 'trans': trans, 'id': id, 'global_pose': world_pose, 'global_poseM': rotM, 'name': ln_s[-1]}
-            all_images[ln_s[-1]]=image
+        ln_s=ln_.split(', ')
+        # Should be of format:
+        #   image, PX, PY, PZ, QX, QY, QZ, QW, CenterPX, CenterPY, CenterPZ
+        name=ln_s[0]
+        id_str=name.split('_')[1].split('.')[0]
+        id=int(id_str)
+        world_pose=np.array([float(ln_s[1]),float(ln_s[2]),float(ln_s[3])])
+        quat=[float(ln_s[4]),float(ln_s[5]),float(ln_s[6]),float(ln_s[7])]
+        rotM=np.identity(4)
+        rotM[:3,:3]=R.from_quat(quat).as_matrix()
+        rotM[:3,3]=world_pose
+        center_pose=np.array([float(ln_s[8]),float(ln_s[9]),float(ln_s[10])])
+        all_images[name]={'id': id, 'global_pose': world_pose, 'global_poseM': rotM, 'name': name, 'center_pose': center_pose}
     return all_images
-
+    
 def dist(A:np.array):
     return np.sqrt(np.power(A,2).sum())
 
@@ -127,16 +115,16 @@ class create_image_vector():
 
 
 class image_set():
-    def __init__(self, images_csv:str, fake_depth=None):
-        self.all_images = read_image_csv(images_csv)
-        self.set_fake_depth(fake_depth)
+    def __init__(self, images_csv:str):
+        self.all_images = read_depthP_csv(images_csv)
+        # self.set_fake_depth(fake_depth)
         # if set_fake_depth:
 
-    def set_fake_depth(self, fixed_depth:float):
-        # Z is forward in the camera frame
-        V=np.array([0,0,fixed_depth,1.0])        
-        for key in self.all_images.keys():
-            self.all_images[key]['center_pose']=np.matmul(self.all_images[key]['global_poseM'],V)
+    # def set_fake_depth(self, fixed_depth:float):
+    #     # Z is forward in the camera frame
+    #     V=np.array([0,0,fixed_depth,1.0])        
+    #     for key in self.all_images.keys():
+    #         self.all_images[key]['center_pose']=np.matmul(self.all_images[key]['global_poseM'],V)
 
     def get_pose_by_name(self, key):
         if key in self.all_images:
@@ -149,7 +137,7 @@ class image_set():
                 return self.all_images[key]['center_pose']
         return None
 
-    def get_related_poses(self, tgt_pose:np.array, max_dist:float=2):
+    def get_related_poses(self, tgt_pose:np.array, max_dist:float=1, max_angle:float=0.5):
         im_list=[]
         for key in self.all_images.keys():
             im = self.all_images[key]
@@ -158,8 +146,12 @@ class image_set():
             if deltaD>max_dist:
                 continue
 
-            im_list.append(key)
-        
+            forward=im['center_pose']-im['global_pose']
+            actual=tgt_pose-im['global_pose']
+            angle=np.arccos(np.dot(forward,actual)/(dist(forward)*dist(actual)))
+            if np.fabs(angle)<max_angle:
+                im_list.append(key)
+                        
         return im_list
     
     def get_all_poses(self):

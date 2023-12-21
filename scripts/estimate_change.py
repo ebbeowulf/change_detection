@@ -19,8 +19,8 @@ def gaussian_pdf_multi(mean, inverse_cov, V):
 
 class estimate_change():
     def __init__(self, images_initial, clip_initial, images_change, clip_change):
-        self.P_initial=image_set(images_initial,1.5)
-        self.P_change=image_set(images_change,1.5)
+        self.P_initial=image_set(images_initial)
+        self.P_change=image_set(images_change)
         self.clip_initial=create_image_vector(clip_initial)
         self.clip_change=create_image_vector(clip_change)
         # self.clip_initial.set_base_label_mask(BASE_OBJECTS)
@@ -29,8 +29,8 @@ class estimate_change():
         self.clip_change.set_label_mask(TGT_OBJECTS)
 
     def prep_change_detect(self,tgt_pose):
-        rel_initial=self.P_initial.get_related_poses(tgt_pose, 0.5)
-        rel_change=self.P_change.get_related_poses(tgt_pose, 0.5)
+        rel_initial=self.P_initial.get_related_poses(tgt_pose, 1.0, 0.5)
+        rel_change=self.P_change.get_related_poses(tgt_pose, 1.0, 0.5)
 
         object_model=self.clip_initial.create_gaussian_model(rel_initial,False)
         # base_model=self.clip_initial.create_gaussian_model(rel_initial,True)
