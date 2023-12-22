@@ -151,7 +151,7 @@ class image_set():
             angle=np.arccos(np.dot(forward,actual)/(dist(forward)*dist(actual)))
             if np.fabs(angle)<max_angle:
                 im_list.append(key)
-                        
+
         return im_list
     
     def get_all_poses(self):

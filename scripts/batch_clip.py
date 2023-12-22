@@ -74,7 +74,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     PI=process_images(labels)
-    all_images=os.listdir()
+    all_images=os.listdir(args.image_dir)
     # all_images=read_image_csv(args.images_csv)
 
     with open(args.output_file,'w') as fout:
@@ -86,10 +86,10 @@ if __name__ == '__main__':
         # Now - for each image get the probability and 
         for im in all_images:
             try:
-                res=PI.read_and_process_image(args.image_dir+'/'+im['name'],args.softmax)
+                res=PI.read_and_process_image(args.image_dir+'/'+im,args.softmax)
                 print(res)
 
-                print(im['name'], file=fout, end='')
+                print(im, file=fout, end='')
                 for val in res:
                     print(', %f'%(val),file=fout, end='')
                 print("",file=fout)

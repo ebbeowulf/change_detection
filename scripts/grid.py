@@ -106,3 +106,59 @@ class average_grid(grid2D):
                 if len(self.grid[key])>0:
                     arr[row,col]=np.mean(self.grid[key],0)
         return arr
+
+class grid3D():
+    def __init__(self, minXYZ, maxXYZ, shapeXYZ):
+        self.minXYZ=np.array(minXYZ)
+        self.maxXYZ=np.array(maxXYZ)
+        self.shape=np.array(shapeXYZ)
+        
+        self.cell_delta=(self.maxXYZ-self.minXYZ)/self.shape
+
+    def is_xyz_in_bounds(self, X, Y, Z):
+        if X<self.minXYZ[0] or X>=self.maxXYZ[0]:
+            return False
+        if Y<self.minXYZ[1] or Y>=self.maxXYZ[1]:
+            return False
+        if Z<self.minXYZ[2] or Z>=self.maxXYZ[2]:
+            return False
+        return True
+
+    def get_cell(self, X, Y, Z):
+        cX=np.floor((X-self.minXYZ[0])/self.cell_delta[0]).astype(int)
+        cY=np.floor((Y-self.minXYZ[1])/self.cell_delta[1]).astype(int)
+        cZ=np.floor((Z-self.minXYZ[2])/self.cell_delta[2]).astype(int)
+        return cX,cY,cZ
+    
+class evidence_grid3D(grid3D):
+    def __init__(self, minXYZ, maxXYZ, gridDimensions, num_inference_dim):
+        super().__init__(minXYZ, maxXYZ, gridDimensions)
+        self.num_inference_dim=num_inference_dim
+        self.grid=self.create_empty_grid()
+    
+    def create_empty_grid(self,type_=float):
+        return np.zeros((self.num_inference_dim, self.shape[0], self.shape[1], self.shape[2]),dtype=type_)
+    
+    def add_evidence_logodds(self, xyz, vector):
+        if self.is_xyz_in_bounds(xyz[0],xyz[1],xyz[2]):
+            cX,cY,cZ=self.get_cell(xyz[0],xyz[1],xyz[2])
+            vL = np.log(vector+1e-6)-np.log(1-vector+1e-6)
+            self.grid[:,cX,cY,cZ]+=vL
+            
+    # def add_probability_grid(self, xyz_matrix, p_grid):
+    #     if xyz_matrix.shape[1]!=p_grid.shape[1] or xyz_matrix[2]!=p_grid.shape[2]:
+    #         print("XYZ Matrix and P-grid should have same 1+2 dimensions")
+    #         return False
+    #     if xyz_matrix.shape[0]!=3:
+    #         print("XYZ matrix should have size 3 in first dimension")
+    #     if p_grid.shape[0]!=self.num_inference_dim:
+    #         print("P_grid inference dimensions do not match this evidence grid")
+        
+    #     #Strategy - we are only want to update each cell only once with the maximum value
+    #     #   from this image. So create a fresh evidence grid of the same size and add
+    #     #   data using the max option
+    #     p_comp=self.create_empty_grid(self.num_inference_dim)
+    #     is_updated=self.create_empty_grid(1,np.uint8)
+
+
+
