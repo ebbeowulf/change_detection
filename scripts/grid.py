@@ -124,6 +124,21 @@ class grid3D():
             return False
         return True
 
+    def is_cell_in_bounds(self, cX, cY, cZ):
+        if cX<0 or cX>=self.shape[0]:
+            return False
+        if cY<0 or cY>=self.shape[1]:
+            return False
+        if cZ<0 or cZ>=self.shape[2]:
+            return False
+        return True
+    
+    def get_ranges(self):
+        xx=np.arange(self.minXYZ[0]+self.cell_delta[0]/2.0,self.maxXYZ[0],self.cell_delta[0])
+        yy=np.arange(self.minXYZ[1]+self.cell_delta[1]/2.0,self.maxXYZ[1],self.cell_delta[1])
+        zz=np.arange(self.minXYZ[2]+self.cell_delta[2]/2.0,self.maxXYZ[2],self.cell_delta[2])
+        return xx,yy,zz
+    
     def get_cell(self, X, Y, Z):
         cX=np.floor((X-self.minXYZ[0])/self.cell_delta[0]).astype(int)
         cY=np.floor((Y-self.minXYZ[1])/self.cell_delta[1]).astype(int)
@@ -136,15 +151,50 @@ class evidence_grid3D(grid3D):
         self.num_inference_dim=num_inference_dim
         self.grid=self.create_empty_grid()
     
+    def load_raw_grid(self, raw_grid):
+        if raw_grid.shape==self.grid.shape:
+            self.grid=raw_grid
+        else:
+            print("Raw grid is the wrong shape")
+
     def create_empty_grid(self,type_=float):
         return np.zeros((self.num_inference_dim, self.shape[0], self.shape[1], self.shape[2]),dtype=type_)
-    
+
+    def add_evidence_cell(self, cell, vector):
+        if self.is_cell_in_bounds(cell[0],cell[1],cell[2]) and vector.shape[0]==self.num_inference_dim:
+            self.grid[:,cell[0],cell[1],cell[2]]+=vector
+
     def add_evidence_logodds(self, xyz, vector):
-        if self.is_xyz_in_bounds(xyz[0],xyz[1],xyz[2]):
-            cX,cY,cZ=self.get_cell(xyz[0],xyz[1],xyz[2])
-            vL = np.log(vector+1e-6)-np.log(1-vector+1e-6)
-            self.grid[:,cX,cY,cZ]+=vL
-            
+        cell=self.get_cell(xyz[0],xyz[1],xyz[2])
+        vL = np.log(vector+1e-6)-np.log(1-vector+1e-6)
+        self.add_evidence_cell(cell,vL)
+
+    def add_ray(self, xyz, camera_pose, vector):
+        cell_list=[]
+        # xyz=np.matmul(camera_poseM, [0,0,depth,1])
+        cell_xyz=self.get_cell(xyz[0],xyz[1],xyz[2])
+        unit_vector=xyz-camera_pose
+        depth=np.sqrt(np.power(xyz-camera_pose,2).sum())
+        unit_vector/=depth
+        
+        for dpt in np.arange(0, depth, 0.02):
+            P=camera_pose+unit_vector*dpt
+            C=self.get_cell(P[0],P[1],P[2])
+
+            if C not in cell_list and C!=cell_xyz:
+                cell_list.append(C)
+        
+        v_reduced=np.ones((self.num_inference_dim),dtype=float)*-0.5
+        for cell in cell_list:
+            self.add_evidence_cell(cell, v_reduced)
+        
+        self.add_evidence_logodds(xyz, vector)            
+
+    def get_thresholded_points(self, whichDim, threshold=0.0):
+        pos=np.where(self.grid[whichDim,:,:,:]>threshold)
+        xx,yy,zz=self.get_ranges()
+        return np.vstack((xx[pos[0]],yy[pos[1]],zz[pos[2]],self.grid[whichDim,pos[0],pos[1],pos[2]]))
+
     # def add_probability_grid(self, xyz_matrix, p_grid):
     #     if xyz_matrix.shape[1]!=p_grid.shape[1] or xyz_matrix[2]!=p_grid.shape[2]:
     #         print("XYZ Matrix and P-grid should have same 1+2 dimensions")

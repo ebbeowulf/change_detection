@@ -27,7 +27,7 @@ class image_saver:
 
         # Initialize the CvBridge class
         self.bridge = CvBridge()
-        self.im_count=0
+        self.im_count=1
 
         self.pose_queue=[]
         self.pose_lock=Lock()
@@ -98,6 +98,8 @@ class image_saver:
         odom=self.get_pose(rgb_img.header.stamp)
         if odom is None:
             print("Missing odometry information - skipping")
+            return
+        
         # Convert the ROS Image message to a CV2 Image
         poseM=np.matmul(odom,base_relativeM)
         poseQ=tf.transformations.quaternion_from_matrix(poseM)

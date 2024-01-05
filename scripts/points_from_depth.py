@@ -32,7 +32,7 @@ def read_image_csv(images_txt):
 
         if len(ln_s)==10:
             # We will assume a format of {rootname}_{image_id}.png in the image name
-            id_str=ln_s[-1].split('_')[1].split('.')[0]
+            id_str=ln_s[-1].split('_')[-1].split('.')[0]
             id=int(id_str)
             quat=[float(ln_s[2]),float(ln_s[3]), float(ln_s[4]), float(ln_s[1])]
             trans=[float(ln_s[5]),float(ln_s[6]),float(ln_s[7])]
