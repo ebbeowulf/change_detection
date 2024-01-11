@@ -174,7 +174,7 @@ def synthesize_images(config_path:str, output_path:str, cam_dataset:build_camera
             outFile=output_dir / fName
             output_image = (
                 colormaps.apply_colormap(
-                    image=outputs[image_type],
+                    image=outputs['rgb'],
                     colormap_options=colormaps.ColormapOptions(),
                 )
                 .cpu()
