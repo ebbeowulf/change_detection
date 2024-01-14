@@ -3,7 +3,7 @@ import numpy as np
 import cv2
 import pickle
 import pdb
-from grid import evidence_grid3D
+from change_detection.scripts.grid import evidence_grid3D
 
 def check_single_dim_overlap(a_min, a_max, b_min, b_max):
     if a_min<b_min:
@@ -155,11 +155,9 @@ def get_dbscan_cluster_data(egrid, dimension):
         whichP=np.where(CL2.labels_== idx)
         if len(whichP[0])<1:
             break
-        # clusters.append(np.hstack((len(whichP[0]), pts0[whichP].mean(0),pts0[whichP].std(0))))
         clusters.append(np.hstack((len(whichP[0]), pts0[whichP][:,2:].mean(0),pts0[whichP].std(0))))
     # If only one cluster, add a zero cluster to the end
     while len(clusters)<2:
-        # clusters.append([0,0,0,0,0,0,0,0,0])
         clusters.append([0,0,0,0,0,0,0])
     cl_arr=np.array(clusters)
     whichCl=np.argsort(cl_arr[:,0])

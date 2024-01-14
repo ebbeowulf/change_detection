@@ -25,6 +25,8 @@ class image_segmentation():
         return self.label2id
 
     def get_id(self, id_or_lbl):
+        if self.label2id is None:
+            return None
         if type(id_or_lbl)==str:
             if id_or_lbl in self.label2id:
                 return self.label2id[id_or_lbl]
@@ -36,19 +38,19 @@ class image_segmentation():
 
     def get_mask(self, id_or_lbl):
         id = self.get_id(id_or_lbl)
-        if id is not None:
+        if id is not None and id in self.masks:
             return self.masks[id]
         return None
     
     def get_max_prob(self, id_or_lbl):
         id = self.get_id(id_or_lbl)
-        if id is not None:
+        if id is not None and id in self.max_probs:
             return self.max_probs[id]
         return None
 
     def get_prob_array(self, id_or_lbl):
         id = self.get_id(id_or_lbl)
-        if id is not None:
+        if id is not None and id in self.probs:
             return self.probs[id]
         return None
     

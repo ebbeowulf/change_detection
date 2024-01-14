@@ -2,32 +2,56 @@
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 import pdb
-from points_from_depth import read_image_csv
-# def read_depthP_csv(fName):
-#     with open(fName,"r") as fin:
-#         A=fin.readlines()
 
-#     all_images={}
-#     for ln_ in A:        
-#         if len(ln_)<2 or '#' in ln_:
-#             continue
-#         if ln_[-1]=='\n':
-#             ln_=ln_[:-1]
-#         pdb.set_trace()
-#         ln_s=ln_.split(', ')
-#         # Should be of format:
-#         #   image, PX, PY, PZ, QX, QY, QZ, QW, CenterPX, CenterPY, CenterPZ
-#         name=ln_s[0]
-#         id_str=name.split('_')[1].split('.')[0]
-#         id=int(id_str)
-#         world_pose=np.array([float(ln_s[1]),float(ln_s[2]),float(ln_s[3])])
-#         quat=[float(ln_s[4]),float(ln_s[5]),float(ln_s[6]),float(ln_s[7])]
-#         rotM=np.identity(4)
-#         rotM[:3,:3]=R.from_quat(quat).as_matrix()
-#         rotM[:3,3]=world_pose
-#         center_pose=np.array([float(ln_s[8]),float(ln_s[9]),float(ln_s[10])])
-#         all_images[name]={'id': id, 'global_pose': world_pose, 'global_poseM': rotM, 'name': name, 'center_pose': center_pose}
-#     return all_images
+def get_world_pose(trans, quat):
+    mm=np.identity(4)
+    mm[:3,:3]=R.from_quat(quat).as_matrix()
+    # mm=tf.transformations.quaternion_matrix(quat)
+    mmT=np.transpose(mm)
+    pose=np.matmul(-mmT[:3,:3],trans)
+    mmT[:3,3]=pose
+    return pose, mmT
+    
+def is_number(val:str):
+    try:
+        val_f=float(str)
+        return True
+    except Exception as e:
+        return False
+
+def read_image_csv(images_txt):
+    with open(images_txt,"r") as fin:
+        A=fin.readlines()
+
+    all_images={}
+    for ln_ in A:
+        try:
+            if len(ln_)<2:
+                continue
+            if ln_[-1]=='\n':
+                ln_=ln_[:-1]
+            if ln_[0]=='#':
+                continue
+            if ',' in ln_:
+                ln_s=ln_.split(', ')
+            else:
+                ln_s=ln_.split(' ')
+
+            # We will assume a format of {rootname}_{image_id}.png in the image name
+            id_str=ln_s[-1].split('_')[-1].split('.')[0]
+            id=int(id_str)
+            quat=[float(ln_s[2]),float(ln_s[3]), float(ln_s[4]), float(ln_s[1])]
+            trans=[float(ln_s[5]),float(ln_s[6]),float(ln_s[7])]
+            world_pose, rotM = get_world_pose(trans, quat)
+            directory=ln_s[-2]
+            if is_number(directory):
+                directory=''
+            
+            image={'rot': quat, 'trans': trans, 'id': id, 'global_pose': world_pose, 'global_poseM': rotM, 'name': ln_s[-1], 'directory': directory}
+            all_images[image['directory']+image['name']]=image
+        except Exception as e:
+            print("Error adding image: " + ln_)
+    return all_images
 
 def dist(A:np.array):
     return np.sqrt(np.power(A,2).sum())
@@ -36,15 +60,19 @@ class image_set():
     def __init__(self, images_csv:str):
         self.all_images = read_image_csv(images_csv)
 
-    def get_pose_by_name(self, key):
+    def get_pose_list(self):
+        return list(self.all_images.keys())
+    
+    def get_pose_by_name(self, directory, name):
+        key=directory+name
         if key in self.all_images:
-            return self.all_images[key]['center_pose']
+            return self.all_images[key]['global_poseM']
         return None
 
     def get_pose_by_id(self, id):
         for key in self.all_images.keys():
             if self.all_images[key]['id']==id:
-                return self.all_images[key]['center_pose']
+                return self.all_images[key]['global_poseM']
         return None
 
     def get_related_poses(self, tgt_obj_pose:np.array, max_dist:float=1, max_angle:float=0.5):

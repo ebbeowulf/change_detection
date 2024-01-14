@@ -7,19 +7,28 @@ import cv2
 import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.cluster import DBSCAN
+from clustering import cluster, cluster_history
 
 ROOT_RAW_DIR="/data2/datasets/office/no_person/"
 ROOT_NERF_DIR="/home/emartinso/projects/nerfstudio/renders/no_person_"
 
-NERF_CLUSTER_EPS=5
+# DBSCAN Parameters
+DEPTH_CLUSTER_EPS=0.1          
+DEPTH_CLUSTER_MINC=1000
+MAX_CLUSTERING_SAMPLES=50000 #DBSCAN struggles to handle more points than this, so randomly sample after this threshold
 
-def check_single_dim_overlap(a_min, a_max, b_min, b_max):
-    if a_min<b_min:
-        if a_max>b_min:
-            return True
-    elif a_max>b_min and a_min<b_max:
-        return True
-    return False
+K_ROTATED=[906.7647705078125, 0.0, 368.2167053222656, 
+                0.0, 906.78173828125, 650.24609375,                 
+                0.0, 0.0, 1.0]
+F_X=K_ROTATED[0]
+C_X=K_ROTATED[2]
+F_Y=K_ROTATED[4]
+C_Y=K_ROTATED[5]
+
+def get_3D_point(x_pixel, y_pixel, depth):
+    x = (x_pixel - C_X) * depth / F_X
+    y = (y_pixel - C_Y) * depth / F_Y
+    return np.vstack((x,y,depth))
 
 class image_comparator():
     def __init__(self, 
@@ -51,53 +60,94 @@ class image_comparator():
             clipV=np.zeros(cv_image.shape[0:2],dtype=float)
         return cv_image, clipV
 
+    def create_pcloud(self, image_dir_and_name:list, pts_xy):
+        number=image_dir_and_name[1].split('_')[1]
+        # Load the depth image
+        depth_image_name=ROOT_RAW_DIR+image_dir_and_name[0]+"/depth/depth_" + number
+        depth_image = cv2.imread(depth_image_name, -1)
+        depth_image=cv2.rotate(depth_image, cv2.ROTATE_90_CLOCKWISE)
+        # Get the untransformed points
+        D=depth_image[pts_xy]
+        d_mask=np.where(D>100) # filter out the zero depth points
+        pts=get_3D_point(pts_xy[0][d_mask],pts_xy[1][d_mask],D[d_mask]/1000.0)                
+        # Transform to map space using the image calibration info
+        pts=np.vstack((pts,np.ones((1,pts.shape[1]),dtype=float)))
+        cam_poseM=self.images2.get_pose_by_name(image_dir_and_name[0],image_dir_and_name[1])
+        pts=np.matmul(cam_poseM,pts)[:3,:].transpose()
+        return pts, d_mask, depth_image
+
     def get_nerf_based_change(self, image_dir_and_name:list, threshold:float):
         raw_image=ROOT_RAW_DIR+image_dir_and_name[0]+"/rotated/" + image_dir_and_name[1]
         nerf_image=ROOT_NERF_DIR+image_dir_and_name[0] + "/" + image_dir_and_name[1]
         try:
             # print("1. Read images")
-            cv_image1, clipV1=self.get_object_detection_data(nerf_image)
-            cv_image2, clipV2=self.get_object_detection_data(raw_image)
+            self.cv_image1, clipV1=self.get_object_detection_data(nerf_image)
+            self.cv_image2, clipV2=self.get_object_detection_data(raw_image)
+
             # print("2. Delta change")
             if self.is_positive_change:
-                delta=clipV2-clipV1
-                change_image=cv_image2
+                self.delta=clipV2-clipV1
             else:
-                delta=clipV1-clipV2
-                change_image=cv_image1
-            # print("3. Pt creation")
-            d_mask=(delta>threshold).astype(np.uint8)                
+                self.delta=clipV1-clipV2
+            print("3. Pt creation")
+            d_mask=(self.delta>threshold).astype(np.uint8)                
             xy=np.where(d_mask>0)
-            pts=np.vstack((xy[0],xy[1])).transpose()
-            # print("4. Clustering")
-            clusters=self.apply_dbscan_clustering(pts,delta[xy],NERF_CLUSTER_EPS)
-            # print("5. Bitwise and")
-            rgb_change=cv2.bitwise_and(change_image,change_image,mask=d_mask)
-            return clusters, rgb_change
+            pts, d_mask2, self.depth_image=self.create_pcloud(image_dir_and_name, xy)
+
+            print("4. Clustering")
+            self.clusters=self.apply_dbscan_clustering(pts,self.delta[xy][d_mask2],DEPTH_CLUSTER_EPS,DEPTH_CLUSTER_MINC)
+
+            return True
         except Exception as e:
             print("File load error: "+image_dir_and_name[0] + "/" + image_dir_and_name[1])
-        return None, None
+        return False
 
-    def apply_dbscan_clustering(self, grid_pts, scores, eps):
+    def view_change_image(self, threshold):
+        if self.is_positive_change:
+            change_image=self.cv_image2
+        else:
+            change_image=self.cv_image1
+        d_mask = (self.delta>threshold).astype(np.uint8)
+        return cv2.bitwise_and(change_image,change_image,mask=d_mask)
+
+    def sample_pts(self, grid_pts, scores):
+        if grid_pts.shape[0]<MAX_CLUSTERING_SAMPLES:
+            return grid_pts, scores
+        
+        rr=np.random.choice(np.arange(grid_pts.shape[0]),size=MAX_CLUSTERING_SAMPLES)
+        return grid_pts[rr], scores[rr]
+    
+    def apply_dbscan_clustering(self, grid_pts, scores, eps, min_count):
         if grid_pts is None or grid_pts.shape[0]<5:
             return []
-        CL2=DBSCAN(eps=eps, min_samples=5).fit(grid_pts,sample_weight=scores)
+        gp_sampled, sc_sampled=self.sample_pts(grid_pts, scores)
+        CL2=DBSCAN(eps=eps, min_samples=min_count).fit(gp_sampled,sample_weight=sc_sampled)
         clusters=[]
         for idx in range(10):
-            whichP=np.where(CL2.labels_== idx)
+            whichP=np.where(CL2.labels_== idx)            
             if len(whichP[0])<1:
                 break
-            clusters.append({'mean': grid_pts[whichP].mean(0),
-                             'min': grid_pts[whichP].min(0),
-                             'max': grid_pts[whichP].max(0),
-                             'p_mean': scores[whichP].mean(),
-                             'p_max': scores[whichP].max(),
-                             'count': len(whichP[0])})
+            clusters.append(cluster(gp_sampled[whichP],sc_sampled[whichP]))
         return clusters
 
-    def detect_change(self, image_dir_and_name:list, threshold:float):
-        clusters, change_image=self.get_nerf_based_change(image_dir_and_name, threshold)
-        return clusters, change_image
+    def detect_change(self, image_dir_and_name:list, threshold:float=0.2):
+        return self.get_nerf_based_change(image_dir_and_name, threshold)
+    
+    def build_cluster_history(self, threshold, skip=4, existing_cl_hist:cluster_history=None):
+        plist=self.images2.get_pose_list()
+        if existing_cl_hist is not None:
+            cl_hist=existing_cl_hist
+            cl_hist.setup_category(self.detection_target)
+        else:
+            cl_hist=cluster_history()
+        for idx, key in enumerate(plist):
+            if idx % (skip+1)==0:
+                print("Processing: " + key)
+                image_dir_and_name=[self.images2.all_images[key]['directory'],self.images2.all_images[key]['name']]
+                if self.detect_change(image_dir_and_name, threshold):
+                    print("%s/%s: %d clusters"%(image_dir_and_name[0],image_dir_and_name[1],len(self.clusters)))
+                    cl_hist.add_clusters(self.detection_target, self.clusters, key)
+        return cl_hist
     
     def evaluate_vs_gt(self, gt_file):
         with open(gt_file,'r') as fin:
@@ -112,24 +162,17 @@ class image_comparator():
         changed={}
         for id in all_annotations:
             image_dir_and_name=[all_annotations[id]['scenario'],all_annotations[id]['name']]
-            clusters, change_image=self.detect_change(image_dir_and_name, 0.5)
-            if clusters is None:
-                continue
-            if len(clusters)>0:
-                changed[all_annotations[id]['path']]=clusters
-                pdb.set_trace()
+            if self.detect_change(image_dir_and_name):
+                if len(self.clusters)>0:
+                    changed[all_annotations[id]['path']]=self.clusters
         pdb.set_trace()        
-
-        
-
-
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('images_initial',type=str,help='location of images.csv for base dataset')
     parser.add_argument('images_changed',type=str,help='location of images.csv for changed dataset')
     parser.add_argument('search_category',type=str,help='Prompt or object-type to use with the segmentation model')
-    parser.add_argument('annotation_file',type=str,help="Annotation file in COCO format")
+    parser.add_argument('--annotation-file',type=str,default=None,help="Annotation file in COCO format (optional)")
     parser.add_argument('--image-name',type=str,default=None, help='Investigate a particular image in the annotation file for change')
     parser.add_argument('--threshold',type=float,default=0.2,help='(optional) threshold to apply during computation ')
     parser.add_argument('--nerf', action='store_true')
@@ -154,14 +197,13 @@ if __name__ == '__main__':
             directory=None
             image_name=args.image_name
 
-        clusters, change_image = eval_.detect_change([directory,image_name], args.threshold)
-
-        if change_image is None:
-            print("No change found -exiting")
-        else:
-
+        if eval_.detect_change([directory,image_name], args.threshold):
+            change_image=eval_.view_change_image(args.threshold)
             plt.imshow(change_image)
             plt.show()
-    else:
+        else:
+            print("No change found -exiting")
+
+    elif args.annotation_file is not None:
         eval_.evaluate_vs_gt(args.annotation_file)
 

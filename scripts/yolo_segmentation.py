@@ -28,9 +28,9 @@ class yolo_segmentation(image_segmentation):
 
     def process_file(self, fName, threshold=0.25):
         # Predict with the model
-        results = self.model(fName,conf=threshold)[0].cpu()  # predict on an image
-        self.set_data(results)
-        return results
+        cv_image=cv2.imread(fName,-1)
+        self.process_image(cv_image, threshold)
+        return cv_image
     
     def process_image(self, cv_image, threshold=0.25):
         # Predict with the model
@@ -43,7 +43,7 @@ class yolo_segmentation(image_segmentation):
         self.clear_data()
         for result in results:
             cls = int(result.boxes.cls.numpy())
-            prob = result.boxes.conf.numpy()
+            prob = result.boxes.conf.numpy()[0]
             # Save clusters
             self.cl_labelID.append(cls)
             self.cl_probs.append(prob)
@@ -55,7 +55,7 @@ class yolo_segmentation(image_segmentation):
             if cls in self.masks:
                 self.masks[cls] += msk_resized
                 self.max_probs[cls] = max(self.max_probs[cls],prob)
-                self.probs[cls] = max(self.probs[cls],prob_array)
+                self.probs[cls] = np.maximum.reduce([self.probs[cls], prob_array])
             else:
                 self.masks[cls] = msk_resized
                 self.max_probs[cls]=prob

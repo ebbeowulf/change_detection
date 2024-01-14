@@ -194,7 +194,7 @@ if __name__ == '__main__':
     parser.add_argument('nerfacto_dir',type=str,help='location of nerfactor directory containing config.yml and dapaparser_transforms.json')
     parser.add_argument('transforms_file',type=str,help='location of the transforms file to render')
     parser.add_argument('output_dir',type=str,help='where to save the resulting images')
-    parser.add_argument('--image-type', type=str, default='rgb', help="rgb or depth images (default=rgb)")
+    parser.add_argument('--image-type', type=str, default='all', help="rgb or depth images (default=all)")
     parser.add_argument('--name-filter', type=str, default='rgb', help="name filter to apply to transforms (default=rgb)")
     args = parser.parse_args()
 
