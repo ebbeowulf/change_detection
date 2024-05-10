@@ -112,8 +112,10 @@ class grid3D():
         self.minXYZ=np.array(minXYZ)
         self.maxXYZ=np.array(maxXYZ)
         self.shape=np.array(shapeXYZ)
-        
         self.cell_delta=(self.maxXYZ-self.minXYZ)/self.shape
+
+    def create_empty_grid(self,type_=float):
+        return np.zeros((self.shape[0], self.shape[1], self.shape[2]),dtype=type_)
 
     def is_xyz_in_bounds(self, X, Y, Z):
         if X<self.minXYZ[0] or X>=self.maxXYZ[0]:
@@ -139,12 +141,42 @@ class grid3D():
         zz=np.arange(self.minXYZ[2]+self.cell_delta[2]/2.0,self.maxXYZ[2],self.cell_delta[2])
         return xx,yy,zz
     
+    def get_xyz(self, cX, cY, cZ):
+        return np.array([cX,cY,cZ],dtype=float)*self.cell_delta + self.minXYZ + self.cell_delta/2.0
+    
     def get_cell(self, X, Y, Z):
         cX=np.floor((X-self.minXYZ[0])/self.cell_delta[0]).astype(int)
         cY=np.floor((Y-self.minXYZ[1])/self.cell_delta[1]).astype(int)
         cZ=np.floor((Z-self.minXYZ[2])/self.cell_delta[2]).astype(int)
         return cX,cY,cZ
     
+    def get_value(self, cX, cY, cZ):
+        # Should check for cells in range outside of this function
+        return self.grid[cX,cY,cZ]
+
+    def get_values(self, pts):
+        values=np.zeros((pts.shape[0]),dtype=float)
+        for idx in range(pts.shape[0]):
+            cell=self.get_cell(pts[idx,0],pts[idx,1],pts[idx,2])
+            if self.is_cell_in_bounds(cell[0],cell[1],cell[2]):
+                values[idx]=self.get_value(cell[0],cell[1],cell[2])
+        return values
+        
+class max_grid3D(grid3D):
+    def __init__(self, minXYZ, maxXYZ, gridDimensions):
+        super().__init__(minXYZ, maxXYZ, gridDimensions)
+        self.grid=self.create_empty_grid()
+
+    def set_cell_value(self, cX, cY, cZ, value):
+        # Should check for cells in range outside of this function
+        self.grid[cX, cY, cZ]=max(self.grid[cX,cY,cZ], value)
+
+    def add_pts(self, pts, values):
+        for idx in range(pts.shape[0]):
+            cell=self.get_cell(pts[idx,0],pts[idx,1],pts[idx,2])
+            if self.is_cell_in_bounds(cell[0],cell[1],cell[2]):
+                self.set_cell_value(cell[0],cell[1],cell[2],values[idx])
+
 class evidence_grid3D(grid3D):
     def __init__(self, minXYZ, maxXYZ, gridDimensions, num_inference_dim):
         super().__init__(minXYZ, maxXYZ, gridDimensions)

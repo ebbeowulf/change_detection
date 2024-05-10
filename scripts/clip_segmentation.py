@@ -67,6 +67,7 @@ if __name__ == '__main__':
 
     CS=clip_seg([args.tgt_prompt])
     image=CS.process_file(args.image, threshold=args.threshold)
+    pdb.set_trace()
     mask=CS.get_mask(0)
     if mask is None:
         print("Something went wrong - no mask to display")

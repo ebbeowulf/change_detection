@@ -75,16 +75,19 @@ class image_set():
                 return self.all_images[key]['global_poseM']
         return None
 
-    def get_related_poses(self, tgt_obj_pose:np.array, max_dist:float=1, max_angle:float=0.5):
+    def get_related_poses(self, 
+                          tgt_obj_pose:np.array, 
+                          max_angle:float=0.5, 
+                          min_dist=0.5):
         im_list=[]
         for key in self.all_images.keys():
             im = self.all_images[key]
             # Filter Images by Distance from Target
-            deltaD=dist(tgt_obj_pose-im['center_pose'])
-            if deltaD>max_dist:
+            deltaD=dist(tgt_obj_pose-im['global_pose'])
+            if deltaD<min_dist:
                 continue
 
-            forward=im['center_pose']-im['global_pose']
+            forward=np.matmul(im['global_poseM'][:3,:3],[0,0,1.0])
             actual=tgt_obj_pose-im['global_pose']
             angle=np.arccos(np.dot(forward,actual)/(dist(forward)*dist(actual)))
             if np.fabs(angle)<max_angle:
@@ -92,16 +95,41 @@ class image_set():
 
         return im_list
     
-    def get_all_poses(self):
+    def get_dir_and_name(self, value):
+        if value in self.all_images:
+            key=value
+        else:
+            for kk in self.all_images:
+                if self.all_images[kk]['id']==kk:
+                    key=kk
+                    break
+        if key in self.all_images:
+            return self.all_images[key]['directory'],self.all_images[key]['name']
+        return None
+
+    def get_all_poses(self, sort_by_id=False):
         arr = []
+        ids = []
         for key in self.all_images.keys():
             arr.append(self.all_images[key]['global_pose'])
-        return np.array(arr)
+            ids.append(self.all_images[key]['id'])
+        if sort_by_id:
+            rr=np.argsort(ids)
+            arr=np.array(arr)[rr]
+            return arr
+        else:
+            return np.array(arr)
     
-    def get_nearest_pose_by_angle(self, tgt_obj_pose: np.array, tgt_camera_poseM):
-        # First - get a list of all poses that look at the target
-        im_list = self.get_related_poses(tgt_obj_pose)
-        
+    def get_nearest_pose_by_angle(self, 
+                                  tgt_obj_pose: np.array, 
+                                  tgt_camera_poseM: np.ndarray, 
+                                  max_tgt_angle=0.5,
+                                  min_dist_pct=0.8):        
+        # We are going to use the tgt_obj_pose as a distance marker
+        #   any selected image needs to be no closer than 90% of the way
+        min_dist=min_dist_pct*dist(tgt_obj_pose-tgt_camera_poseM[:3,3])
+        im_list=self.get_related_poses(tgt_obj_pose, max_tgt_angle, min_dist)
+
         # Second - find the pose with the closest camera angle in global coordinates
         forward=np.array([0,0,1.0],dtype=float)
         tgt_vec=np.matmul(tgt_camera_poseM[:3,:3], forward)
@@ -109,7 +137,7 @@ class image_set():
         best_angle=np.pi
         best_key = None
         for key in im_list:
-            im_vec=np.matmul(self.all_images['global_poseM'][key][:3,:3],forward)
+            im_vec=np.matmul(self.all_images[key]['global_poseM'][:3,:3],forward)
             im_angle=np.arccos(np.dot(tgt_vec,im_vec)/(dTgt*dist(im_vec)))
             if np.abs(im_angle)<best_angle:
                 best_key=key

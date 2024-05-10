@@ -1,6 +1,8 @@
 import numpy as np
 from sklearn.cluster import DBSCAN
 from copy import copy
+from grid import grid3D, max_grid3D
+import pdb
 
 def check_single_dim_overlap(a_min, a_max, b_min, b_max):
     if a_min<b_min:
@@ -33,6 +35,13 @@ class cluster():
         self.scores_max_+=new_cl.scores_max_
         self.pts_+=new_cl.pts_
         self.scores_+=new_cl.scores_
+
+    def is_pt_in_cluster(self, xyz):
+        for idx in range(self.count_clusters()):
+            value=(xyz>=self.min_[idx])*(xyz<self.max_[idx])
+            if value.prod()==1.0:
+                return True
+        return False
 
     def mean(self):
         if len(self.mean_)==1:
@@ -74,7 +83,7 @@ class cluster():
                     return True
 
     def count_clusters(self):
-        return len(self.mean)
+        return len(self.mean_)
         
 class cluster_history():
     def __init__(self):
@@ -130,20 +139,57 @@ class cluster_history():
                 scores.append(cl_.score_mean())
         return np.array(scores)
 
-    def build_agglomerative_clusters(self, detection_target):
+    def visualize_agg_clusters(self, detection_target):
+        if detection_target not in self.agg_clusters:
+            return None
+        # Get boundaries
+        if len(self.agg_clusters[detection_target])==0:
+            print("No agglomerative clusters to visualize")
+            return None
+        
+        pts=np.zeros((0,3),dtype=float)
+        for cl_key in self.agg_clusters[detection_target]:
+            pts=np.vstack((pts,
+                           self.agg_clusters[detection_target][cl_key].min(),
+                           self.agg_clusters[detection_target][cl_key].max()))
+        num_cells=((pts.max(0)-pts.min(0)+0.1)/0.05).astype(int)
+        vis_grid=max_grid3D(pts.min(0),pts.max(0),num_cells)
+        vis_grid.create_empty_grid()
+        for cl_key in self.agg_clusters[detection_target]:
+            cl_=self.agg_clusters[detection_target][cl_key]
+            min_xyz=cl_.min()
+            max_xyz=cl_.max()
+            min_cell=vis_grid.get_cell(min_xyz[0],min_xyz[1],min_xyz[2])
+            max_cell=vis_grid.get_cell(max_xyz[0],max_xyz[1],max_xyz[2])
+            # Now go through each cell in that range and check for 
+            #   being in the cluster - still imprecise because we are using 
+            #   boxes in the raw clusters, but better than blocking out a super huge
+            #   prizm
+            for cX in range(min_cell[0],max_cell[0]+1):
+                for cY in range(min_cell[1],max_cell[1]+1):
+                    for cZ in range(min_cell[2],max_cell[2]+1):
+                        if vis_grid.is_cell_in_bounds(cX,cY,cZ):
+                            xyz=vis_grid.get_xyz(cX,cY,cZ)
+                            if cl_.is_pt_in_cluster(xyz):
+                                vis_grid.set_cell_value(cX,cY,cZ,cl_.count_clusters())
+        return vis_grid
+
+    def build_agglomerative_clusters(self, detection_target, min_agg_count=1):
         cluster_list=dict()
         count = 0
-        for cluster_list in self.raw_clusters[detection_target]['clusters']:
-            for cl_ in cluster_list:
+        for clist_ in self.raw_clusters[detection_target]['clusters']:
+            for cl_ in clist_:
                 cluster_list[count]=copy(cl_)
                 count+=1
         
+        # all_min = [ cluster_list[key].min() for key in cluster_list ]
+        # all_max = [ cluster_list[key].max() for key in cluster_list ]
         change = 1
         count=0
         while (change>0) and (count<100):
             change = 0
             count+=1
-            all_keys = [key for key in cluster_list.keys()]        
+            all_keys = [key for key in cluster_list.keys()]   
             for key1 in all_keys:
                 # key might have been removed already - need to check first
                 if key1 not in cluster_list:
@@ -161,4 +207,19 @@ class cluster_history():
                     cluster_list[key1].add_cluster(cluster_list[key2])
                     cluster_list.pop(key2)
 
+        # Remove clusters that do not have any corroborating evidence
+        bad_clusters=[]
+        for key in cluster_list:
+            if cluster_list[key].count_clusters()<min_agg_count:
+                bad_clusters.append(key)
+        for key in bad_clusters:
+            cluster_list.pop(key)
         self.agg_clusters[detection_target]=cluster_list
+    
+    def overlap_with_agg_cluster(self, detection_target, new_cluster:cluster):
+        for key in self.agg_clusters[detection_target]:
+            if self.agg_clusters[detection_target][key].is_overlap(new_cluster):
+                return key
+        return None
+
+
