@@ -8,9 +8,10 @@ import numpy as np
 import sys
 
 class yolo_segmentation(image_segmentation):
-    def __init__(self):
+    def __init__(self, model_name='yolov8n-seg.pt'):
         # Load a model
-        self.model = YOLO('yolov8n-seg.pt')  # load an official model
+        self.model_name=model_name
+        self.model=None
         self.label2id = None
         self.id2label = None
         self.clear_data()
@@ -26,12 +27,24 @@ class yolo_segmentation(image_segmentation):
         self.cl_probs  = []
         super().clear_data()
 
+    # Clear model to save a smaller file
+    def clear_model(self):
+        self.model=None
+
     def process_file(self, fName, threshold=0.25):
+        if self.model is None:
+            print("Loading model")
+            self.model = YOLO(self.model_name)  # load an official model
+            print("Model load finished")
+
         # Predict with the model
         cv_image=cv2.imread(fName,-1)
-        self.process_image(cv_image, threshold)
-        return cv_image
-    
+        results=self.process_image(cv_image, threshold)
+        return cv_image,results
+
+    def load_prior_results(self, results):
+        self.set_data(results)
+
     def process_image(self, cv_image, threshold=0.25):
         # Predict with the model
         results = self.model(cv_image, conf=threshold)[0].cpu()  # predict on an image
