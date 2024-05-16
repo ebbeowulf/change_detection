@@ -248,10 +248,8 @@ def connected_components_filter(centerRC, depthT:torch.tensor, maskI:torch.tenso
         regionCC[reachableAreaMask]=2
         regionCC[reachableAreaMask==0]=1
         iterations+=1
-        # if iterations % 500==0:
-        #     print("Iterations=%d"%(iterations))
-        #     cv2.imshow("mask",cc_mask.numpy()*100)
-        #     cv2.waitKey(1)
+        if iterations % 500==0:
+            print("Iterations=%d"%(iterations))
     print("Iterations=%d"%(iterations))
     # cv2.imshow("mask",cc_mask.cpu().numpy()*100)
     # cv2.waitKey(1)
