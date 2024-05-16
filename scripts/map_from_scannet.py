@@ -199,18 +199,16 @@ def agglomerative_cluster(pts, max_dist):
 
 def connected_components_filter(centerRC, depthT:torch.tensor, maskI:torch.tensor, neighborhood=4, max_depth_dist=0.1):
     queue=[centerRC]
-    height=depthT.shape[0]
-    width=depthT.shape[1]
+    # height=depthT.shape[0]
+    # width=depthT.shape[1]
     cc_mask=torch.zeros(maskI.shape,dtype=torch.uint8,device=DEVICE)
     cc_mask[centerRC[0],centerRC[1]]=2
-    rows=torch.tensor(np.tile(np.arange(height).reshape(height,1),(1,width)),device=DEVICE)
-    cols=torch.tensor(np.tile(np.arange(width),(height,1)),device=DEVICE)    
+    # rows=torch.tensor(np.tile(np.arange(height).reshape(height,1),(1,width)),device=DEVICE)
+    # cols=torch.tensor(np.tile(np.arange(width),(height,1)),device=DEVICE)    
     iterations=0
-    sampleMatrix=torch.ones((2*neighborhood,2*neighborhood),dtype=bool,device=DEVICE)
-    sampleMatrix[2:-2,2:-2]=False
+    # sampleMatrix=torch.ones((2*neighborhood,2*neighborhood),dtype=bool,device=DEVICE)
+    # sampleMatrix[2:-2,2:-2]=False
     while len(queue)>0:
-        # if iterations==1000:
-        #     pdb.set_trace()
         point=queue.pop(0)
         target_depth = depthT[point[0],point[1]]
         
@@ -220,8 +218,8 @@ def connected_components_filter(centerRC, depthT:torch.tensor, maskI:torch.tenso
         maxC=min(depthT.shape[1],point[1]+neighborhood)
         regionD=depthT[minR:maxR,minC:maxC]
         regionMask=maskI[minR:maxR,minC:maxC]
-        rowMask=rows[minR:maxR,minC:maxC]
-        colMask=cols[minR:maxR,minC:maxC]
+        # rowMask=rows[minR:maxR,minC:maxC]
+        # colMask=cols[minR:maxR,minC:maxC]
         regionCC=cc_mask[minR:maxR,minC:maxC]
 
         reachableAreaMask=((regionD-target_depth).abs()<max_depth_dist)*regionMask
@@ -231,18 +229,18 @@ def connected_components_filter(centerRC, depthT:torch.tensor, maskI:torch.tenso
         # Update the queue
         if 1: # randomsample
             sample_size=5
-            FullQ=torch.vstack((rowMask[localMask],colMask[localMask])).transpose(0,1)
-            if len(FullQ)<sample_size:
-                queue=queue+FullQ.cpu().tolist()
+            indices=localMask.nonzero()+torch.tensor([minR,minC],device=DEVICE)
+            if len(indices)<sample_size:
+                queue=queue+indices.tolist()
             else:
-                rr=np.random.choice(np.arange(len(FullQ)),sample_size)
-                queue=queue+FullQ[rr].tolist()
-        elif 1: # use sample matrix of edges only
-            FullQ=torch.vstack((rowMask[localMask*sampleMatrix],colMask[localMask*sampleMatrix])).transpose(0,1)
-            queue=queue+FullQ.cpu().tolist()
+                rr=np.random.choice(np.arange(len(indices)),sample_size)
+                queue=queue+indices[rr].tolist()
+        # elif 1: # use sample matrix of edges only
+        #     FullQ=torch.vstack((rowMask[localMask*sampleMatrix],colMask[localMask*sampleMatrix])).transpose(0,1)
+        #     queue=queue+FullQ.cpu().tolist()
         else:
-            FullQ=np.vstack((rowMask[localMask],colMask[localMask])).transpose(0,1)            
-            queue=queue+FullQ.cpu().tolist()
+            indices=localMask.nonzero()+torch.tensor([minR,minC],device=DEVICE)            
+            queue=queue+indices.cpu().tolist()
 
         # Set all points in the cc_mask so that we don't keep looking at them
         regionCC[reachableAreaMask]=2
@@ -267,9 +265,9 @@ def get_center_point(depthT:torch.tensor, combo_mask:torch.tensor, xy_bbox, neig
     regionMask=combo_mask[minR:maxR,minC:maxC]
     mean_depth=regionDepth[regionMask].mean()
     indices = regionMask.nonzero()
-    dist=(indices-torch.tensor([neighborhood,neighborhood])).pow(2).sum(1).sqrt()*0.1 + (regionDepth[regionMask]-mean_depth).abs()
+    dist=(indices-torch.tensor([neighborhood,neighborhood],device=DEVICE)).pow(2).sum(1).sqrt()*0.1 + (regionDepth[regionMask]-mean_depth).abs()
     whichD=dist.argmin()
-    return (indices[whichD]+torch.tensor([minR,minC])).cpu().tolist()
+    return (indices[whichD].cpu()+torch.tensor([minR,minC])).tolist()
 
 def create_pclouds(tgt_classes:list, all_files, params, conf_threshold=0.5):
     YS=yolo_segmentation()
