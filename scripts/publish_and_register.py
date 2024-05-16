@@ -7,29 +7,10 @@ from cv_bridge import CvBridge
 import cv2
 import copy
 import glob
+from map_from_scannet import load_camera_info
 
 ROOT_DIR="/home/ebeowulf/projects/ScanNet/data/scans/scene0706_00/raw_output/"
 CAMINFO_FILE="/home/ebeowulf/projects/ScanNet/data/scans/scene0706_00/scene0706_00.txt"
-
-def load_camera_info(info_file):
-    info_dict = {}
-    with open(info_file) as f:
-        for line in f:
-            (key, val) = line.split(" = ")
-            if key=='sceneType':
-                if val[-1]=='\n':
-                    val=val[:-1]
-                info_dict[key] = val
-            elif key=='axisAlignment':
-                info_dict[key] = np.fromstring(val, sep=' ')
-            else:
-                info_dict[key] = float(val)
-
-    if 'axisAlignment' not in info_dict:
-       info_dict['rot_matrix'] = np.identity(4)
-    else:
-        info_dict['rot_matrix'] = info_dict['axisAlignment'].reshape(4, 4)
-    return info_dict
 
 class publish_and_register():
     def __init__(self, root_dir, caminfo_file):

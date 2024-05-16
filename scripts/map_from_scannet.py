@@ -8,24 +8,29 @@ import pickle
 import os
 import torch
 import open3d as o3d
-from publish_and_register import load_camera_info
 
 # DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 DEVICE = torch.device("cpu")
 
-# def load_params(info_file):
-#     # Rotating the mesh to axis aligned
-#     info_dict = {}
-#     with open(info_file) as f:
-#         for line in f:
-#             (key, val) = line.split(" = ")
-#             info_dict[key] = np.fromstring(val, sep=' ')
+def load_camera_info(info_file):
+    info_dict = {}
+    with open(info_file) as f:
+        for line in f:
+            (key, val) = line.split(" = ")
+            if key=='sceneType':
+                if val[-1]=='\n':
+                    val=val[:-1]
+                info_dict[key] = val
+            elif key=='axisAlignment':
+                info_dict[key] = np.fromstring(val, sep=' ')
+            else:
+                info_dict[key] = float(val)
 
-#     if 'axisAlignment' not in info_dict:
-#         info_dict['rot_matrix'] = torch.tensor(np.identity(4))
-#     else:
-#         info_dict['rot_matrix'] = torch.tensor(info_dict['axisAlignment'].reshape(4, 4))    
-#     return info_dict
+    if 'axisAlignment' not in info_dict:
+       info_dict['rot_matrix'] = np.identity(4)
+    else:
+        info_dict['rot_matrix'] = info_dict['axisAlignment'].reshape(4, 4)
+    return info_dict
 
 def read_scannet_pose(pose_fName):
     # Get the pose - 
