@@ -97,7 +97,7 @@ def get_high_confidence_objects(obj_list, confidence_threshold=0.5):
             o_list.append(key)
     return o_list
 
-def pointcloud_open3d(xyz_points,rgb_points=None,fileName=None, max_num_points=20000):
+def pointcloud_open3d(xyz_points,rgb_points=None,max_num_points=2000000):
     pcd=o3d.geometry.PointCloud()
     if xyz_points.shape[0]<max_num_points:
         pcd.points = o3d.utility.Vector3dVector(xyz_points)
@@ -108,39 +108,7 @@ def pointcloud_open3d(xyz_points,rgb_points=None,fileName=None, max_num_points=2
         rgb2=rgb_points[rr,:]
         pcd.colors = o3d.utility.Vector3dVector(rgb2[:,[2,1,0]]/255) 
 
-    o3d.visualization.draw_geometries([pcd])
-    if fileName is not None:
-        o3d.io.write_point_cloud(fileName,pcd)
-
-def mesh_from_pcloud(xyz_points, rgb_points, max_num_points=1000000, voxel_size=0.01, octree_depth=9, fileName=None):
-    pcd=o3d.geometry.PointCloud()
-    if xyz_points.shape[0]<max_num_points:
-        pcd.points = o3d.utility.Vector3dVector(xyz_points)
-        pcd.colors = o3d.utility.Vector3dVector(rgb_points[:,[2,1,0]]/255) 
-    else:
-        rr=np.random.choice(np.arange(xyz_points.shape[0]),max_num_points)
-        pcd.points = o3d.utility.Vector3dVector(xyz_points[rr,:])
-        rgb2=rgb_points[rr,:]
-        pcd.colors = o3d.utility.Vector3dVector(rgb2[:,[2,1,0]]/255) 
-
-    # Downsample the pointcloud - evenly by defining a target voxel size
-    downpcd = pcd.voxel_down_sample(voxel_size=voxel_size)
-
-    # Need the surface normals
-    pdb.set_trace()
-    downpcd.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.1, max_nn=30))
-
-    # Create the color mesh
-    mesh, densities = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(downpcd, depth=octree_depth)
-
-    # Clean up faces with low support
-    vertices_to_remove = densities < np.quantile(densities, 0.01)
-    mesh.remove_vertices_by_mask(vertices_to_remove)
-
-    # Visualize and save
-    o3d.visualization.draw_geometries([mesh]) 
-    if fileName is not None:
-        o3d.io.write_point_cloud(fileName,mesh)
+    return pcd
 
 def visualize_combined_xyzrgb(fileName, all_files, params, howmany_files=100):
     height=int(params['colorHeight'])
@@ -372,8 +340,6 @@ def create_pclouds(tgt_classes:list, all_files, params, conf_threshold=0.5):
                         pclouds[cls]['rgb']=np.vstack((pclouds[cls]['rgb'],colorT[filtered_maskT].cpu().numpy()))
         except Exception as e:
             continue
-    pdb.set_trace()
-    mesh_from_pcloud(pclouds['bed']['xyz'],pclouds['bed']['rgb'],fileName='bed_triangle.ply')
     return pclouds
 
 if __name__ == '__main__':
@@ -401,7 +367,9 @@ if __name__ == '__main__':
     else:
         pclouds=create_pclouds(args.targets,all_files,params,conf_threshold=0.5)
     for key in pclouds.keys():
-        pointcloud_open3d(pclouds[key]['xyz'],pclouds[key]['rgb'],fileName=args.scan_directory+"/"+key+".ply")
-
-    pdb.set_trace()
+        fileName=args.scan_directory+"/"+key+".ply"
+        pcd=pointcloud_open3d(pclouds[key]['xyz'],pclouds[key]['rgb'])
+        if 0:
+            o3d.visualization.draw_geometries([pcd])
+        o3d.io.write_point_cloud(fileName,pcd)
 
