@@ -253,8 +253,8 @@ def connected_components_filter(centerRC, depthT:torch.tensor, maskI:torch.tenso
         #     cv2.imshow("mask",cc_mask.numpy()*100)
         #     cv2.waitKey(1)
     print("Iterations=%d"%(iterations))
-    cv2.imshow("mask",cc_mask.cpu().numpy()*100)
-    cv2.waitKey(1)
+    # cv2.imshow("mask",cc_mask.cpu().numpy()*100)
+    # cv2.waitKey(1)
     return cc_mask==2
     # pdb.set_trace()
 
