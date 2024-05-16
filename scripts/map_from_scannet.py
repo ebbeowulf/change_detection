@@ -8,20 +8,24 @@ import pickle
 import os
 import torch
 import open3d as o3d
+from publish_and_register import load_camera_info
 
-def load_params(info_file):
-    # Rotating the mesh to axis aligned
-    info_dict = {}
-    with open(info_file) as f:
-        for line in f:
-            (key, val) = line.split(" = ")
-            info_dict[key] = np.fromstring(val, sep=' ')
+# DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+DEVICE = torch.device("cpu")
 
-    if 'axisAlignment' not in info_dict:
-        info_dict['rot_matrix'] = torch.tensor(np.identity(4))
-    else:
-        info_dict['rot_matrix'] = torch.tensor(info_dict['axisAlignment'].reshape(4, 4))    
-    return info_dict
+# def load_params(info_file):
+#     # Rotating the mesh to axis aligned
+#     info_dict = {}
+#     with open(info_file) as f:
+#         for line in f:
+#             (key, val) = line.split(" = ")
+#             info_dict[key] = np.fromstring(val, sep=' ')
+
+#     if 'axisAlignment' not in info_dict:
+#         info_dict['rot_matrix'] = torch.tensor(np.identity(4))
+#     else:
+#         info_dict['rot_matrix'] = torch.tensor(info_dict['axisAlignment'].reshape(4, 4))    
+#     return info_dict
 
 def read_scannet_pose(pose_fName):
     # Get the pose - 
@@ -108,6 +112,36 @@ def pointcloud_open3d(xyz_points,rgb_points=None,fileName=None, max_num_points=2
     if fileName is not None:
         o3d.io.write_point_cloud(fileName,pcd)
 
+def mesh_from_pcloud(xyz_points, rgb_points, max_num_points=1000000, voxel_size=0.01, octree_depth=9, fileName=None):
+    pcd=o3d.geometry.PointCloud()
+    if xyz_points.shape[0]<max_num_points:
+        pcd.points = o3d.utility.Vector3dVector(xyz_points)
+        pcd.colors = o3d.utility.Vector3dVector(rgb_points[:,[2,1,0]]/255) 
+    else:
+        rr=np.random.choice(np.arange(xyz_points.shape[0]),max_num_points)
+        pcd.points = o3d.utility.Vector3dVector(xyz_points[rr,:])
+        rgb2=rgb_points[rr,:]
+        pcd.colors = o3d.utility.Vector3dVector(rgb2[:,[2,1,0]]/255) 
+
+    # Downsample the pointcloud - evenly by defining a target voxel size
+    downpcd = pcd.voxel_down_sample(voxel_size=voxel_size)
+
+    # Need the surface normals
+    pdb.set_trace()
+    downpcd.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.1, max_nn=30))
+
+    # Create the color mesh
+    mesh, densities = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(downpcd, depth=octree_depth)
+
+    # Clean up faces with low support
+    vertices_to_remove = densities < np.quantile(densities, 0.01)
+    mesh.remove_vertices_by_mask(vertices_to_remove)
+
+    # Visualize and save
+    o3d.visualization.draw_geometries([mesh]) 
+    if fileName is not None:
+        o3d.io.write_point_cloud(fileName,mesh)
+
 def visualize_combined_xyzrgb(fileName, all_files, params, howmany_files=100):
     height=int(params['colorHeight'])
     width=int(params['colorWidth'])
@@ -136,26 +170,149 @@ def visualize_combined_xyzrgb(fileName, all_files, params, howmany_files=100):
         M=torch.matmul(params['rot_matrix'],torch.tensor(all_files[key]['pose']))
         pts=torch.stack([x[depth_mask],y[depth_mask],depthT[depth_mask],torch.ones(((depth_mask>0).sum()))],dim=1)
         pts_rot=torch.matmul(M,pts.transpose(0,1))
-        combined_xyz=np.vstack((combined_xyz,pts_rot.transpose(0,1)[:,:3]))
-        combined_rgb=np.vstack((combined_rgb,colorT[depth_mask].numpy()))
 
         count+=1
         if count==howmany_files:
-            pointcloud_open3d(fileName,combined_xyz,rgb_points=combined_rgb, write_file=True)
-            return
+            break
+    pointcloud_open3d(fileName,combined_xyz,rgb_points=combined_rgb, write_file=True)
+    return
+
+# def compare_points(cl1,cl2,max_dist):
+#     if len(cl1.shape)==1 or cl1.shape[0] == 1:
+#         X1=cl1.reshape((1,3))
+#     else:
+#         X1=cl1
+#     if len(cl2.shape)==1 or cl2.shape[0] == 1:
+#         X2=cl2.reshape((1,3))
+#     else:
+#         X2=cl2
+
+#     dists=np.zeros((X1.shape[0],X2.shape[0]),dtype=float)
+#     for i in range(X2.shape[0]):
+#         dists[i, :] = np.sqrt(np.sum((X2[i] - X1) ** 2, axis=1))
+#     return dists.min()<max_dist
+    
+
+# def compare_clusters(cl1, cl2, max_dist):
+#     return compare_points(cl1['pts'],cl2['pts'],max_dist)
+
+def agglomerative_cluster(pts, max_dist):
+    clusters=[]
+    for idx in range(pts.shape[0]):
+        clusters.append({'pts': pts[idx,:].reshape((1,3)), 'found': False})
+    
+    num_old=0
+    while num_old!=len(clusters):
+        print("Clustering - %d clusters"%(len(clusters)))
+        new_clusters=[]
+        num_old=len(clusters)
+        for idx in range(len(clusters)):
+            # Skip clusters that have already been processed
+            if clusters[idx]['found']:
+                continue
+
+            for jdx in range(idx+1,len(clusters)):
+                # Skip clusters that have already been processed
+                if clusters[jdx]['found']:
+                    continue
+                pairwise_distance=torch.cdist(clusters[idx]['pts'],clusters[jdx]['pts'])
+                if pairwise_distance.min()<max_dist:
+                    # Merge clusters
+                    clusters[idx]['pts']=torch.vstack((clusters[idx]['pts'],clusters[jdx]['pts']))
+                    clusters[jdx]['found']=True
+            new_clusters.append(clusters[idx])
+        clusters=new_clusters   
+    return clusters     
+
+def connected_components_filter(centerRC, depthT:torch.tensor, maskI:torch.tensor, neighborhood=4, max_depth_dist=0.1):
+    queue=[centerRC]
+    height=depthT.shape[0]
+    width=depthT.shape[1]
+    cc_mask=torch.zeros(maskI.shape,dtype=torch.uint8,device=DEVICE)
+    cc_mask[centerRC[0],centerRC[1]]=2
+    rows=torch.tensor(np.tile(np.arange(height).reshape(height,1),(1,width)),device=DEVICE)
+    cols=torch.tensor(np.tile(np.arange(width),(height,1)),device=DEVICE)    
+    iterations=0
+    sampleMatrix=torch.ones((2*neighborhood,2*neighborhood),dtype=bool,device=DEVICE)
+    sampleMatrix[2:-2,2:-2]=False
+    while len(queue)>0:
+        # if iterations==1000:
+        #     pdb.set_trace()
+        point=queue.pop(0)
+        target_depth = depthT[point[0],point[1]]
+        
+        minR=max(0,point[0]-neighborhood)
+        minC=max(0,point[1]-neighborhood)
+        maxR=min(depthT.shape[0],point[0]+neighborhood)
+        maxC=min(depthT.shape[1],point[1]+neighborhood)
+        regionD=depthT[minR:maxR,minC:maxC]
+        regionMask=maskI[minR:maxR,minC:maxC]
+        rowMask=rows[minR:maxR,minC:maxC]
+        colMask=cols[minR:maxR,minC:maxC]
+        regionCC=cc_mask[minR:maxR,minC:maxC]
+
+        reachableAreaMask=((regionD-target_depth).abs()<max_depth_dist)*regionMask
+        localMask=reachableAreaMask*(regionCC==0)
+        # regionCC=localMask+1
+
+        # Update the queue
+        if 1: # randomsample
+            sample_size=5
+            FullQ=torch.vstack((rowMask[localMask],colMask[localMask])).transpose(0,1)
+            if len(FullQ)<sample_size:
+                queue=queue+FullQ.cpu().tolist()
+            else:
+                rr=np.random.choice(np.arange(len(FullQ)),sample_size)
+                queue=queue+FullQ[rr].tolist()
+        elif 1: # use sample matrix of edges only
+            FullQ=torch.vstack((rowMask[localMask*sampleMatrix],colMask[localMask*sampleMatrix])).transpose(0,1)
+            queue=queue+FullQ.cpu().tolist()
+        else:
+            FullQ=np.vstack((rowMask[localMask],colMask[localMask])).transpose(0,1)            
+            queue=queue+FullQ.cpu().tolist()
+
+        # Set all points in the cc_mask so that we don't keep looking at them
+        regionCC[reachableAreaMask]=2
+        regionCC[reachableAreaMask==0]=1
+        iterations+=1
+        # if iterations % 500==0:
+        #     print("Iterations=%d"%(iterations))
+        #     cv2.imshow("mask",cc_mask.numpy()*100)
+        #     cv2.waitKey(1)
+    print("Iterations=%d"%(iterations))
+    cv2.imshow("mask",cc_mask.cpu().numpy()*100)
+    cv2.waitKey(1)
+    return cc_mask==2
+    # pdb.set_trace()
+
+def get_center_point(depthT:torch.tensor, combo_mask:torch.tensor, xy_bbox, neighborhood=5):
+    rowC=int((xy_bbox[3]-xy_bbox[1])/2.0 + xy_bbox[1])
+    colC=int((xy_bbox[2]-xy_bbox[0])/2.0 + xy_bbox[0])
+    minR=max(0,rowC-5)
+    minC=max(0,colC-5)
+    maxR=min(depthT.shape[0],rowC+neighborhood)
+    maxC=min(depthT.shape[1],colC+neighborhood)
+    regionDepth=depthT[minR:maxR,minC:maxC]
+    regionMask=combo_mask[minR:maxR,minC:maxC]
+    mean_depth=regionDepth[regionMask].mean()
+    indices = regionMask.nonzero()
+    dist=(indices-torch.tensor([neighborhood,neighborhood])).pow(2).sum(1).sqrt()*0.1 + (regionDepth[regionMask]-mean_depth).abs()
+    whichD=dist.argmin()
+    return (indices[whichD]+torch.tensor([minR,minC])).cpu().tolist()
 
 def create_pclouds(tgt_classes:list, all_files, params, conf_threshold=0.5):
     YS=yolo_segmentation()
     height=int(params['colorHeight'])
     width=int(params['colorWidth'])
 
-    rows=torch.tensor(np.tile(np.arange(height).reshape(height,1),(1,width))-params['my_color'])
-    cols=torch.tensor(np.tile(np.arange(width),(height,1))-params['mx_color'])
+    rows=torch.tensor(np.tile(np.arange(height).reshape(height,1),(1,width))-params['my_color'],device=DEVICE)
+    cols=torch.tensor(np.tile(np.arange(width),(height,1))-params['mx_color'],device=DEVICE)
 
     pclouds=dict()
     for cls in tgt_classes:
         pclouds[cls]={'xyz': np.zeros((0,3),dtype=float),'rgb': np.zeros((0,3),dtype=np.uint8)}
 
+    rot_matrixT=torch.tensor(params['rot_matrix'],device=DEVICE)
     for key in range(max(all_files.keys())):
         if key not in all_files:
             continue
@@ -164,30 +321,59 @@ def create_pclouds(tgt_classes:list, all_files, params, conf_threshold=0.5):
             with open(all_files[key]['yolo'], 'rb') as handle:
                 results=pickle.load(handle)
                 YS.load_prior_results(results)
-
             colorI=cv2.imread(all_files[key]['colorFile'], -1)
             depthI=cv2.imread(all_files[key]['depthFile'], -1)
-            depthT=torch.tensor(depthI.astype('float')/1000.0)
-            colorT=torch.tensor(colorI)
+            depthT=torch.tensor(depthI.astype('float')/1000.0,device=DEVICE)
+            colorT=torch.tensor(colorI,device=DEVICE)
             x = cols*depthT/params['fx_color']
             y = rows*depthT/params['fy_color']
             depth_mask=(depthT>1e-4)*(depthT<10.0)
 
             # Build the rotation matrix
-            M=torch.matmul(params['rot_matrix'],torch.tensor(all_files[key]['pose']))
+            M=torch.matmul(rot_matrixT,torch.tensor(all_files[key]['pose'],device=DEVICE))
 
             # Now extract a mask per category
             for cls in tgt_classes:
                 cls_mask=YS.get_mask(cls)
                 if cls_mask is not None:
-                    combo_mask=(torch.tensor(cls_mask)>conf_threshold)*depth_mask
-                    pts=torch.stack([x[combo_mask],y[combo_mask],depthT[combo_mask],torch.ones(((combo_mask>0).sum()))],dim=1)
+                    save_fName=all_files[key]['root']+"."+cls+".pkl"
+                    # Load or create the connected components mask for this object type
+                    try:
+                        if os.path.exists(save_fName):
+                            with open(save_fName, 'rb') as handle:
+                                filtered_maskT=pickle.load(handle)
+                        else:
+                            combo_mask=(torch.tensor(cls_mask,device=DEVICE)>conf_threshold)*depth_mask
+                            # Find the list of boxes associated with this object
+                            which_boxes=np.where(np.array(YS.cl_labelID)==YS.label2id[cls])[0]
+                            filtered_maskT=None
+                            for box_idx in range(which_boxes.shape[0]):
+                                # Pick a point from the center of the mask to use as a centroid...
+                                ctrRC=get_center_point(depthT, combo_mask, YS.cl_boxes[which_boxes[box_idx]])
+
+                                maskT=connected_components_filter(ctrRC,depthT, combo_mask, neighborhood=10)
+                                # Combine masks from multiple objects
+                                if filtered_maskT is None:
+                                    filtered_maskT=maskT
+                                else:
+                                    filtered_maskT=filtered_maskT*maskT
+
+                            with open(save_fName,'wb') as handle:
+                                pickle.dump(filtered_maskT, handle, protocol=pickle.HIGHEST_PROTOCOL)
+                    except Exception as e:
+                        print("Exception " + str(e) +" - skipping")
+                        continue
+
+                    pts=torch.stack([x[filtered_maskT],y[filtered_maskT],depthT[filtered_maskT],torch.ones(((filtered_maskT>0).sum()),device=DEVICE)],dim=1)
                     pts_rot=torch.matmul(M,pts.transpose(0,1))
-                    pclouds[cls]['xyz']=np.vstack((pclouds[cls]['xyz'],pts_rot[:3,:].transpose(0,1)))
-                    pclouds[cls]['rgb']=np.vstack((pclouds[cls]['rgb'],colorT[combo_mask].numpy()))
+                    pts_rot=pts_rot[:3,:].transpose(0,1)
+                    if pts_rot.shape[0]>100:
+                        pclouds[cls]['xyz']=np.vstack((pclouds[cls]['xyz'],pts_rot.cpu().numpy()))
+                        pclouds[cls]['rgb']=np.vstack((pclouds[cls]['rgb'],colorT[filtered_maskT].cpu().numpy()))
         except Exception as e:
             continue
     pdb.set_trace()
+    mesh_from_pcloud(pclouds['bed']['xyz'],pclouds['bed']['rgb'],fileName='bed_triangle.ply')
     return pclouds
 
 if __name__ == '__main__':
@@ -199,7 +385,7 @@ if __name__ == '__main__':
     # parser.add_argument('--targets',type=list, nargs='+', default=None, help='Set of target classes to build point clouds for')
     args = parser.parse_args()
     all_files=build_file_structure(args.scan_directory)
-    params=load_params(args.param_file)
+    params=load_camera_info(args.param_file)
     load_all_poses(all_files)
     process_images(all_files)
     # create_map(args.tgt_class,all_files)
