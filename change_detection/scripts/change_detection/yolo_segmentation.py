@@ -1,7 +1,7 @@
 from ultralytics import YOLO
 import pdb
 import cv2
-from segmentation import image_segmentation
+from change_detection.segmentation import image_segmentation
 import argparse
 import cv2
 import numpy as np
@@ -73,6 +73,17 @@ class yolo_segmentation(image_segmentation):
                 self.masks[cls] = msk_resized
                 self.max_probs[cls]=prob
                 self.probs[cls]=prob_array
+    
+    def plot(self, img, results):
+        for result in results:
+            for box in result.boxes:
+                left, top, right, bottom = np.array(box.xyxy.cpu(), dtype=int).squeeze()
+                label = results[0].names[int(box.cls)]
+                cv2.rectangle(img, (left, top),(right, bottom), (255, 0, 0), 2)
+
+                cv2.putText(img, label,(left, bottom-10),cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 1, cv2.LINE_AA)
+        cv2.imshow('Filtered Frame', img)
+        cv2.waitKey(0)        
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -82,9 +93,9 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     CS=yolo_segmentation()
-    res=CS.process_file(args.image,args.threshold)
+    img, res=CS.process_file(args.image,args.threshold)
     if args.tgt_class is None:
-        IM=res.plot()
+        IM=CS.plot(img, res)
     else:
         msk=CS.get_mask(args.tgt_class)
         if msk is None:

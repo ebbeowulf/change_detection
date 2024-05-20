@@ -1,4 +1,4 @@
-from yolo_segmentation import yolo_segmentation
+from change_detection.yolo_segmentation import yolo_segmentation
 import cv2
 import numpy as np
 import argparse
