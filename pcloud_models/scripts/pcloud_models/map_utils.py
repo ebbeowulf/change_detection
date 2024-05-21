@@ -5,14 +5,15 @@ import numpy as np
 import cv2
 from change_detection.yolo_segmentation import yolo_segmentation
 import os
+import pdb
 
 # DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 DEVICE = torch.device("cpu")
 
 class camera_params():
     def __init__(self, height, width, fx, fy, cx, cy, rot_matrix):
-        self.height=height
-        self.width=width
+        self.height=int(height)
+        self.width=int(width)
         self.fx=fx
         self.fy=fy
         self.cx=cx
@@ -65,7 +66,7 @@ def process_images_with_yolo(fList:rgbd_file_list):
     print("process_images")
     YS=yolo_segmentation()
     for key in fList.keys():
-        print(fList.all_files[key]['colorFile'])
+        print(fList.get_color_fileName(key))
         pkl=fList.get_yolo_fileName(key)
         if not os.path.exists(pkl):
             img,results=YS.process_file(fList.get_color_fileName(key))
@@ -232,7 +233,7 @@ def connected_components_filter(centerRC, depthT:torch.tensor, maskI:torch.tenso
 
 # Find a valid center point of a bounding box. The neighborhood indicates
 #   the size of the area to search around the mathematical centroid.
-def get_center_point(depthT:torch.tensor, combo_mask:torch.tensor, xy_bbox, neighborhood=5):
+def get_center_point(depthT:torch.tensor, combo_mask:torch.tensor, xy_bbox, neighborhood=20):
     rowC=int((xy_bbox[3]-xy_bbox[1])/2.0 + xy_bbox[1])
     colC=int((xy_bbox[2]-xy_bbox[0])/2.0 + xy_bbox[0])
     minR=max(0,rowC-5)
@@ -259,7 +260,7 @@ def create_pclouds(tgt_classes:list, fList:rgbd_file_list, params:camera_params,
     for cls in tgt_classes:
         pclouds[cls]={'xyz': np.zeros((0,3),dtype=float),'rgb': np.zeros((0,3),dtype=np.uint8)}
 
-    rot_matrixT=torch.tensor(params['rot_matrix'],device=DEVICE)
+    rot_matrixT=torch.tensor(params.rot_matrix,device=DEVICE)
     for key in range(max(fList.keys())):
         if not fList.is_key(key):
             continue
@@ -320,3 +321,21 @@ def create_pclouds(tgt_classes:list, fList:rgbd_file_list, params:camera_params,
         except Exception as e:
             continue
     return pclouds
+
+def create_pclouds_from_images(fList:rgbd_file_list, params:camera_params, targets:list=None, display_pclouds=False):
+    process_images_with_yolo(fList)
+    if targets is None:
+        obj_list=create_object_list(fList)
+        print("Detected Objects (Conf > 0.75)")
+        high_conf_list=get_high_confidence_objects(obj_list, confidence_threshold=0.75)
+        print(high_conf_list)
+        pclouds=create_pclouds(high_conf_list,fList,params,conf_threshold=0.5)
+    else:
+        pclouds=create_pclouds(targets,fList,params,conf_threshold=0.5)
+    for key in pclouds.keys():
+        pdb.set_trace()
+        fileName=fList.intermediate_save_dir+"/"+key+".ply"
+        pcd=pointcloud_open3d(pclouds[key]['xyz'],pclouds[key]['rgb'])
+        o3d.io.write_point_cloud(fileName,pcd)
+        if display_pclouds:
+            o3d.visualization.draw_geometries([pcd])

@@ -27,10 +27,11 @@ def load_camera_info(info_file):
                 info_dict[key] = float(val)
 
     if 'axisAlignment' not in info_dict:
-       info_dict['rot_matrix'] = np.identity(4)
+       rot_matrix = np.identity(4)
     else:
-        info_dict['rot_matrix'] = info_dict['axisAlignment'].reshape(4, 4)
-    return info_dict
+        rot_matrix = info_dict['axisAlignment'].reshape(4, 4)
+
+    return map_utils.camera_params(info_dict['colorHeight'], info_dict['colorWidth'],info_dict['fx_color'],info_dict['fy_color'],info_dict['mx_color'],info_dict['my_color'],rot_matrix)
 
 def read_scannet_pose(pose_fName):
     # Get the pose - 
@@ -48,26 +49,24 @@ def read_scannet_pose(pose_fName):
     except Exception as e:
         return None
     
-def build_file_structure(input_dir):
-    all_files=dict()
+def build_file_structure(image_dir, save_dir):
+    fList = map_utils.rgbd_file_list(image_dir, image_dir, save_dir)
+    if not os.path.exists(save_dir):
+        os.mkdir(save_dir)
+
     # Find all files with the '.txt' extension in the current directory
-    txt_files = glob.glob(input_dir+'/*.txt')
+    txt_files = glob.glob(image_dir+'/*.txt')
     for fName in txt_files:
         try:
             ppts=fName.split('.')
-            rootName=ppts[0]
-            number=int(ppts[0].split('-')[-1])
-            all_files[number]={'root': rootName, 'poseFile': fName, 'depthFile': rootName+'.depth_reg.png', 'colorFile': rootName+'.color.jpg'}
+            rootName=ppts[0].split('/')[-1]
+            number=int(rootName.split('-')[-1])
+            pose=read_scannet_pose(fName)
+            fList.add_file(number,rootName+'.color.jpg',rootName+'.depth_reg.png')
+            fList.add_pose(number, pose)
         except Exception as e:
             continue
-    return all_files
-
-def load_all_poses(all_files:dict):
-    for key in all_files.keys():
-        pose=read_scannet_pose(all_files[key]['poseFile'])
-        all_files[key]['pose']=pose
-
-
+    return fList
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -77,22 +76,21 @@ if __name__ == '__main__':
                     help='Set of target classes to build point clouds for')
     # parser.add_argument('--targets',type=list, nargs='+', default=None, help='Set of target classes to build point clouds for')
     args = parser.parse_args()
-    all_files=build_file_structure(args.scan_directory)
+    fList=build_file_structure(args.scan_directory, args.scan_directory+"/save_results")
     params=load_camera_info(args.param_file)
-    load_all_poses(all_files)
-    map_utils.process_images(all_files)
+    map_utils.process_images_with_yolo(fList)
     # create_map(args.tgt_class,all_files)
     # obj_list=create_object_list(all_files)
     # obj_list=['bed','vase','potted plant','tv','refrigerator','chair']
     # create_combined_xyzrgb(obj_list, all_files, params)
     if args.targets is None:
-        obj_list=map_utils.create_object_list(all_files)
+        obj_list=map_utils.create_object_list(fList)
         print("Detected Objects (Conf > 0.75)")
         high_conf_list=map_utils.get_high_confidence_objects(obj_list, confidence_threshold=0.75)
         print(high_conf_list)
-        pclouds=map_utils.create_pclouds(high_conf_list,all_files,params,conf_threshold=0.5)
+        pclouds=map_utils.create_pclouds(high_conf_list,fList,params,conf_threshold=0.5)
     else:
-        pclouds=map_utils.create_pclouds(args.targets,all_files,params,conf_threshold=0.5)
+        pclouds=map_utils.create_pclouds(args.targets,fList,params,conf_threshold=0.5)
     for key in pclouds.keys():
         fileName=args.scan_directory+"/"+key+".ply"
         pcd=map_utils.pointcloud_open3d(pclouds[key]['xyz'],pclouds[key]['rgb'])
