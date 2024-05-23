@@ -6,8 +6,8 @@ NEW_DIR_ROOT=$2
 ROTATED_DIR=${NEW_DIR_ROOT}/rotated
 
 echo "Prepare 1 - checking need for rotated images"
-A1=$(ls $ROTATED_DIR/*.jpg | wc -l)
-B1=$(ls $NEW_DIR_ROOT/color/*.jpg | wc -l)
+A1=$(ls $ROTATED_DIR/*.png | wc -l)
+B1=$(ls $NEW_DIR_ROOT/color/*.png | wc -l)
 if [[ $A1 -ne $B1 ]]; then
     echo "Rotated image count not equal to color image count - rerunning rotate script"
     ./rotate_images.sh $NEW_DIR_ROOT/color/ $ROTATED_DIR
@@ -19,27 +19,27 @@ IMAGE_DIR=${NEW_DIR_ROOT}/images_combined
 if [[ ! -d $IMAGE_DIR ]]; then
     mkdir $IMAGE_DIR
 fi
-A1=$(ls $INITIAL_DIR/images/*.jpg | wc -l)
-B1=$(ls $IMAGE_DIR/frame_*.jpg | wc -l)
+A1=$(ls $INITIAL_DIR/images/*.png | wc -l)
+B1=$(ls $IMAGE_DIR/frame_*.png | wc -l)
 if [[ $A1 -ne $B1 ]]; then
     echo "Images from original directory need to be copied over"
     # echo "rm $IMAGE_DIR/*"
     rm $IMAGE_DIR/*
-    # echo "cp -r $INITIAL_DIR/images/*.jpg $IMAGE_DIR"
-    cp -r $INITIAL_DIR/images/*.jpg $IMAGE_DIR
+    # echo "cp -r $INITIAL_DIR/images/*.png $IMAGE_DIR"
+    cp -r $INITIAL_DIR/images/*.png $IMAGE_DIR
 fi
 rm -rf ${COLMAP_DIR}
 mkdir $COLMAP_DIR
 cp $INITIAL_DIR/colmap/database.db $COLMAP_DIR
 
 echo "Prepare 3 - Copy new data into colmap directory"
-A1=$(ls $ROTATED_DIR/*.jpg | wc -l)
-B1=$(ls $IMAGE_DIR/new_*.jpg | wc -l)
+A1=$(ls $ROTATED_DIR/*.png | wc -l)
+B1=$(ls $IMAGE_DIR/new_*.png | wc -l)
 if [[ $A1 -ne $B1 ]]; then
     echo "Rotated images not copied to $IMAGE_DIR - copying"
 
     cd $ROTATED_DIR
-    for szFile in *.jpg
+    for szFile in *.png
     do
         cp ${szFile} $IMAGE_DIR/new_$szFile
     done
