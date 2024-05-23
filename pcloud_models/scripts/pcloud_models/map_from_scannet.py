@@ -16,22 +16,22 @@ def load_camera_info(info_file):
     info_dict = {}
     with open(info_file) as f:
         for line in f:
+            if line[-1]=='\n':
+                line=line[:-1]
             (key, val) = line.split(" = ")
             if key=='sceneType':
-                if val[-1]=='\n':
-                    val=val[:-1]
                 info_dict[key] = val
-            elif key=='axisAlignment':
+            elif key=='axisAlignment' or key=='colorToDepthExtrinsics':
                 info_dict[key] = np.fromstring(val, sep=' ')
             else:
                 info_dict[key] = float(val)
 
     if 'axisAlignment' not in info_dict:
-       rot_matrix = np.identity(4)
+        rot_matrix = np.identity(4)
     else:
         rot_matrix = info_dict['axisAlignment'].reshape(4, 4)
-
-    return map_utils.camera_params(info_dict['colorHeight'], info_dict['colorWidth'],info_dict['fx_color'],info_dict['fy_color'],info_dict['mx_color'],info_dict['my_color'],rot_matrix)
+    
+    return map_utils.camera_params(info_dict['colorHeight'], info_dict['colorWidth'],info_dict['fx_color'],info_dict['fy_color'],info_dict['mx_color'],info_dict['my_color'],rot_matrix), info_dict
 
 def read_scannet_pose(pose_fName):
     # Get the pose - 
