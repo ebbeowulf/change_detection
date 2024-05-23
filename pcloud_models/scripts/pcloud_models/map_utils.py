@@ -118,19 +118,26 @@ def pointcloud_open3d(xyz_points,rgb_points=None,max_num_points=2000000):
 
 # Combine together multiple point clouds into a single
 #   cloud and display the result using open3d
-def visualize_combined_xyzrgb(fList:rgbd_file_list, params:camera_params, howmany_files=100):
+def visualize_combined_xyzrgb(fList:rgbd_file_list, params:camera_params, howmany_files=100, skip=0):
     rows=torch.tensor(np.tile(np.arange(params.height).reshape(params.height,1),(1,params.width))-params.cy)
     cols=torch.tensor(np.tile(np.arange(params.width),(params.height,1))-params.cx)
 
     combined_xyz=np.zeros((0,3),dtype=float)
     combined_rgb=np.zeros((0,3),dtype=np.uint8)
 
+    rot_matrixT=torch.tensor(params.rot_matrix,device=DEVICE)
+
+    howmany=0
     count=0
     for key in range(max(fList.keys())):
         if not fList.is_key(key):
             continue
-
+        count+=1
+        if count<=skip:
+            continue
+        count=0
         # Create the generic depth data
+        print(fList.get_color_fileName(key))
         colorI=cv2.imread(fList.get_color_fileName(key), -1)
         depthI=cv2.imread(fList.get_depth_fileName(key), -1)
         depthT=torch.tensor(depthI.astype('float')/1000.0)
@@ -140,7 +147,7 @@ def visualize_combined_xyzrgb(fList:rgbd_file_list, params:camera_params, howman
         depth_mask=(depthT>1e-4)*(depthT<10.0)
 
         # Rotate the points into the right space
-        M=torch.matmul(params.rot_matrix,torch.tensor(fList.get_pose(key)))
+        M=torch.matmul(rot_matrixT,torch.tensor(fList.get_pose(key),device=DEVICE))
         pts=torch.stack([x[depth_mask],y[depth_mask],depthT[depth_mask],torch.ones(((depth_mask>0).sum()))],dim=1)
         pts_rot=torch.matmul(M,pts.transpose(0,1))
         pts_rot=pts_rot[:3,:].transpose(0,1)
@@ -148,8 +155,8 @@ def visualize_combined_xyzrgb(fList:rgbd_file_list, params:camera_params, howman
         if pts_rot.shape[0]>100:
             combined_xyz=np.vstack((combined_xyz,pts_rot.cpu().numpy()))
             combined_rgb=np.vstack((combined_rgb,colorT[depth_mask].cpu().numpy()))
-        count+=1
-        if count==howmany_files:
+        howmany+=1
+        if howmany==howmany_files:
             break
     pcd=pointcloud_open3d(combined_xyz,rgb_points=combined_rgb)
     o3d.visualization.draw_geometries([pcd])
@@ -248,10 +255,19 @@ def get_center_point(depthT:torch.tensor, combo_mask:torch.tensor, xy_bbox, neig
     whichD=dist.argmin()
     return (indices[whichD].cpu()+torch.tensor([minR,minC])).tolist()
 
+def get_rotated_points(x, y, depth, filtered_maskT, rot_matrix):
+    pts=torch.stack([x[filtered_maskT],
+                        y[filtered_maskT],
+                        depth[filtered_maskT],
+                        torch.ones(((filtered_maskT>0).sum()),
+                        device=DEVICE)],dim=1)
+    pts_rot=torch.matmul(rot_matrix,pts.transpose(0,1))
+    return pts_rot[:3,:].transpose(0,1)
+
 # Create pclouds for all of the indicated target classes, saving the resulting cloud to the
 #   disk so that it does not need to be re-calculated each time. Note that the connected components
 #   filter is being applied each time.
-def create_pclouds(tgt_classes:list, fList:rgbd_file_list, params:camera_params, conf_threshold=0.5):
+def create_pclouds(tgt_classes:list, fList:rgbd_file_list, params:camera_params, conf_threshold=0.5, use_connected_components=True):
     YS=yolo_segmentation()
     rows=torch.tensor(np.tile(np.arange(params.height).reshape(params.height,1),(1,params.width))-params.cy,device=DEVICE)
     cols=torch.tensor(np.tile(np.arange(params.width),(params.height,1))-params.cx,device=DEVICE)
@@ -284,37 +300,38 @@ def create_pclouds(tgt_classes:list, fList:rgbd_file_list, params:camera_params,
             for cls in tgt_classes:
                 cls_mask=YS.get_mask(cls)
                 if cls_mask is not None:
-                    save_fName=fList.get_class_pcloud_fileName(key,cls)
-                    # Load or create the connected components mask for this object type
-                    try:
-                        if os.path.exists(save_fName):
-                            with open(save_fName, 'rb') as handle:
-                                filtered_maskT=pickle.load(handle)
-                        else:
-                            combo_mask=(torch.tensor(cls_mask,device=DEVICE)>conf_threshold)*depth_mask
-                            # Find the list of boxes associated with this object
-                            which_boxes=np.where(np.array(YS.cl_labelID)==YS.label2id[cls])[0]
-                            filtered_maskT=None
-                            for box_idx in range(which_boxes.shape[0]):
-                                # Pick a point from the center of the mask to use as a centroid...
-                                ctrRC=get_center_point(depthT, combo_mask, YS.cl_boxes[which_boxes[box_idx]])
+                    if use_connected_components:
+                        save_fName=fList.get_class_pcloud_fileName(key,cls)
+                        # Load or create the connected components mask for this object type
+                        try:
+                            if os.path.exists(save_fName):
+                                with open(save_fName, 'rb') as handle:
+                                    filtered_maskT=pickle.load(handle)
+                            else:
+                                combo_mask=(torch.tensor(cls_mask,device=DEVICE)>conf_threshold)*depth_mask
+                                # Find the list of boxes associated with this object
+                                which_boxes=np.where(np.array(YS.cl_labelID)==YS.label2id[cls])[0]
+                                filtered_maskT=None
+                                for box_idx in range(which_boxes.shape[0]):
+                                    # Pick a point from the center of the mask to use as a centroid...
+                                    ctrRC=get_center_point(depthT, combo_mask, YS.cl_boxes[which_boxes[box_idx]])
 
-                                maskT=connected_components_filter(ctrRC,depthT, combo_mask, neighborhood=10)
-                                # Combine masks from multiple objects
-                                if filtered_maskT is None:
-                                    filtered_maskT=maskT
-                                else:
-                                    filtered_maskT=filtered_maskT*maskT
+                                    maskT=connected_components_filter(ctrRC,depthT, combo_mask, neighborhood=10)
+                                    # Combine masks from multiple objects
+                                    if filtered_maskT is None:
+                                        filtered_maskT=maskT
+                                    else:
+                                        filtered_maskT=filtered_maskT*maskT
 
-                            with open(save_fName,'wb') as handle:
-                                pickle.dump(filtered_maskT, handle, protocol=pickle.HIGHEST_PROTOCOL)
-                    except Exception as e:
-                        print("Exception " + str(e) +" - skipping")
-                        continue
+                                with open(save_fName,'wb') as handle:
+                                    pickle.dump(filtered_maskT, handle, protocol=pickle.HIGHEST_PROTOCOL)
+                        except Exception as e:
+                            print("Exception " + str(e) +" - skipping")
+                            continue
+                    else:
+                        filtered_maskT=(torch.tensor(cls_mask,device=DEVICE)>conf_threshold)*depth_mask
 
-                    pts=torch.stack([x[filtered_maskT],y[filtered_maskT],depthT[filtered_maskT],torch.ones(((filtered_maskT>0).sum()),device=DEVICE)],dim=1)
-                    pts_rot=torch.matmul(M,pts.transpose(0,1))
-                    pts_rot=pts_rot[:3,:].transpose(0,1)
+                    pts_rot=get_rotated_points(x,y,depthT,filtered_maskT,M) 
                     if pts_rot.shape[0]>100:
                         pclouds[cls]['xyz']=np.vstack((pclouds[cls]['xyz'],pts_rot.cpu().numpy()))
                         pclouds[cls]['rgb']=np.vstack((pclouds[cls]['rgb'],colorT[filtered_maskT].cpu().numpy()))
@@ -322,16 +339,16 @@ def create_pclouds(tgt_classes:list, fList:rgbd_file_list, params:camera_params,
             continue
     return pclouds
 
-def create_pclouds_from_images(fList:rgbd_file_list, params:camera_params, targets:list=None, display_pclouds=False):
+def create_pclouds_from_images(fList:rgbd_file_list, params:camera_params, targets:list=None, display_pclouds=False, use_connected_components=False):
     process_images_with_yolo(fList)
     if targets is None:
         obj_list=create_object_list(fList)
         print("Detected Objects (Conf > 0.75)")
         high_conf_list=get_high_confidence_objects(obj_list, confidence_threshold=0.75)
         print(high_conf_list)
-        pclouds=create_pclouds(high_conf_list,fList,params,conf_threshold=0.5)
+        pclouds=create_pclouds(high_conf_list,fList,params,conf_threshold=0.5,use_connected_components=use_connected_components)
     else:
-        pclouds=create_pclouds(targets,fList,params,conf_threshold=0.5)
+        pclouds=create_pclouds(targets,fList,params,conf_threshold=0.5,use_connected_components=use_connected_components)
     for key in pclouds.keys():
         pdb.set_trace()
         fileName=fList.intermediate_save_dir+"/"+key+".ply"
