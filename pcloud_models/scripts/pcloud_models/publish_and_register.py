@@ -7,11 +7,36 @@ from cv_bridge import CvBridge
 import cv2
 import copy
 import glob
+import tf
+from geometry_msgs.msg import TransformStamped
 import sys
-# from map_from_scannet import load_camera_info
+import tf2_ros
 
-ROOT_DIR="/home/ebeowulf/projects/ScanNet/data/scans/scene0706_00/raw_output/"
-CAMINFO_FILE="/home/ebeowulf/projects/ScanNet/data/scans/scene0706_00/scene0706_00.txt"
+ROOT_DIR="/home/ebeowulf/projects/ScanNet/data/scans/scene0000_00/raw_output/"
+CAMINFO_FILE="/home/ebeowulf/projects/ScanNet/data/scans/scene0000_00/scene0000_00.txt"
+
+# ROOT_DIR="/home/ebeowulf/projects/ScanNet/data/scans/scene0706_00/raw_output/"
+# CAMINFO_FILE="/home/ebeowulf/projects/ScanNet/data/scans/scene0706_00/scene0706_00.txt"
+
+def static_transform_broadcaster(parent_frame, child_frame, transform_matrix):
+    broadcaster = tf2_ros.StaticTransformBroadcaster()
+    static_transformStamped = TransformStamped()
+
+    static_transformStamped.header.stamp = rospy.Time.now()
+    static_transformStamped.header.frame_id = parent_frame
+    static_transformStamped.child_frame_id = child_frame
+
+    static_transformStamped.transform.translation.x = transform_matrix[0,3]
+    static_transformStamped.transform.translation.y = transform_matrix[1,3]
+    static_transformStamped.transform.translation.z = transform_matrix[2,3]
+
+    quat = tf.transformations.quaternion_from_matrix(transform_matrix)
+    static_transformStamped.transform.rotation.x = quat[0]
+    static_transformStamped.transform.rotation.y = quat[1]
+    static_transformStamped.transform.rotation.z = quat[2]
+    static_transformStamped.transform.rotation.w = quat[3]
+
+    broadcaster.sendTransform(static_transformStamped)
 
 def load_camera_info(info_file):
     info_dict = {}
@@ -68,30 +93,41 @@ class publish_and_register():
         else:
             self.counter+=1
 
+    # def next(self):
+    #     self.publish_single(self.all_files[0][0:-9])
+
     def get_current_root_file(self):
         return self.all_files[self.counter][0:-9]
     
     def publish_single(self, file_root):
         print("Publish: " + file_root)
-        H=Header()
-        H.frame_id="camera"
-        H.stamp=rospy.Time.now()
+        tstamp=rospy.Time.now()
         try:
             colorI=cv2.imread(file_root+".color.jpg",-1)
             depthI=cv2.imread(file_root+".depth.pgm",-1)     
 
+            # PUblish the color camera info message
             cinfo_msg=copy.copy(self.cinfo_color)
-            cinfo_msg.header=H
+            cinfo_msg.header.stamp=tstamp
+            cinfo_msg.header.frame_id=self.color_frame
             self.pub_colorInfo.publish(cinfo_msg)
+
+            # Publish the color image
             colorMsg=self.br.cv2_to_imgmsg(colorI,"bgr8")
-            colorMsg.header=H
+            colorMsg.header.stamp=tstamp
+            colorMsg.header.frame_id=self.color_frame
             self.pub_color.publish(colorMsg)
 
-            cinfo_msg=copy.copy(self.cinfo_depth)
-            cinfo_msg.header=H
-            self.pub_depthInfo.publish(cinfo_msg)
+            # Publish the depth camera info message
+            dinfo_msg=copy.copy(self.cinfo_depth)
+            dinfo_msg.header.stamp=tstamp
+            dinfo_msg.header.frame_id=self.depth_frame
+            self.pub_depthInfo.publish(dinfo_msg)
+
+            # Publish the depth image
             depthMsg=self.br.cv2_to_imgmsg(depthI)
-            depthMsg.header=H
+            depthMsg.header.stamp=tstamp
+            depthMsg.header.frame_id=self.depth_frame
             self.pub_depth.publish(depthMsg)
             return True
         except Exception as e:
@@ -100,7 +136,7 @@ class publish_and_register():
 
     def create_camera_info(self, caminfo_file):
         # Rotating the mesh to axis aligned
-        self.info_dict=load_camera_info(caminfo_file)
+        cam_params, self.info_dict=load_camera_info(caminfo_file)
         
         self.cinfo_color=CameraInfo()
         self.cinfo_color.distortion_model="pinhole"
@@ -123,6 +159,21 @@ class publish_and_register():
         self.cinfo_depth.P=[self.info_dict['fx_depth'], 0, self.info_dict['mx_depth'], 0, 
                             0, self.info_dict['fy_depth'], self.info_dict['my_depth'], 0, 
                             0, 0, 1, 0]
+
+        # Even though a transform was provided - it looks like the depth
+        #   images in ScanNet have already been aligned ... adding the extrinsics
+        #   worsens the alignment, at least in some cases
+        if 1: #'colorToDepthExtrinsics' not in self.info_dict:
+            self.depth_frame="camera/depth"
+            self.color_frame="camera/rgb"
+            extrinsics=np.identity(4)
+        else:
+            extrinsics = self.info_dict['colorToDepthExtrinsics'].reshape(4, 4)
+            self.depth_frame="camera/depth"
+            self.color_frame="camera/rgb"
+        static_transform_broadcaster(self.color_frame, self.depth_frame, extrinsics)
+
+
 
     def depth_reg_sub(self, image_msg:Image):
         print("Image received")
