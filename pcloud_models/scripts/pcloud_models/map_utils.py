@@ -3,9 +3,10 @@ import pickle
 import open3d as o3d
 import numpy as np
 import cv2
-from change_detection.yolo_segmentation import yolo_segmentation
 import os
 import pdb
+from change_detection.segmentation import image_segmentation
+import copy
 
 # DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 DEVICE = torch.device("cpu")
@@ -46,9 +47,20 @@ class rgbd_file_list():
     def get_color_fileName(self, id:int):
         return self.color_image_dir+self.all_files[id]['color']
 
+    def get_segmentation_fileName(self, id:int, is_yolo:bool, tgt_class:str):
+        if is_yolo:
+            return self.get_yolo_fileName(id)
+        else:
+            return self.get_clip_fileName(id, tgt_class)
+        
     def get_yolo_fileName(self, id:int):
         return self.intermediate_save_dir+self.all_files[id]['color']+".yolo.pkl"
-    
+
+    def get_clip_fileName(self, id:int, tgt_class:str):
+        cls_str=copy.copy(tgt_class)
+        cls_str.replace(" ","_")
+        return self.intermediate_save_dir+self.all_files[id]['color']+".%s.clip.pkl"%(cls_str)
+
     def get_depth_fileName(self, id:int):
         return self.depth_image_dir+self.all_files[id]['depth']
     
@@ -64,31 +76,43 @@ class rgbd_file_list():
 #   original color images
 def process_images_with_yolo(fList:rgbd_file_list):
     print("process_images")
+    from change_detection.yolo_segmentation import yolo_segmentation
     YS=yolo_segmentation()
     for key in fList.keys():
         print(fList.get_color_fileName(key))
-        pkl=fList.get_yolo_fileName(key)
-        if not os.path.exists(pkl):
-            img,results=YS.process_file(fList.get_color_fileName(key))
-            with open(pkl, 'wb') as handle:
-                pickle.dump(results, handle, protocol=pickle.HIGHEST_PROTOCOL)
+        pkl_fName=fList.get_yolo_fileName(key)
+        if not os.path.exists(pkl_fName):
+            img=YS.process_file(fList.get_color_fileName(key),save_fileName=pkl_fName)
+
+def process_images_with_clip(fList:rgbd_file_list, clip_targets:list):
+    print("process_images")
+    from change_detection.clip_segmentation import clip_seg
+    YS=clip_seg(clip_targets)
+    for key in fList.keys():
+        print(fList.get_color_fileName(key))
+        for target in clip_targets:
+            pkl_fName=fList.get_clip_fileName(key,target)
+            if not os.path.exists(pkl_fName):
+                img=YS.process_file(fList.get_color_fileName(key),save_fileName=pkl_fName)
 
 # Create a list of all of the objects recognized by yolo
 #   across all files. Will only load existing pkl files, not 
 #   create any new ones
-def create_object_list(fList:rgbd_file_list):
+def create_yolo_object_list(fList:rgbd_file_list):
+    from change_detection.yolo_segmentation import yolo_segmentation
+
     YS=yolo_segmentation()
     obj_list=dict()
     for key in fList.keys():
-        with open(fList.get_yolo_fileName(key), 'rb') as handle:
-            results=pickle.load(handle)
-            YS.load_prior_results(results)
-        for id, prob in zip(YS.cl_labelID, YS.cl_probs):
+        if not YS.load_file(fList.get_yolo_fileName(key)):
+            continue
+        
+        for id in YS.boxes.keys():
             if YS.id2label[id] not in obj_list:
-                obj_list[YS.id2label[id]]={'images': [key], 'probs': [prob]}
-            else:
+                obj_list[YS.id2label[id]]={'images': [], 'probs': []}
+            for box in YS.boxes[id]:
                 obj_list[YS.id2label[id]]['images'].append(key)
-                obj_list[YS.id2label[id]]['probs'].append(prob)
+                obj_list[YS.id2label[id]]['probs'].append(box[0])
     return obj_list
 
 # Reprocess the object list (above) to return only the set of 
@@ -267,8 +291,14 @@ def get_rotated_points(x, y, depth, filtered_maskT, rot_matrix):
 # Create pclouds for all of the indicated target classes, saving the resulting cloud to the
 #   disk so that it does not need to be re-calculated each time. Note that the connected components
 #   filter is being applied each time.
-def create_pclouds(tgt_classes:list, fList:rgbd_file_list, params:camera_params, conf_threshold=0.5, use_connected_components=True):
-    YS=yolo_segmentation()
+def create_pclouds(tgt_classes:list, fList:rgbd_file_list, params:camera_params, is_yolo:bool, conf_threshold=0.5, use_connected_components=True):
+    if is_yolo:
+        from change_detection.yolo_segmentation import yolo_segmentation
+        YS=yolo_segmentation()
+    else:
+        from change_detection.clip_segmentation import clip_segmentation
+        YS=clip_segmentation(tgt_classes)
+
     rows=torch.tensor(np.tile(np.arange(params.height).reshape(params.height,1),(1,params.width))-params.cy,device=DEVICE)
     cols=torch.tensor(np.tile(np.arange(params.width),(params.height,1))-params.cx,device=DEVICE)
 
@@ -282,9 +312,6 @@ def create_pclouds(tgt_classes:list, fList:rgbd_file_list, params:camera_params,
             continue
         print(key)
         try:
-            with open(fList.get_yolo_fileName(key), 'rb') as handle:
-                results=pickle.load(handle)
-                YS.load_prior_results(results)
             colorI=cv2.imread(fList.get_color_fileName(key), -1)
             depthI=cv2.imread(fList.get_depth_fileName(key), -1)
             depthT=torch.tensor(depthI.astype('float')/1000.0,device=DEVICE)
@@ -298,6 +325,9 @@ def create_pclouds(tgt_classes:list, fList:rgbd_file_list, params:camera_params,
 
             # Now extract a mask per category
             for cls in tgt_classes:
+                # Try to load the file
+                if not YS.load_file(fList.get_segmentation_fileName(key, is_yolo, cls)):
+                    continue
                 cls_mask=YS.get_mask(cls)
                 if cls_mask is not None:
                     if use_connected_components:
@@ -310,11 +340,11 @@ def create_pclouds(tgt_classes:list, fList:rgbd_file_list, params:camera_params,
                             else:
                                 combo_mask=(torch.tensor(cls_mask,device=DEVICE)>conf_threshold)*depth_mask
                                 # Find the list of boxes associated with this object
-                                which_boxes=np.where(np.array(YS.cl_labelID)==YS.label2id[cls])[0]
+                                boxes=YS.get_boxes(cls)
                                 filtered_maskT=None
-                                for box_idx in range(which_boxes.shape[0]):
+                                for box in boxes:
                                     # Pick a point from the center of the mask to use as a centroid...
-                                    ctrRC=get_center_point(depthT, combo_mask, YS.cl_boxes[which_boxes[box_idx]])
+                                    ctrRC=get_center_point(depthT, combo_mask, box[1])
 
                                     maskT=connected_components_filter(ctrRC,depthT, combo_mask, neighborhood=10)
                                     # Combine masks from multiple objects

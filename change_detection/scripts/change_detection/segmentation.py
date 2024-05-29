@@ -13,13 +13,23 @@ class image_segmentation():
                             # id, so that way some masks can be empty if not applicable
         self.probs = {}     # store each probability as an array per label - again as a dictionary
         self.max_probs = {} # store each probability as a maximum per label - again as a dictionary
+        self.boxes = {}     # for each class, store a list of boxes and their associated probabilities
 
-    def process_file(self, fName):
-        print("Base: process string")
+    # Process an image file - implemented in the sub-classes
+    #   fName       - file containing the image
+    #   threshold   - detection threshold to apply if applicable
+    #   save_fileName - save the resulting intermediate file? (default = no)
+    def process_file(self, fName:str, threshold:float, save_fileName:str=None):
+        print("Base: process_file")
 
-    def process_image(self, cv_image):
+    def process_image(self, cv_image, threshold:float):
         print("Base: process_image.")
-    
+
+    # Load an existing results file - returns True if successful
+    def load_file(self, fileName):
+        print("Base: load file.")
+        return False
+
     def get_all_classes(self):
         # Get all the classes
         return self.label2id
@@ -53,4 +63,9 @@ class image_segmentation():
         if id is not None and id in self.probs:
             return self.probs[id]
         return None
-    
+
+    # Get saved boxes associated with the target
+    def get_boxes(self, id_or_lbl):
+        id = self.get_id(id_or_lbl)
+        if id is not None and id in self.boxes:
+            return self.boxes[id]

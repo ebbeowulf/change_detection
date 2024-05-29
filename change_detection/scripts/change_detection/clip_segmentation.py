@@ -3,9 +3,10 @@ import torch
 import cv2
 import numpy as np
 import argparse
-from segmentation import image_segmentation
+from change_detection.segmentation import image_segmentation
 from PIL import Image
 import pdb
+import pickle
 
 #from https://github.com/NielsRogge/Transformers-Tutorials/blob/master/CLIPSeg/Zero_shot_image_segmentation_with_CLIPSeg.ipynb
 
@@ -22,12 +23,32 @@ class clip_seg(image_segmentation):
     def sigmoid(self, arr):
         return (1.0/(1.0+np.exp(-arr)))
     
-    def process_file(self, fName, threshold=0.2):
+    def load_file(self, fileName):
+        try:
+            # Otherwise load the file             
+            with open(fileName, 'rb') as handle:
+                results=pickle.load(handle)
+                self.clear_data()
+                self.max_probs=results.max_probs
+                self.boxes = results.boxes
+                self.id2label = results.id2label
+                self.label2id = results.label2id
+                self.probs = results.probs
+                self.masks = results.masks
+            return True
+        except Exception as e:
+            return False
+        
+    def process_file(self, fName, threshold=0.2, save_fileName=None):
         # Need to use PILLOW to load the color image - it has an impact on the clip model???
         image = Image.open(fName)
         # Get the clip probabilities
         self.process_image(image)
         
+        if save_fileName is not None:
+            with open(save_fileName, 'wb') as handle:
+                pickle.dump(self, handle, protocol=pickle.HIGHEST_PROTOCOL)
+
         # Convert the PIL image to opencv format and return
         return np.array(image) #[:,:,::-1]
 

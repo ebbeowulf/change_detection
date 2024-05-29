@@ -7,10 +7,29 @@ from cv_bridge import CvBridge
 import cv2
 import copy
 import glob
-from map_from_scannet import load_camera_info
+import sys
+# from map_from_scannet import load_camera_info
 
 ROOT_DIR="/home/ebeowulf/projects/ScanNet/data/scans/scene0706_00/raw_output/"
 CAMINFO_FILE="/home/ebeowulf/projects/ScanNet/data/scans/scene0706_00/scene0706_00.txt"
+
+def load_camera_info(info_file):
+    info_dict = {}
+    with open(info_file) as f:
+        for line in f:
+            if line[-1]=='\n':
+                line=line[:-1]
+            (key, val) = line.split(" = ")
+            if key=='sceneType':
+                info_dict[key] = val
+            elif key=='axisAlignment':
+                info_dict[key] = np.fromstring(val, sep=' ')
+            elif key=='colorToDepthExtrinsics':
+                info_dict[key] = np.fromstring(val, sep=' ')
+            else:
+                info_dict[key] = float(val)
+
+    return info_dict
 
 class publish_and_register():
     def __init__(self, root_dir, caminfo_file):
@@ -24,10 +43,10 @@ class publish_and_register():
 
         self.br = CvBridge()
 
+        self.counter=0
         rospy.Timer(rospy.Duration(2.0),self.timer_cb)
         self.last_counter=-1
         self.all_files = glob.glob(root_dir+"/*.txt")
-        self.counter=0
         rospy.sleep(1.0)
         self.next()
     
@@ -41,8 +60,7 @@ class publish_and_register():
     def next(self):
         if self.counter>=len(self.all_files):
             print("Finished")
-            import sys
-            sys.exit(-1)
+            rospy.signal_shutdown("Finished ... quitting now")
 
         if self.all_files[self.counter].endswith(".pose.txt"):            
             if not (self.publish_single(self.get_current_root_file())):
@@ -123,5 +141,11 @@ class publish_and_register():
     
 if __name__ == '__main__':
     rospy.init_node("scannet_publisher")
-    RP=publish_and_register(ROOT_DIR, CAMINFO_FILE)
+    root_dir=rospy.get_param('~root_dir')
+    r_split=root_dir.split('/')
+    if r_split[-1]=='':
+        cam_info=root_dir+r_split[-2]+".txt"
+    else:
+        cam_info=root_dir+"/" + r_split[-1]+".txt"
+    RP=publish_and_register(root_dir+"/raw_output/", cam_info)
     rospy.spin()

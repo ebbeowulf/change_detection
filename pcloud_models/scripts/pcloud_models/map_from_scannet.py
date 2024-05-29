@@ -1,4 +1,3 @@
-from change_detection.yolo_segmentation import yolo_segmentation
 import cv2
 import numpy as np
 import argparse
@@ -16,12 +15,14 @@ def load_camera_info(info_file):
     info_dict = {}
     with open(info_file) as f:
         for line in f:
+            if line[-1]=='\n':
+                line=line[:-1]
             (key, val) = line.split(" = ")
             if key=='sceneType':
-                if val[-1]=='\n':
-                    val=val[:-1]
                 info_dict[key] = val
             elif key=='axisAlignment':
+                info_dict[key] = np.fromstring(val, sep=' ')
+            elif key=='colorToDepthExtrinsics':
                 info_dict[key] = np.fromstring(val, sep=' ')
             else:
                 info_dict[key] = float(val)
@@ -74,23 +75,32 @@ if __name__ == '__main__':
     parser.add_argument('param_file',type=str,help='camera parameter file for this scene')
     parser.add_argument('--targets', type=str, nargs='*', default=None,
                     help='Set of target classes to build point clouds for')
+    parser.add_argument('--clip', dest='yolo', action='store_false')
+    parser.add_argument('--yolo', dest='yolo', action='store_true')
+    parser.set_defaults(yolo=True)
     # parser.add_argument('--targets',type=list, nargs='+', default=None, help='Set of target classes to build point clouds for')
     args = parser.parse_args()
     fList=build_file_structure(args.scan_directory, args.scan_directory+"/save_results")
     params=load_camera_info(args.param_file)
-    map_utils.process_images_with_yolo(fList)
+    if args.yolo:
+        map_utils.process_images_with_yolo(fList)
+    else:
+        map_utils.process_images_with_clip(fList,args.targets)
     # create_map(args.tgt_class,all_files)
     # obj_list=create_object_list(all_files)
     # obj_list=['bed','vase','potted plant','tv','refrigerator','chair']
     # create_combined_xyzrgb(obj_list, all_files, params)
     if args.targets is None:
-        obj_list=map_utils.create_object_list(fList)
+        if not args.yolo:
+            print("Must specify a target if using clip segmentation")
+            quit()
+        obj_list=map_utils.create_yolo_object_list(fList)
         print("Detected Objects (Conf > 0.75)")
         high_conf_list=map_utils.get_high_confidence_objects(obj_list, confidence_threshold=0.75)
         print(high_conf_list)
-        pclouds=map_utils.create_pclouds(high_conf_list,fList,params,conf_threshold=0.5)
+        pclouds=map_utils.create_pclouds(high_conf_list,fList,params, args.yolo, conf_threshold=0.5)
     else:
-        pclouds=map_utils.create_pclouds(args.targets,fList,params,conf_threshold=0.5)
+        pclouds=map_utils.create_pclouds(args.targets,fList,params, args.yolo, conf_threshold=0.5)
     for key in pclouds.keys():
         fileName=args.scan_directory+"/"+key+".ply"
         pcd=map_utils.pointcloud_open3d(pclouds[key]['xyz'],pclouds[key]['rgb'])
