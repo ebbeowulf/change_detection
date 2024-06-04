@@ -42,17 +42,20 @@ def load_camera_info(info_file):
     info_dict = {}
     with open(info_file) as f:
         for line in f:
-            if line[-1]=='\n':
-                line=line[:-1]
-            (key, val) = line.split(" = ")
-            if key=='sceneType':
-                info_dict[key] = val
-            elif key=='axisAlignment':
-                info_dict[key] = np.fromstring(val, sep=' ')
-            elif key=='colorToDepthExtrinsics':
-                info_dict[key] = np.fromstring(val, sep=' ')
-            else:
-                info_dict[key] = float(val)
+            try:
+                if line[-1]=='\n':
+                    line=line[:-1]
+                (key, val) = line.split(" = ")
+                if key=='sceneType':
+                    info_dict[key] = val
+                elif key=='axisAlignment':
+                    info_dict[key] = np.fromstring(val, sep=' ')
+                elif key=='colorToDepthExtrinsics':
+                    info_dict[key] = np.fromstring(val, sep=' ')
+                else:
+                    info_dict[key] = float(val)
+            except Exception as e:
+                pdb.set_trace()
 
     return info_dict
 
@@ -136,7 +139,7 @@ class publish_and_register():
 
     def create_camera_info(self, caminfo_file):
         # Rotating the mesh to axis aligned
-        cam_params, self.info_dict=load_camera_info(caminfo_file)
+        self.info_dict=load_camera_info(caminfo_file)
         
         self.cinfo_color=CameraInfo()
         self.cinfo_color.distortion_model="pinhole"

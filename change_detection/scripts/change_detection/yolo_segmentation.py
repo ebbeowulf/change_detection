@@ -48,7 +48,7 @@ class yolo_segmentation(image_segmentation):
 
         return cv_image
 
-    def load_file(self, fileName):
+    def load_file(self, fileName, threshold=None):
         try:
             # Don't reload the same file over and over
             if self.loaded_fileName==fileName:

@@ -22,9 +22,6 @@ class image_segmentation():
     def process_file(self, fName:str, threshold:float, save_fileName:str=None):
         print("Base: process_file")
 
-    def process_image(self, cv_image, threshold:float):
-        print("Base: process_image.")
-
     # Load an existing results file - returns True if successful
     def load_file(self, fileName):
         print("Base: load file.")

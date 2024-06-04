@@ -7,14 +7,19 @@ from change_detection.segmentation import image_segmentation
 from PIL import Image
 import pdb
 import pickle
+from sklearn.cluster import DBSCAN
 
 #from https://github.com/NielsRogge/Transformers-Tutorials/blob/master/CLIPSeg/Zero_shot_image_segmentation_with_CLIPSeg.ipynb
+
+# DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 class clip_seg(image_segmentation):
     def __init__(self, prompts):
         print("Reading model")
         self.processor = CLIPSegProcessor.from_pretrained("CIDAS/clipseg-rd64-refined")
         self.model = CLIPSegForImageSegmentation.from_pretrained("CIDAS/clipseg-rd64-refined")
+        # if DEVICE=='cuda':
+        #     self.model.cuda()
         self.prompts=prompts
         self.id2label={idx: key for idx,key in enumerate(self.prompts)}
         self.label2id={self.id2label[key]: key for key in self.id2label }
@@ -23,36 +28,37 @@ class clip_seg(image_segmentation):
     def sigmoid(self, arr):
         return (1.0/(1.0+np.exp(-arr)))
     
-    def load_file(self, fileName):
+    def load_file(self, fileName, threshold=0.5):
         try:
             # Otherwise load the file             
             with open(fileName, 'rb') as handle:
-                results=pickle.load(handle)
+                save_data=pickle.load(handle)
                 self.clear_data()
-                self.max_probs=results.max_probs
-                self.boxes = results.boxes
-                self.id2label = results.id2label
-                self.label2id = results.label2id
-                self.probs = results.probs
-                self.masks = results.masks
-            return True
+                if save_data['prompts']==self.prompts:
+                    self.set_data(save_data['outputs'],save_data['image_size'],threshold)
+                    return True
+                else:
+                    print("Prompts in saved file do not match ... skipping")
         except Exception as e:
-            return False
+            print(e)
+        return False
         
     def process_file(self, fName, threshold=0.2, save_fileName=None):
         # Need to use PILLOW to load the color image - it has an impact on the clip model???
         image = Image.open(fName)
         # Get the clip probabilities
-        self.process_image(image)
+        outputs = self.process_image(image)
+        self.set_data(outputs,image.size,threshold)
         
         if save_fileName is not None:
+            save_data={'outputs': outputs, 'image_size': image.size, 'prompts': self.prompts}
             with open(save_fileName, 'wb') as handle:
-                pickle.dump(self, handle, protocol=pickle.HIGHEST_PROTOCOL)
+                pickle.dump(save_data, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
         # Convert the PIL image to opencv format and return
         return np.array(image) #[:,:,::-1]
 
-    def process_image(self, image, threshold=0.2):
+    def process_image(self, image):
         # print("Clip Inference")
         self.clear_data()
         try:
@@ -64,20 +70,54 @@ class clip_seg(image_segmentation):
             print("Exception during inference step - returning")
             return
 
+        return outputs
+      
+    # cluster the specified points
+    def build_dbscan_boxes(self, key, threshold, eps=10, min_samples=100, MAX_CLUSTERING_SAMPLES=50000):
+        self.boxes[key]=[]
+        if self.max_probs[key]<threshold:            
+            return
+        
+        rows,cols=np.nonzero(self.masks[0])
+        xy_grid_pts=np.vstack((cols,rows)).transpose()
+        scores=self.probs[key][rows,cols]
+        if xy_grid_pts is None or xy_grid_pts.shape[0]<min_samples:
+            return
+
+        # Need to contrain the maximum number of points - else dbscan will be extremely slow
+        if xy_grid_pts.shape[0]>MAX_CLUSTERING_SAMPLES:        
+            rr=np.random.choice(np.arange(xy_grid_pts.shape[0]),size=MAX_CLUSTERING_SAMPLES)
+            xy_grid_pts=xy_grid_pts[rr]
+            scores=scores[rr]
+
+        CL2=DBSCAN(eps=eps, min_samples=min_samples).fit(xy_grid_pts,sample_weight=scores)
+        for idx in range(10):
+            whichP=np.where(CL2.labels_== idx)            
+            if len(whichP[0])<1:
+                break
+            box=np.hstack((xy_grid_pts[whichP].min(0),xy_grid_pts[whichP].max(0)))
+            self.boxes[key].append((scores[whichP].max(),box))
+    
+    def set_data(self, outputs, image_size, threshold=0.2):
         if len(self.prompts)>1:
             preds = outputs.logits.unsqueeze(1)
             P2=self.sigmoid(preds.numpy())
             for dim in range(preds.shape[0]):
                 self.max_probs[dim]=P2[dim,0,:,:].max()
                 print("%s = %f"%(self.prompts[dim],self.max_probs[dim]))            
-                self.probs[dim]=cv2.resize(P2[dim,0,:,:],(image.size[0],image.size[1]))
+                self.probs[dim]=cv2.resize(P2[dim,0,:,:],(image_size[0],image_size[1]))
                 self.masks[dim]=self.probs[dim]>threshold
+                self.build_dbscan_boxes(dim,threshold)
         else:
             preds = outputs.logits.unsqueeze(0)
             P2=self.sigmoid(preds.numpy())
-            self.probs[0]=cv2.resize(P2[0],(image.size[0],image.size[1]))
+            self.probs[0]=cv2.resize(P2[0],(image_size[0],image_size[1]))
             self.max_probs[0]=P2[0].max()
             self.masks[0]=self.probs[0]>threshold
+            self.build_dbscan_boxes(0,threshold)
+
+
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -88,7 +128,6 @@ if __name__ == '__main__':
 
     CS=clip_seg([args.tgt_prompt])
     image=CS.process_file(args.image, threshold=args.threshold)
-    pdb.set_trace()
     mask=CS.get_mask(0)
     if mask is None:
         print("Something went wrong - no mask to display")

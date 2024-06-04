@@ -98,6 +98,25 @@ def process_images_with_clip(fList:rgbd_file_list, clip_targets:list):
 # Create a list of all of the objects recognized by yolo
 #   across all files. Will only load existing pkl files, not 
 #   create any new ones
+def clip_threshold_evaluation(fList:rgbd_file_list, clip_targets:list, proposed_threshold:float):
+    from change_detection.clip_segmentation import clip_seg
+
+    YS=clip_seg(clip_targets)
+    for target in clip_targets:
+        maxP=[]
+        for key in fList.keys():
+            # Use a high threshold here so that we are not creating DBScan boxes unnecessarily
+            if not YS.load_file(fList.get_clip_fileName(key,target),threshold=1.0):
+                continue
+            P=YS.get_max_prob(target)
+            if P is not None:
+                maxP.append(P)
+        count=(np.array(maxP)>proposed_threshold).sum()
+        print("%s: Counted %d / %d images with detections > %f"%(target, count,len(maxP),proposed_threshold))
+
+# Create a list of all of the objects recognized by yolo
+#   across all files. Will only load existing pkl files, not 
+#   create any new ones
 def create_yolo_object_list(fList:rgbd_file_list):
     from change_detection.yolo_segmentation import yolo_segmentation
 
@@ -296,8 +315,8 @@ def create_pclouds(tgt_classes:list, fList:rgbd_file_list, params:camera_params,
         from change_detection.yolo_segmentation import yolo_segmentation
         YS=yolo_segmentation()
     else:
-        from change_detection.clip_segmentation import clip_segmentation
-        YS=clip_segmentation(tgt_classes)
+        from change_detection.clip_segmentation import clip_seg
+        YS=clip_seg(tgt_classes)
 
     rows=torch.tensor(np.tile(np.arange(params.height).reshape(params.height,1),(1,params.width))-params.cy,device=DEVICE)
     cols=torch.tensor(np.tile(np.arange(params.width),(params.height,1))-params.cx,device=DEVICE)
@@ -326,10 +345,10 @@ def create_pclouds(tgt_classes:list, fList:rgbd_file_list, params:camera_params,
             # Now extract a mask per category
             for cls in tgt_classes:
                 # Try to load the file
-                if not YS.load_file(fList.get_segmentation_fileName(key, is_yolo, cls)):
+                if not YS.load_file(fList.get_segmentation_fileName(key, is_yolo, cls),threshold=conf_threshold*2/3):
                     continue
                 cls_mask=YS.get_mask(cls)
-                if cls_mask is not None:
+                if cls_mask is not None and YS.get_max_prob(cls)>=conf_threshold and len(YS.get_boxes(cls))>0:
                     if use_connected_components:
                         save_fName=fList.get_class_pcloud_fileName(key,cls)
                         # Load or create the connected components mask for this object type
