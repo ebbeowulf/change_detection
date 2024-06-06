@@ -9,7 +9,7 @@ import torch
 import open3d as o3d
 import map_utils
 # DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-DEVICE = torch.device("cpu")
+# DEVICE = torch.device("cpu")
 
 def load_camera_info(info_file):
     info_dict = {}
@@ -98,11 +98,7 @@ if __name__ == '__main__':
         map_utils.process_images_with_yolo(fList)
     else:
         map_utils.process_images_with_clip(fList,args.targets)
-        map_utils.clip_threshold_evaluation(fList, args.targets,args.threshold)
-    # create_map(args.tgt_class,all_files)
-    # obj_list=create_object_list(all_files)
-    # obj_list=['bed','vase','potted plant','tv','refrigerator','chair']
-    # create_combined_xyzrgb(obj_list, all_files, params)
+        # map_utils.clip_threshold_evaluation(fList, args.targets,args.threshold)
     if args.targets is None:
         if not args.yolo:
             print("Must specify a target if using clip segmentation")
@@ -114,10 +110,16 @@ if __name__ == '__main__':
         pclouds=map_utils.create_pclouds(high_conf_list,fList,params, args.yolo, conf_threshold=args.threshold)
     else:
         pclouds=map_utils.create_pclouds(args.targets,fList,params, args.yolo, conf_threshold=args.threshold)
+
     for key in pclouds.keys():
-        fileName=save_dir+"/"+key+".ply"
+        ply_fileName=save_dir+"/"+key+".ply"
         pcd=map_utils.pointcloud_open3d(pclouds[key]['xyz'],pclouds[key]['rgb'])
-        o3d.io.write_point_cloud(fileName,pcd)
+        o3d.io.write_point_cloud(ply_fileName,pcd)
+        raw_fileName=save_dir+"/"+key+".raw.pkl"
+
+        with open(raw_fileName, 'wb') as handle:
+            pickle.dump(pclouds[key], handle, protocol=pickle.HIGHEST_PROTOCOL)
+
         if 0:
             o3d.visualization.draw_geometries([pcd])
 

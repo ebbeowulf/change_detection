@@ -1,5 +1,6 @@
 import numpy as np
 import pdb
+from sklearn.cluster import DBSCAN
 
 class image_segmentation():
     def __init__(self):
@@ -66,3 +67,33 @@ class image_segmentation():
         id = self.get_id(id_or_lbl)
         if id is not None and id in self.boxes:
             return self.boxes[id]
+
+    # a method for building boxes from raw probability data by clustering the specified points
+    #   this will erase previously stored boxes 
+    def build_dbscan_boxes(self, cls_target, threshold, eps=10, min_samples=100, MAX_CLUSTERING_SAMPLES=50000):
+        key = self.get_id(cls_target)
+        if key is None:
+            return
+        self.boxes[key]=[]
+        if self.max_probs[key]<threshold:            
+            return
+        
+        rows,cols=np.nonzero(self.masks[0])
+        xy_grid_pts=np.vstack((cols,rows)).transpose()
+        scores=self.probs[key][rows,cols]
+        if xy_grid_pts is None or xy_grid_pts.shape[0]<min_samples:
+            return
+
+        # Need to contrain the maximum number of points - else dbscan will be extremely slow
+        if xy_grid_pts.shape[0]>MAX_CLUSTERING_SAMPLES:        
+            rr=np.random.choice(np.arange(xy_grid_pts.shape[0]),size=MAX_CLUSTERING_SAMPLES)
+            xy_grid_pts=xy_grid_pts[rr]
+            scores=scores[rr]
+
+        CL2=DBSCAN(eps=eps, min_samples=min_samples).fit(xy_grid_pts,sample_weight=scores)
+        for idx in range(10):
+            whichP=np.where(CL2.labels_== idx)            
+            if len(whichP[0])<1:
+                break
+            box=np.hstack((xy_grid_pts[whichP].min(0),xy_grid_pts[whichP].max(0)))
+            self.boxes[key].append((scores[whichP].max(),box))

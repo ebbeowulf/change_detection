@@ -11,15 +11,15 @@ from sklearn.cluster import DBSCAN
 
 #from https://github.com/NielsRogge/Transformers-Tutorials/blob/master/CLIPSeg/Zero_shot_image_segmentation_with_CLIPSeg.ipynb
 
-# DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 class clip_seg(image_segmentation):
     def __init__(self, prompts):
         print("Reading model")
         self.processor = CLIPSegProcessor.from_pretrained("CIDAS/clipseg-rd64-refined")
         self.model = CLIPSegForImageSegmentation.from_pretrained("CIDAS/clipseg-rd64-refined")
-        # if DEVICE=='cuda':
-        #     self.model.cuda()
+        if DEVICE==torch.device("cuda"):
+            self.model.cuda()
         self.prompts=prompts
         self.id2label={idx: key for idx,key in enumerate(self.prompts)}
         self.label2id={self.id2label[key]: key for key in self.id2label }
@@ -62,7 +62,9 @@ class clip_seg(image_segmentation):
         # print("Clip Inference")
         self.clear_data()
         try:
-            inputs = self.processor(text=self.prompts, images=[image] * len(self.prompts), padding="max_length", return_tensors="pt")
+            # inputs = self.processor(text=self.prompts, images=[image] * len(self.prompts), padding="max_length", return_tensors="pt")
+            inputs = self.processor(text=self.prompts, images=[image] * len(self.prompts), return_tensors="pt")
+            inputs.to(DEVICE)
             # predict
             with torch.no_grad():
                 outputs = self.model(**inputs)
@@ -71,50 +73,34 @@ class clip_seg(image_segmentation):
             return
 
         return outputs
-      
-    # cluster the specified points
-    def build_dbscan_boxes(self, key, threshold, eps=10, min_samples=100, MAX_CLUSTERING_SAMPLES=50000):
-        self.boxes[key]=[]
-        if self.max_probs[key]<threshold:            
-            return
-        
-        rows,cols=np.nonzero(self.masks[0])
-        xy_grid_pts=np.vstack((cols,rows)).transpose()
-        scores=self.probs[key][rows,cols]
-        if xy_grid_pts is None or xy_grid_pts.shape[0]<min_samples:
-            return
-
-        # Need to contrain the maximum number of points - else dbscan will be extremely slow
-        if xy_grid_pts.shape[0]>MAX_CLUSTERING_SAMPLES:        
-            rr=np.random.choice(np.arange(xy_grid_pts.shape[0]),size=MAX_CLUSTERING_SAMPLES)
-            xy_grid_pts=xy_grid_pts[rr]
-            scores=scores[rr]
-
-        CL2=DBSCAN(eps=eps, min_samples=min_samples).fit(xy_grid_pts,sample_weight=scores)
-        for idx in range(10):
-            whichP=np.where(CL2.labels_== idx)            
-            if len(whichP[0])<1:
-                break
-            box=np.hstack((xy_grid_pts[whichP].min(0),xy_grid_pts[whichP].max(0)))
-            self.boxes[key].append((scores[whichP].max(),box))
-    
+          
     def set_data(self, outputs, image_size, threshold=0.2):
-        if len(self.prompts)>1:
-            preds = outputs.logits.unsqueeze(1)
-            P2=self.sigmoid(preds.numpy())
-            for dim in range(preds.shape[0]):
-                self.max_probs[dim]=P2[dim,0,:,:].max()
-                print("%s = %f"%(self.prompts[dim],self.max_probs[dim]))            
-                self.probs[dim]=cv2.resize(P2[dim,0,:,:],(image_size[0],image_size[1]))
-                self.masks[dim]=self.probs[dim]>threshold
-                self.build_dbscan_boxes(dim,threshold)
+        if len(outputs.logits.shape)==3:  # need to check because of old libraries auto compressing the first dimension
+            P2=torch.sigmoid(outputs.logits).to('cpu').numpy()
         else:
-            preds = outputs.logits.unsqueeze(0)
-            P2=self.sigmoid(preds.numpy())
-            self.probs[0]=cv2.resize(P2[0],(image_size[0],image_size[1]))
-            self.max_probs[0]=P2[0].max()
-            self.masks[0]=self.probs[0]>threshold
-            self.build_dbscan_boxes(0,threshold)
+            P2=torch.sigmoid(outputs.logits.unsqueeze(0)).to('cpu').numpy()
+        for dim in range(P2.shape[0]):
+            self.max_probs[dim]=P2[dim,:,:].max()
+            print("%s = %f"%(self.prompts[dim],self.max_probs[dim]))            
+            self.probs[dim]=cv2.resize(P2[dim,:,:],(image_size[0],image_size[1]))
+            self.masks[dim]=self.probs[dim]>threshold
+
+        # preds = outputs.logits.unsqueeze(1)
+        # P2=self.sigmoid(preds.numpy())
+        # for dim in range(preds.shape[0]):
+        #     self.max_probs[dim]=P2[dim,0,:,:].max()
+        #     print("%s = %f"%(self.prompts[dim],self.max_probs[dim]))            
+        #     self.probs[dim]=cv2.resize(P2[dim,0,:,:],(image_size[0],image_size[1]))
+        #     self.masks[dim]=self.probs[dim]>threshold
+        #     self.build_dbscan_boxes(dim,threshold)
+        # else:
+        #     pdb.set_trace()
+        #     preds = outputs.logits.unsqueeze(0)
+        #     P2=self.sigmoid(preds.numpy())
+        #     self.probs[0]=cv2.resize(P2[0][0],(image_size[0],image_size[1]))
+        #     self.max_probs[0]=P2[0][0].max()
+        #     self.masks[0]=self.probs[0]>threshold
+        #     self.build_dbscan_boxes(0,threshold)
 
 
 
@@ -127,12 +113,15 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     CS=clip_seg([args.tgt_prompt])
-    image=CS.process_file(args.image, threshold=args.threshold)
-    mask=CS.get_mask(0)
+    for i in range(1000):
+        print(i)
+        image=CS.process_file(args.image, threshold=args.threshold)
+        mask=CS.get_mask(0)
     if mask is None:
         print("Something went wrong - no mask to display")
     else:
         cv_image=np.array(image).astype(np.uint8)
+        pdb.set_trace()
         IM=cv2.bitwise_and(cv_image,cv_image,mask=mask.astype(np.uint8))
         cv2.imshow("res",IM)
         cv2.waitKey()
