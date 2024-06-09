@@ -112,7 +112,7 @@ if __name__ == '__main__':
         pclouds=map_utils.create_pclouds(args.targets,fList,params, args.yolo, conf_threshold=args.threshold)
 
     for key in pclouds.keys():
-        ply_fileName=save_dir+"/"+key+".ply"
+        ply_fileName=fList.get_combined_pcloud_fileName(key)
         pcd=map_utils.pointcloud_open3d(pclouds[key]['xyz'],pclouds[key]['rgb'])
         o3d.io.write_point_cloud(ply_fileName,pcd)
         raw_fileName=save_dir+"/"+key+".raw.pkl"

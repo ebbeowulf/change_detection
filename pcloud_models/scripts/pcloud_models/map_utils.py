@@ -70,6 +70,11 @@ class rgbd_file_list():
     def get_class_pcloud_fileName(self, id:int, cls:str):
         return self.intermediate_save_dir+self.all_files[id]['color']+".%s.pkl"%(cls)
 
+    def get_combined_pcloud_fileName(self, cls:str=None):
+        if cls==None:
+            return self.intermediate_save_dir+"combined.ply"
+        else:
+            return self.intermediate_save_dir+"%s.ply"%(cls)
 
 # Process all images with yolo - creating
 #   pickle files for the results and storing alongside the 
@@ -164,7 +169,7 @@ def pointcloud_open3d(xyz_points,rgb_points=None,max_num_points=2000000):
 
 # Combine together multiple point clouds into a single
 #   cloud and display the result using open3d
-def visualize_combined_xyzrgb(fList:rgbd_file_list, params:camera_params, howmany_files=100, skip=0):
+def visualize_combined_xyzrgb(fList:rgbd_file_list, params:camera_params, howmany_files=100, skip=0, max_num_points=2000000):
     rows=torch.tensor(np.tile(np.arange(params.height).reshape(params.height,1),(1,params.width))-params.cy)
     cols=torch.tensor(np.tile(np.arange(params.width),(params.height,1))-params.cx)
 
@@ -204,10 +209,7 @@ def visualize_combined_xyzrgb(fList:rgbd_file_list, params:camera_params, howman
         howmany+=1
         if howmany==howmany_files:
             break
-    pcd=pointcloud_open3d(combined_xyz,rgb_points=combined_rgb)
-    o3d.visualization.draw_geometries([pcd])
-
-    return pcd
+    return pointcloud_open3d(combined_xyz,rgb_points=combined_rgb, max_num_points=max_num_points)
 
 # Agglomerative clustering - not optimized
 #   combines points together based on distance
