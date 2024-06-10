@@ -13,20 +13,25 @@ import copy
 MAX_POINTS=200000
 
 # Global Variables
-mouse_origin=None
+mouse_clicks=[]
 image_interface=None
 
 def mouse_cb(event,x,y,flags,param):
-    global mouse_origin, image_interface
-    print("Mouse event: " + str(event))
+    global mouse_clicks, image_interface
     if event == cv2.EVENT_LBUTTONDOWN:
         print("left button down")
-        mouse_origin=(x,y)
-    elif event == cv2.EVENT_MOUSEMOVE and mouse_origin is not None:
-        print("draw arrow")
-    elif event == cv2.EVENT_LBUTTONUP and mouse_origin is not None:
+        if len(mouse_clicks)<2:
+            mouse_clicks.append((x,y))            
+        else:
+            print("Cannot add more points - box is already fully defined")
+        
+        if len(mouse_clicks)==2:
+            img=copy.copy(image_interface.fg_image)
+            img=cv2.rectangle(img,mouse_clicks[0],mouse_clicks[1],color=(255,0,0))
+            cv2.imshow(image_interface.window_name,img)
+            cv2.waitKey(1)
+    elif event == cv2.EVENT_MBUTTONDOWN:
         print("open images")
-        mouse_origin=None
 
 class drawn_image():
     def __init__(self, pointcloud, width=1280, height=720, window_name="environment"):
@@ -50,6 +55,7 @@ class drawn_image():
 
         self.window_name=window_name
         self.bg_image=self.draw_all_dots(height_range=[0.1,2.0])
+        self.fg_image=self.bg_image
 
     # Draw the dots with the specified color, returning the image
     #   optionally start with a background image. local_rgb should either be an array of size (N,3)
@@ -90,17 +96,74 @@ class drawn_image():
         row=self.height-int((xyz_pt[1]-self.minXYZ[1])/self.dy_dr)
         col=int((xyz_pt[0]-self.minXYZ[0])/self.dx_dc)
         return row,col
+
+    def rc_to_xy(self, row, col):
+        y=(self.height-row)*self.dy_dr+self.minXYZ[1]
+        # row=self.height-int((xyz_pt[1]-self.minXYZ[1])/self.dy_dr)
+        x=col*self.dx_dc+self.minXYZ[0]
+        # col=int((xyz_pt[0]-self.minXYZ[0])/self.dx_dc)
+        return x,y
+        
+    def overlay_dots(self, xyz:np.array, fixed_color=(0,0,255)):
+        return self.draw_dots(xyz,local_rgb=fixed_color, bg_image=self.bg_image)
     
-    def overlay_dots_and_box(self, xyz:np.array, fixed_color=(0,0,255)):
-        image=self.draw_dots(xyz,local_rgb=fixed_color, bg_image=self.bg_image)
-        minP=xyz.min(0)
-        maxP=xyz.max(0)
-        minR,minC=self.xyz_to_rc(minP)
-        maxR,maxC=self.xyz_to_rc(maxP)
-        return cv2.rectangle(image,(minC,minR),(maxC,maxR),color=fixed_color,thickness=2)
+    # def add_box_to_fg(self, xyz, fixed_color=(0,0,255)):
+    #     minP=xyz.min(0)
+    #     maxP=xyz.max(0)
+    #     minR,minC=self.xyz_to_rc(minP)
+    #     maxR,maxC=self.xyz_to_rc(maxP)
+    #     return cv2.rectangle(image,(minC,minR),(maxC,maxR),color=fixed_color,thickness=2)
+
+    def set_fg_image(self, cv_image:np.array):
+        self.fg_image=copy.copy(cv_image)
+
+def visualize_box(fList, pts, ctrX, ctrY, threshold=0.6):
+    # pdb.set_trace()
+    global image_interface
+    try:
+        x,y=image_interface.rc_to_xy(int(ctrY), int(ctrX))
+        closestP=np.argmin(((pts[:,:2]-[x,y])**2).sum(1))
+        z=pts[closestP,2]
+        stats=[]
+
+        for key in fList.keys():
+            M=fList.get_pose(key)
+            V1=np.matmul(M[:3,:3],[1,0,0])
+            V2=[x,y,z]-M[:3,3]
+            V2_dist=np.sqrt((V2**2).sum())
+            if V2_dist<1.0:
+                continue
+            angle=np.arccos((V1*V2/V2_dist).sum())
+            stats.append([np.abs(angle),V2_dist, key])
+        stats=np.array(stats)
+        valid_views=np.where(stats<threshold)[0]
+
+        if len(valid_views)>0:
+            rr=np.argsort(stats[valid_views,0])
+            fName=fList.get_color_fileName(stats[valid_views[rr][0],2])
+            image=cv2.imread(fName,-1)
+            if len(valid_views)>1:
+                selectedV=np.random.choice(stats[valid_views[rr[1:]],2],2)
+                fName2=fList.get_color_fileName(selectedV[0])
+                fName3=fList.get_color_fileName(selectedV[1])
+                image2=cv2.imread(fName2,-1)
+                image3=cv2.imread(fName3,-1)
+                image=np.vstack((image,image2,image3))
+                tgt_size=(int(image2.shape[0]/4.0),int(3*image2.shape[1]/4.0))
+            else:
+                tgt_size=(int(image.shape[0]/4.0),int(image.shape[1]/4.0))
+            image=cv2.resize(image,tgt_size)    
+            cv2.imshow("views",image)
+            cv2.waitKey(1)
+            # pdb.set_trace()
+    except Exception as e:
+        pdb.set_trace()
+
+    # if len(valid_views)
+
 
 def label_scannet_pcloud(root_dir, raw_dir, save_dir, targets):
-    global image_interface
+    global image_interface, mouse_clicks
 
     fList=build_file_structure(root_dir+"/"+raw_dir, root_dir+"/"+save_dir)
 
@@ -118,6 +181,7 @@ def label_scannet_pcloud(root_dir, raw_dir, save_dir, targets):
     cv2.setMouseCallback(window_name, mouse_cb)
 
     #Load target pcloud
+    annotations=dict()
     for tgt in targets:
         print(tgt)
         ply_fileName=fList.get_combined_pcloud_fileName(tgt)
@@ -130,9 +194,11 @@ def label_scannet_pcloud(root_dir, raw_dir, save_dir, targets):
             continue
 
         tgt_pts=np.array(pcl_target.points)
-        image=image_interface.overlay_dots_and_box(tgt_pts)
+        image=image_interface.overlay_dots(tgt_pts)
+        image_interface.set_fg_image(image)
+        annotations[tgt]=[]
         while(1):
-            cv2.imshow(window_name, image)
+            cv2.imshow(window_name, image_interface.fg_image)
             # cv2.imshow(window_name, image_interface.bg_image)
             input_key=cv2.waitKey(0)
             if input_key==ord('n'):
@@ -142,6 +208,36 @@ def label_scannet_pcloud(root_dir, raw_dir, save_dir, targets):
                 print("exiting labeling task")
                 import sys
                 sys.exit(-1)
+            elif input_key==ord('c'):
+                print("Clearing any existing mouse clicks")
+                mouse_clicks=[]
+            elif input_key==ord('s'):
+                if len(mouse_clicks)==2:
+                    print("Saving box")
+                    annotations[tgt].append(mouse_clicks)
+                    image=cv2.rectangle(image_interface.fg_image, mouse_clicks[0], mouse_clicks[1], color=(0,255,0))
+                    image_interface.set_fg_image(image)
+                    mouse_clicks=[]
+                else:
+                    print("Not enough points to save an annotation")
+            elif input_key==ord('v'):
+                if len(mouse_clicks)==2:
+                    ctrX=(mouse_clicks[0][0]+mouse_clicks[1][0])/2.0
+                    ctrY=(mouse_clicks[0][1]+mouse_clicks[1][1])/2.0
+                elif len(mouse_clicks)==1:
+                    ctrX=mouse_clicks[0][0]
+                    ctrY=mouse_clicks[0][1]
+                else:
+                    print("Need to select at least one point to visualize")
+                    continue
+                print("visualizing selected box")
+                visualize_box(fList, tgt_pts, ctrX, ctrY)
+            elif input_key==ord('h'):
+                print("(c)lear box - deletes the existing mouse clicks")
+                print("(s)ave box - saves an existing pair of points as an annotation for the current target object")
+                print("(v)isualize box - bring up images related to the selected area")
+                print("(n)ext object type - close the current set of annotations and move onto the next target type")
+                print("(q)uit - exit the program without saving annotations")
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
