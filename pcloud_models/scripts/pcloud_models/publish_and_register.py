@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 from sensor_msgs.msg import CameraInfo, Image
 from std_msgs.msg import Header
 import rospy

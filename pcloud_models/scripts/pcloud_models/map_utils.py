@@ -21,6 +21,13 @@ class camera_params():
         self.cy=cy
         self.rot_matrix=rot_matrix
         self.K=np.array([[fx,0,cx],[0,fy,cy],[0,0,1]])
+    
+    def globalXYZ_to_imageRC(self, tX, tY, tZ, globalM:np.array):
+        invR=np.linalg.inv(globalM)
+        Vi=np.matmul(invR,[tX, tY, tZ, 1])
+        col=Vi[0]*self.fx/Vi[2]+self.cx
+        row=Vi[1]*self.fy/Vi[2]+self.cy
+        return row,col
 
 class rgbd_file_list():
     def __init__(self, color_image_dir:str, depth_image_dir:str, intermediate_save_dir:str):

@@ -1,10 +1,10 @@
 import open3d as o3d
 import numpy as np
-from map_utils import rgbd_file_list
+from map_utils import rgbd_file_list, camera_params
 import argparse
 import cv2
 import pickle
-from map_from_scannet import build_file_structure
+from map_from_scannet import build_file_structure, load_camera_info
 import pdb
 import time
 import os
@@ -117,7 +117,16 @@ class drawn_image():
     def set_fg_image(self, cv_image:np.array):
         self.fg_image=copy.copy(cv_image)
 
-def visualize_box(fList, pts, ctrX, ctrY, threshold=0.6):
+def draw_target_circle(image, target_xyz, fList, key, cam_info:camera_params):
+    M=np.matmul(cam_info.rot_matrix,fList.get_pose(key))
+    row,col=cam_info.globalXYZ_to_imageRC(target_xyz[0],target_xyz[1],target_xyz[2],M)
+    if row<0 or row>=image.shape[0] or col<0 or col>=image.shape[1]:
+        print("Target not in image - skipping")
+        return image
+    radius=int(image.shape[0]/100)
+    return cv2.circle(image, (int(col),int(row)), radius=radius, color=(0,0,255), thickness=-1)
+
+def visualize_box(fList, pts, ctrX, ctrY, cam_info:camera_params, threshold=0.6):
     # pdb.set_trace()
     global image_interface
     try:
@@ -127,8 +136,8 @@ def visualize_box(fList, pts, ctrX, ctrY, threshold=0.6):
         stats=[]
 
         for key in fList.keys():
-            M=fList.get_pose(key)
-            V1=np.matmul(M[:3,:3],[1,0,0])
+            M=np.matmul(cam_info.rot_matrix,fList.get_pose(key))
+            V1=np.matmul(M[:3,:3],[0,0,1])
             V2=[x,y,z]-M[:3,3]
             V2_dist=np.sqrt((V2**2).sum())
             if V2_dist<1.0:
@@ -138,24 +147,29 @@ def visualize_box(fList, pts, ctrX, ctrY, threshold=0.6):
         stats=np.array(stats)
         valid_views=np.where(stats<threshold)[0]
 
-        if len(valid_views)>0:
-            rr=np.argsort(stats[valid_views,0])
-            fName=fList.get_color_fileName(stats[valid_views[rr][0],2])
-            image=cv2.imread(fName,-1)
+        if len(valid_views)>0:        
+            rr=valid_views[np.argsort(stats[valid_views,0])]
+            fName=fList.get_color_fileName(stats[rr[0],2])
+            image=cv2.imread(fName,-1)            
+            image=draw_target_circle(image, [x,y,z], fList, stats[rr[0],2], cam_info)
+            # fName=fList.get_color_fileName(1137)
+            # image=cv2.imread(fName,-1)            
+            # image=draw_target_circle(image, [x,y,z], fList, 1137, cam_info)
             if len(valid_views)>1:
-                selectedV=np.random.choice(stats[valid_views[rr[1:]],2],2)
+                selectedV=np.random.choice(stats[rr[1:],2],2)
                 fName2=fList.get_color_fileName(selectedV[0])
                 fName3=fList.get_color_fileName(selectedV[1])
                 image2=cv2.imread(fName2,-1)
+                image2=draw_target_circle(image2, [x,y,z], fList, selectedV[0], cam_info)
                 image3=cv2.imread(fName3,-1)
+                image3=draw_target_circle(image3, [x,y,z], fList, selectedV[1], cam_info)
                 image=np.vstack((image,image2,image3))
-                tgt_size=(int(image2.shape[0]/4.0),int(3*image2.shape[1]/4.0))
+                tgt_size=(int(image2.shape[1]/4.0),int(3*image2.shape[0]/4.0))
             else:
-                tgt_size=(int(image.shape[0]/4.0),int(image.shape[1]/4.0))
+                tgt_size=(int(image.shape[1]/4.0),int(image.shape[0]/4.0))
             image=cv2.resize(image,tgt_size)    
             cv2.imshow("views",image)
             cv2.waitKey(1)
-            # pdb.set_trace()
     except Exception as e:
         pdb.set_trace()
 
@@ -166,6 +180,13 @@ def label_scannet_pcloud(root_dir, raw_dir, save_dir, targets):
     global image_interface, mouse_clicks
 
     fList=build_file_structure(root_dir+"/"+raw_dir, root_dir+"/"+save_dir)
+
+    s_root=root_dir.split('/')
+    if s_root[-1]=='':
+        par_file=root_dir+"%s.txt"%(s_root[-2])
+    else:
+        par_file=root_dir+"/%s.txt"%(s_root[-1])
+    params=load_camera_info(par_file)
 
     # Pull the point cloud for drawing a background
     s2=root_dir
@@ -231,7 +252,7 @@ def label_scannet_pcloud(root_dir, raw_dir, save_dir, targets):
                     print("Need to select at least one point to visualize")
                     continue
                 print("visualizing selected box")
-                visualize_box(fList, tgt_pts, ctrX, ctrY)
+                visualize_box(fList, tgt_pts, ctrX, ctrY, params)
             elif input_key==ord('h'):
                 print("(c)lear box - deletes the existing mouse clicks")
                 print("(s)ave box - saves an existing pair of points as an annotation for the current target object")
@@ -249,4 +270,5 @@ if __name__ == '__main__':
     parser.set_defaults(yolo=True)
     # parser.add_argument('--targets',type=list, nargs='+', default=None, help='Set of target classes to build point clouds for')
     args = parser.parse_args()
+
     label_scannet_pcloud(args.root_dir, args.raw_dir, args.save_dir, args.targets)
