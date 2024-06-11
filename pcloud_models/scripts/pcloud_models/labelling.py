@@ -9,6 +9,7 @@ import pdb
 import time
 import os
 import copy
+import json
 
 MAX_POINTS=200000
 
@@ -126,13 +127,17 @@ def draw_target_circle(image, target_xyz, fList, key, cam_info:camera_params):
     radius=int(image.shape[0]/100)
     return cv2.circle(image, (int(col),int(row)), radius=radius, color=(0,0,255), thickness=-1)
 
-def visualize_box(fList, pts, ctrX, ctrY, cam_info:camera_params, threshold=0.6):
-    # pdb.set_trace()
+def get_closest_point(pts, x, y):
+    global image_interface
+    closestP=np.argmin(((pts[:,:2]-[x,y])**2).sum(1))
+    return pts[closestP]
+
+def visualize_box(fList, pts, row, col, cam_info:camera_params, threshold=0.6):
     global image_interface
     try:
-        x,y=image_interface.rc_to_xy(int(ctrY), int(ctrX))
-        closestP=np.argmin(((pts[:,:2]-[x,y])**2).sum(1))
-        z=pts[closestP,2]
+        x,y=image_interface.rc_to_xy(int(row), int(col))
+        closestP=get_closest_point(pts,x,y)
+        z=closestP[2]
         stats=[]
 
         for key in fList.keys():
@@ -172,14 +177,18 @@ def visualize_box(fList, pts, ctrX, ctrY, cam_info:camera_params, threshold=0.6)
             cv2.waitKey(1)
     except Exception as e:
         pdb.set_trace()
-
-    # if len(valid_views)
-
+    
 
 def label_scannet_pcloud(root_dir, raw_dir, save_dir, targets):
     global image_interface, mouse_clicks
 
     fList=build_file_structure(root_dir+"/"+raw_dir, root_dir+"/"+save_dir)
+
+    if os.path.exists(fList.get_annotation_file()):
+        with open(fList.get_annotation_file(),'r') as handle:
+            annotations=json.load(handle)
+    else:
+        annotations=dict()
 
     s_root=root_dir.split('/')
     if s_root[-1]=='':
@@ -202,7 +211,6 @@ def label_scannet_pcloud(root_dir, raw_dir, save_dir, targets):
     cv2.setMouseCallback(window_name, mouse_cb)
 
     #Load target pcloud
-    annotations=dict()
     for tgt in targets:
         print(tgt)
         ply_fileName=fList.get_combined_pcloud_fileName(tgt)
@@ -217,13 +225,24 @@ def label_scannet_pcloud(root_dir, raw_dir, save_dir, targets):
         tgt_pts=np.array(pcl_target.points)
         image=image_interface.overlay_dots(tgt_pts)
         image_interface.set_fg_image(image)
-        annotations[tgt]=[]
+        if tgt not in annotations:
+            annotations[tgt]=[]
+        else:
+            # Need to draw the existing annotations
+            for annot_ in annotations[tgt]:
+                row1,col1=image_interface.xyz_to_rc(annot_[:3])
+                row2,col2=image_interface.xyz_to_rc(annot_[3:])
+                image=cv2.rectangle(image_interface.fg_image, (col1,row1), (col2,row2), color=(0,255,0))
+                image_interface.set_fg_image(image)
+
         while(1):
             cv2.imshow(window_name, image_interface.fg_image)
             # cv2.imshow(window_name, image_interface.bg_image)
             input_key=cv2.waitKey(0)
             if input_key==ord('n'):
                 print("moving to next object")
+                with open(fList.get_annotation_file(),'w') as handle:
+                    json.dump(annotations, handle)
                 break
             elif input_key==ord('q'):
                 print("exiting labeling task")
@@ -235,24 +254,36 @@ def label_scannet_pcloud(root_dir, raw_dir, save_dir, targets):
             elif input_key==ord('s'):
                 if len(mouse_clicks)==2:
                     print("Saving box")
-                    annotations[tgt].append(mouse_clicks)
                     image=cv2.rectangle(image_interface.fg_image, mouse_clicks[0], mouse_clicks[1], color=(0,255,0))
                     image_interface.set_fg_image(image)
+                    # Now convert the mouse clicks into real world coordinates
+                    x1,y1=image_interface.rc_to_xy(mouse_clicks[0][1], mouse_clicks[0][0])
+                    x2,y2=image_interface.rc_to_xy(mouse_clicks[1][1], mouse_clicks[1][0])
+                    xMin=min(x1,x2)
+                    xMax=max(x1,x2)
+                    yMin=min(y1,y2)
+                    yMax=max(y1,y2)
+                    containsP=np.where((tgt_pts[:,0]>=xMin)*(tgt_pts[:,0]<=xMax)*(tgt_pts[:,1]>=yMin)*(tgt_pts[:,1]<=yMax))
+                    if len(containsP[0])==0:                   
+                        closestP=get_closest_point(tgt_pts,x1,y1)
+                        annotations[tgt].append([xMin,yMin,closestP[2],xMax,yMax,closestP[2]])
+                    else:
+                        annotations[tgt].append([xMin,yMin,tgt_pts[containsP][:,2].min(),xMax,yMax,tgt_pts[containsP][:,2].max()])
                     mouse_clicks=[]
                 else:
                     print("Not enough points to save an annotation")
             elif input_key==ord('v'):
                 if len(mouse_clicks)==2:
-                    ctrX=(mouse_clicks[0][0]+mouse_clicks[1][0])/2.0
-                    ctrY=(mouse_clicks[0][1]+mouse_clicks[1][1])/2.0
+                    col=(mouse_clicks[0][0]+mouse_clicks[1][0])/2.0
+                    row=(mouse_clicks[0][1]+mouse_clicks[1][1])/2.0
                 elif len(mouse_clicks)==1:
-                    ctrX=mouse_clicks[0][0]
-                    ctrY=mouse_clicks[0][1]
+                    col=mouse_clicks[0][0]
+                    row=mouse_clicks[0][1]
                 else:
                     print("Need to select at least one point to visualize")
                     continue
                 print("visualizing selected box")
-                visualize_box(fList, tgt_pts, ctrX, ctrY, params)
+                visualize_box(fList, tgt_pts, row, col, params)
             elif input_key==ord('h'):
                 print("(c)lear box - deletes the existing mouse clicks")
                 print("(s)ave box - saves an existing pair of points as an annotation for the current target object")
