@@ -11,8 +11,8 @@ from clustering import cluster, cluster_history
 import pickle
 from grid import max_grid3D
 
-ROOT_RAW_DIR="/data2/datasets/office/no_person/"
-ROOT_NERF_DIR="/home/emartinso/projects/nerfstudio/renders/no_person_"
+# ROOT_RAW_DIR="/data2/datasets/office/no_person/"
+# ROOT_NERF_DIR="/home/emartinso/projects/nerfstudio/renders/no_person_"
 
 # DBSCAN Parameters
 DEPTH_CLUSTER_EPS=0.1          
@@ -59,11 +59,11 @@ class image_comparator():
                  images_secondary_csv:str, 
                  detection_target: str,
                  is_positive_change:bool,
-                 use_nerf:bool, 
+                 #  use_nerf:bool, 
                  use_clip:bool,
                  min_cluster_count=DEPTH_CLUSTER_MINC):
 
-        self.use_nerf=use_nerf
+        # self.use_nerf=use_nerf
         self.use_clip=use_clip
         self.detection_target=detection_target
         self.is_positive_change=is_positive_change
@@ -95,14 +95,14 @@ class image_comparator():
             clipV=np.zeros(cv_image.shape[0:2],dtype=float)
         return cv_image, clipV
 
-    def color_image_name(self, image_dir_and_name):
-        return ROOT_RAW_DIR+image_dir_and_name[0]+"/rotated/" + image_dir_and_name[1]
+    # def color_image_name(self, image_name, ):
+    #     return ROOT_RAW_DIR+image_dir_and_name[0]+"/rotated/" + image_dir_and_name[1]
     
     # Load the depth image with the assumption that depth images are of the format <dir>/depth/depth_<id>.png
-    def load_depth_image(self, image_dir_and_name:list):
-        number=image_dir_and_name[1].split('_')[1]
+    def load_depth_image(self, depth_image_directory:str, image_number:str): 
+        # number=image_dir_and_name[1].split('_')[1]
         # Load the depth image
-        depth_image_name=ROOT_RAW_DIR+image_dir_and_name[0]+"/depth/depth_" + number
+        depth_image_name=depth_image_directory + "/depth_" + image_number
         depth_image = cv2.imread(depth_image_name, -1)
         depth_image=cv2.rotate(depth_image, cv2.ROTATE_90_CLOCKWISE)
         return depth_image.astype(float)/1000.0
@@ -178,27 +178,30 @@ class image_comparator():
 
     # Re-usable function for creating clusters. Need to set internal prob variable first
     #   so that we can generate clusters above the specified threshold
-    def create_clusters_from_depth(self, image_dir_and_name, threshold):
+    def create_clusters_from_depth(self, changed_dir, depth_subdir, image_name, threshold):
         # Create a mask of all points above threshold
         d_mask=(self.prob>threshold).astype(np.uint8)        
         xy=np.where(d_mask>0)
         try:
+            # We need the top-level name of the project directory
+            ln_s=changed_dir.split('/')
+            for idx in range(1,len(ln_s)):
+                if ln_s[-idx]!='':
+                    project_dir=ln_s[-idx]
+                    break
+            # We also need the image number for determining the depth image
+            image_number=image_name.split('_')[1]
+            image_dir_and_name=[project_dir, image_name]
+
             # Create the depth image + point cloud
             if self.depth_image2 is None:
-                self.depth_image2=self.load_depth_image(image_dir_and_name)
+                self.depth_image2=self.load_depth_image(changed_dir+depth_subdir, image_number)
             pts, d_mask2=self.create_pcloud(image_dir_and_name, xy, self.depth_image2)
 
             # Apply clustering - do not save to local variable, in case that will
             #   mess up elsewhere
             clusters=self.apply_dbscan_clustering(pts,self.prob[xy][d_mask2],DEPTH_CLUSTER_EPS,self.cluster_min_count)
-            # if 1: # apply blur filtering
-            #     cam_poseM=self.images2.get_pose_by_name(image_dir_and_name[0],image_dir_and_name[1])
-            #     valid_clusters=[]
-            #     for cl_ in clusters:
-            #         if self.check_cluster_blur(cl_, cam_poseM):
-            #             valid_clusters.append(cl_)
-            #     return valid_clusters
-            # else:
+
             return clusters
 
         except Exception as e:
@@ -206,11 +209,9 @@ class image_comparator():
         return None
 
     # Nerf-Based change sets the prob variable using a difference between the raw + nerf images
-    def set_nerf_based_change(self, image_dir_and_name:list):
-        raw_image=self.color_image_name(image_dir_and_name)
-        nerf_image=ROOT_NERF_DIR+image_dir_and_name[0] + "/" + image_dir_and_name[1]
-        self.cv_image1, clipV1=self.get_object_detection_data(nerf_image)
-        self.cv_image2, clipV2=self.get_object_detection_data(raw_image)
+    def set_nerf_based_change(self, nerf_outputs_dir, color_image_dir, image_name):
+        self.cv_image1, clipV1=self.get_object_detection_data(nerf_outputs_dir+"/"+image_name)
+        self.cv_image2, clipV2=self.get_object_detection_data(color_image_dir+"/"+image_name)
         if self.is_positive_change:
             self.prob=clipV2-clipV1
         else:
@@ -219,67 +220,71 @@ class image_comparator():
     # Alternative to NeRF - find a viewpoint that contains most of the same information
     #   and then build a 5 cm grid with the results. Change is measured as the delta
     #   between grids
-    def set_eg_based_change(self, image_dir_and_name:list):
-        print("EG: Load Files")
-        # Load the new image first
-        raw_image_name2=self.color_image_name(image_dir_and_name)
-        self.cv_image2,clipV2=self.get_object_detection_data(raw_image_name2)
-        cam_poseM2=self.images2.get_pose_by_name(image_dir_and_name[0],image_dir_and_name[1])
-        self.depth_image2=self.load_depth_image(image_dir_and_name)
+    # def set_eg_based_change(self, 
+    #                         initial_color_dir, changed_color_dir,
+    #                         initial_depth_dir, changed_depth_dir,
+    #                         image_name):
+    #     print("EG: Load Files")
+    #     # Load the new image first
+    #     raw_image_name2=initial_color_dir+"/"+image_name
+    #     image_number=image_name.split('.')[0].split('_')[1]
+    #     self.cv_image2,clipV2=self.get_object_detection_data(raw_image_name2)
+    #     cam_poseM2=self.images2.get_pose_by_name(image_dir_and_name[0],image_dir_and_name[1])
+    #     self.depth_image2=self.load_depth_image(changed_depth_dir,image_number)
 
-        print("EG: Select Pose")
-        # Now select the best pose from the base set for the second image        
-        xyz_ctr=np.vstack((get_center_point(self.depth_image2),1.0))
-        tgt_obj=np.matmul(cam_poseM2,xyz_ctr)[:3].squeeze()
-        best_key=self.images1.get_nearest_pose_by_angle(tgt_obj, cam_poseM2)
+    #     print("EG: Select Pose")
+    #     # Now select the best pose from the base set for the second image        
+    #     xyz_ctr=np.vstack((get_center_point(self.depth_image2),1.0))
+    #     tgt_obj=np.matmul(cam_poseM2,xyz_ctr)[:3].squeeze()
+    #     best_key=self.images1.get_nearest_pose_by_angle(tgt_obj, cam_poseM2)
 
-        print("EG: Load Base")
-        # Load the base image - 
-        image_dir_and_name1=self.images1.get_dir_and_name(best_key)
-        raw_image_name1=self.color_image_name(image_dir_and_name1)
-        self.cv_image1,clipV1=self.get_object_detection_data(raw_image_name1)
-        depth_image1=self.load_depth_image(image_dir_and_name)
+    #     print("EG: Load Base")
+    #     # Load the base image - 
+    #     image_dir_and_name1=self.images1.get_dir_and_name(best_key)
+    #     raw_image_name1=self.color_image_name(image_dir_and_name1)
+    #     self.cv_image1,clipV1=self.get_object_detection_data(raw_image_name1)
+    #     depth_image1=self.load_depth_image(image_dir_and_name)
 
-        print("EG: Create PCloud")
-        # Build the set of points with nonzero depth and inference > 0.1
-        rc2=np.where(clipV2>0.1)
-        xyz2,d_mask2=self.create_pcloud(image_dir_and_name, rc2, self.depth_image2)       
-        rc1=np.where(clipV1>0.1)
-        xyz1,d_mask1=self.create_pcloud(image_dir_and_name1, rc1, depth_image1)       
+    #     print("EG: Create PCloud")
+    #     # Build the set of points with nonzero depth and inference > 0.1
+    #     rc2=np.where(clipV2>0.1)
+    #     xyz2,d_mask2=self.create_pcloud(image_dir_and_name, rc2, self.depth_image2)       
+    #     rc1=np.where(clipV1>0.1)
+    #     xyz1,d_mask1=self.create_pcloud(image_dir_and_name1, rc1, depth_image1)       
 
-        print("EG: Get Grid Boundaries")
-        # Need the grid boundaries - need to base on actual pcloud rather than 
-        #   just positive examples in order to support the negative condition
-        xyz2_mn, xyz2_mx, num_dim=self.get_egrid_boundaries(image_dir_and_name, self.depth_image2)
+    #     print("EG: Get Grid Boundaries")
+    #     # Need the grid boundaries - need to base on actual pcloud rather than 
+    #     #   just positive examples in order to support the negative condition
+    #     xyz2_mn, xyz2_mx, num_dim=self.get_egrid_boundaries(image_dir_and_name, self.depth_image2)
 
-        print("EG: Build EG")
-        # Build an evidence grid based on the new image points
-        #   then a second evidence grid with the same size as the new image
-        #   can be constructed from the base data
-        egrid2=max_grid3D(xyz2_mn, xyz2_mx, num_dim)
-        egrid1=max_grid3D(xyz2_mn, xyz2_mx, num_dim)
-        egridD=max_grid3D(xyz2_mn, xyz2_mx, num_dim)
-        # add the points - only the highest score per cell is preserved
-        egrid2.add_pts(xyz2,clipV2[rc2][d_mask2])
-        egrid1.add_pts(xyz1,clipV1[rc1][d_mask1])
+    #     print("EG: Build EG")
+    #     # Build an evidence grid based on the new image points
+    #     #   then a second evidence grid with the same size as the new image
+    #     #   can be constructed from the base data
+    #     egrid2=max_grid3D(xyz2_mn, xyz2_mx, num_dim)
+    #     egrid1=max_grid3D(xyz2_mn, xyz2_mx, num_dim)
+    #     egridD=max_grid3D(xyz2_mn, xyz2_mx, num_dim)
+    #     # add the points - only the highest score per cell is preserved
+    #     egrid2.add_pts(xyz2,clipV2[rc2][d_mask2])
+    #     egrid1.add_pts(xyz1,clipV1[rc1][d_mask1])
 
-        print("EG: Delta")
-        if self.is_positive_change:
-            egridD.grid=egrid2.grid-egrid1.grid
-        else:
-            egridD.grid=egrid1.grid-egrid2.grid
+    #     print("EG: Delta")
+    #     if self.is_positive_change:
+    #         egridD.grid=egrid2.grid-egrid1.grid
+    #     else:
+    #         egridD.grid=egrid1.grid-egrid2.grid
 
-        print("EG: Prob Matrix")
-        #Last step - create the self.probability matrix, and
-        #   fill in those points from earlier with updated values
-        self.prob=np.zeros((clipV2.shape),dtype=float)
-        rcD=np.where(self.depth_image2>0.1)
-        xyzD,__=self.create_pcloud(image_dir_and_name, rcD, self.depth_image2)
-        updated_values=egridD.get_values(xyzD)
-        for idx in np.arange(rcD[0].shape[0]):
-            self.prob[rcD[0][idx],rcD[1][idx]]=updated_values[idx]
+    #     print("EG: Prob Matrix")
+    #     #Last step - create the self.probability matrix, and
+    #     #   fill in those points from earlier with updated values
+    #     self.prob=np.zeros((clipV2.shape),dtype=float)
+    #     rcD=np.where(self.depth_image2>0.1)
+    #     xyzD,__=self.create_pcloud(image_dir_and_name, rcD, self.depth_image2)
+    #     updated_values=egridD.get_values(xyzD)
+    #     for idx in np.arange(rcD[0].shape[0]):
+    #         self.prob[rcD[0][idx],rcD[1][idx]]=updated_values[idx]
 
-    # Visualize the high probability change regions
+    # # Visualize the high probability change regions
     def view_change_image(self, threshold, clusters_only=True):
         if self.is_positive_change:
             change_image=self.cv_image2
@@ -296,19 +301,26 @@ class image_comparator():
             return cv2.bitwise_and(change_image,change_image,mask=d_maskN)+cv2.bitwise_and(red_image,red_image,mask=d_mask)
 
     # Search for change between one image and the baseline
-    def detect_change(self, image_dir_and_name:list, threshold:float=0.2):
+    def detect_change(self, 
+                      changed_dir,
+                      outputs_subdir,
+                      color_subdir,
+                      depth_subdir,
+                      image_name,
+                      threshold:float=0.2):
         self.cv_image1=None
         self.cv_image2=None
         self.depth_image2=None
         try:
-            if self.use_nerf:
-                self.set_nerf_based_change(image_dir_and_name)
-            else:
-                self.set_eg_based_change(image_dir_and_name)
+            # if self.use_nerf:
+            self.set_nerf_based_change(changed_dir+outputs_subdir,changed_dir+color_subdir,image_name)
+            # else:
+            #     self.set_eg_based_change(image_dir_and_name)
         except Exception as e:
-            print("Detect-Change, File load error: "+image_dir_and_name[0] + "/" + image_dir_and_name[1])
+            print("Detect-Change, File load error")
             return False
-        self.clusters=self.create_clusters_from_depth(image_dir_and_name, threshold)
+        
+        self.clusters=self.create_clusters_from_depth(changed_dir, depth_subdir, image_name, threshold)
         return (self.clusters is not None)
     
     # Re-run the last run, but with a different threshold
@@ -367,33 +379,22 @@ class image_comparator():
                     
         return cl_hist
 
-    # def build_change_cluster_history(self, threshold, skip=4, existing_cl_hist:cluster_history=None):
-    #     plist=self.images2.get_pose_list()
-    #     if existing_cl_hist is not None:
-    #         cl_hist=existing_cl_hist
-    #         cl_hist.setup_category(self.detection_target)
-    #     else:
-    #         cl_hist=cluster_history()
-    #     for idx, key in enumerate(plist):
-    #         if idx % (skip+1)==0:
-    #             print("Processing: " + key)
-    #             image_dir_and_name=[self.images2.all_images[key]['directory'],self.images2.all_images[key]['name']]
-    #             if self.detect_change(image_dir_and_name, threshold):
-    #                 print("%s/%s: %d clusters"%(image_dir_and_name[0],image_dir_and_name[1],len(self.clusters)))
-    #                 cl_hist.add_clusters(self.detection_target, self.clusters, key)
-    #     return cl_hist
-    
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('images_initial',type=str,help='location of images.csv for base dataset')
-    parser.add_argument('images_changed',type=str,help='location of images.csv for changed dataset')
+    parser.add_argument('initial_dir',type=str,help='location of initial directory')
+    parser.add_argument('changed_dir',type=str,help='location of changed directory')
     parser.add_argument('search_category',type=str,help='Prompt or object-type to use with the segmentation model')
-    # parser.add_argument('--annotation-file',type=str,default=None,help="Annotation file in COCO format (optional)")
     parser.add_argument('image_name',type=str,help='Investigate a particular image in the annotation file for change')
+    parser.add_argument('--nerf_output_dir',type=str,default='renders',help='Path to the nerf output directory inside the changed directory (default=renders)')
+    parser.add_argument('--initial_color_dir',type=str,default='rotated',help='Location of the raw color images within the initial directory (default = rotated)')
+    parser.add_argument('--changed_color_dir',type=str,default='rotated',help='Location of the raw color images within the changed directory (default = rotated)')
+    parser.add_argument('--changed_depth_dir',type=str,default=None,help='Location of depth images within the changed directory. By default, clusters are calculated without depth (default = None)')
+    parser.add_argument('--initial_images_csv',type=str,default='images_geo.txt',help='Location of the images.csv file within the initial directory (default = images_geo.txt)')
+    parser.add_argument('--changed_images_csv',type=str,default='images.txt',help='Location of the images.csv file within the changed directory (default = images_geo.txt)')
     parser.add_argument('--threshold',type=float,default=0.2,help='(optional) threshold to apply during computation ')
-    parser.add_argument('--nerf', action='store_true')
-    parser.add_argument('--no-nerf', dest='nerf', action='store_false')
-    parser.set_defaults(nerf=True)
+    # parser.add_argument('--nerf', action='store_true')
+    # parser.add_argument('--no-nerf', dest='nerf', action='store_false')
+    # parser.set_defaults(nerf=True)
     parser.add_argument('--clip', action='store_true')
     parser.add_argument('--yolo', dest='clip', action='store_false')
     parser.set_defaults(clip=True)
@@ -402,17 +403,24 @@ if __name__ == '__main__':
     parser.set_defaults(positive=True)
     args = parser.parse_args()
 
-    eval_=image_comparator(args.images_initial, args.images_changed, args.search_category, args.positive, args.nerf, args.clip)
+    eval_=image_comparator(args.initial_dir + "/" + args.initial_images_csv, 
+                           args.changed_dir + "/" + args.changed_images_csv, 
+                           args.search_category, args.positive, args.clip)
 
-    ln_s=args.image_name.split('/')
-    if len(ln_s)>1:
-        directory=ln_s[0]
-        image_name=ln_s[1]
-    else:
-        directory=None
-        image_name=args.image_name
+    # ln_s=args.image_name.split('/')
+    # if len(ln_s)>1:
+    #     directory=ln_s[0]
+    #     image_name=ln_s[1]
+    # else:
+    #     directory=None
+    #     image_name=args.image_name
 
-    if eval_.detect_change([directory,image_name], args.threshold):
+    if eval_.detect_change(args.changed_dir+"/",
+                           args.nerf_output_dir,
+                           args.changed_color_dir,
+                           args.changed_depth_dir,
+                           args.image_name,
+                           args.threshold):
         change_image=eval_.view_change_image(args.threshold,clusters_only=False)
         plt.imshow(change_image)
         if args.clip:
