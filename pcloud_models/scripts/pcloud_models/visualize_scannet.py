@@ -9,6 +9,8 @@ if __name__ == '__main__':
     parser.add_argument('--param_file',type=str,default=None,help='camera parameter file for this scene - default is of form <raw_dir>/scene????_??.txt')
     parser.add_argument('--raw_dir',type=str,default='raw_output', help='subdirectory containing the color images')
     parser.add_argument('--save_dir',type=str,default='raw_output/save_results', help='subdirectory in which to store the intermediate files')
+    parser.add_argument('--headless', dest='draw', action='store_false')
+    parser.set_defaults(draw=True)    
     args = parser.parse_args()
 
     save_dir=args.root_dir+"/"+args.save_dir
@@ -26,4 +28,5 @@ if __name__ == '__main__':
 
     pcd=visualize_combined_xyzrgb(fList, params, howmany_files=200, skip=5)
     o3d.io.write_point_cloud(fList.get_combined_pcloud_fileName(),pcd)
-    o3d.visualization.draw_geometries([pcd])
+    if args.draw:
+        o3d.visualization.draw_geometries([pcd])

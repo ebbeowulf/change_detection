@@ -113,15 +113,15 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     CS=clip_seg([args.tgt_prompt])
-    for i in range(1000):
-        print(i)
-        image=CS.process_file(args.image, threshold=args.threshold)
-        mask=CS.get_mask(0)
+    #for i in range(1000):
+    #    print(i)
+    image=CS.process_file(args.image, threshold=args.threshold)
+    mask=CS.get_mask(0)
     if mask is None:
         print("Something went wrong - no mask to display")
     else:
         cv_image=np.array(image).astype(np.uint8)
-        pdb.set_trace()
+        #pdb.set_trace()
         IM=cv2.bitwise_and(cv_image,cv_image,mask=mask.astype(np.uint8))
         cv2.imshow("res",IM)
         cv2.waitKey()

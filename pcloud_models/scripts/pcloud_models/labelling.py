@@ -82,11 +82,11 @@ class drawn_image():
                 row,col=self.xyz_to_rc(local_xyz[rr[idx]])
                 if dynamic_color:
                     tmpC=(local_rgb[rr[idx]]*255).astype(int).tolist()
-                    clr=(tmpC[0],tmpC[1],tmpC[2])
+                    clr=(tmpC[2],tmpC[1],tmpC[0])
                 cv2.circle(image, (col, row), radius=2,color=clr,thickness=-1)
             except Exception as e:
                 print("Exception: " + str(e))
-                pdb.set_trace()
+                print("skipping pixel during dot printing")
         return image
 
     def draw_all_dots(self, height_range=[-1.0, 100], bg_image=None):
