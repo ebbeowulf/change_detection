@@ -49,6 +49,11 @@ class drawn_image():
             self.xyz=np.array(pointcloud.points)
             self.rgb=np.array(pointcloud.colors)
 
+        # Have to clear NaN pixels - open3d doesn't do it for us
+        validP=np.where(np.isnan(self.xyz).sum(1)==0)
+        self.xyz=self.xyz[validP]
+        self.rgb=self.rgb[validP]
+
         self.minXYZ=self.xyz.min(0)-0.5
         self.maxXYZ=self.xyz.max(0)+0.5
         self.dy_dr=(self.maxXYZ-self.minXYZ)[1]/self.height
@@ -223,6 +228,12 @@ def label_scannet_pcloud(root_dir, raw_dir, save_dir, targets):
             continue
 
         tgt_pts=np.array(pcl_target.points)
+
+        # need to filter out NaN's ... not sure why they
+        #   are being added to the pcloud, but it causes 
+        #   problems downstream
+        validP=np.where(np.isnan(tgt_pts).sum(1)==0)
+        tgt_pts=tgt_pts[validP]
         image=image_interface.overlay_dots(tgt_pts)
         image_interface.set_fg_image(image)
         if tgt not in annotations:

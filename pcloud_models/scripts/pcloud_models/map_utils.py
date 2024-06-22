@@ -168,12 +168,14 @@ def pointcloud_open3d(xyz_points,rgb_points=None,max_num_points=2000000):
     pcd=o3d.geometry.PointCloud()
     if xyz_points.shape[0]<max_num_points:
         pcd.points = o3d.utility.Vector3dVector(xyz_points)
-        pcd.colors = o3d.utility.Vector3dVector(rgb_points[:,[2,1,0]]/255) 
+        if rgb_points is not None:
+            pcd.colors = o3d.utility.Vector3dVector(rgb_points[:,[2,1,0]]/255) 
     else:
         rr=np.random.choice(np.arange(xyz_points.shape[0]),max_num_points)
         pcd.points = o3d.utility.Vector3dVector(xyz_points[rr,:])
-        rgb2=rgb_points[rr,:]
-        pcd.colors = o3d.utility.Vector3dVector(rgb2[:,[2,1,0]]/255) 
+        if rgb_points is not None:
+            rgb2=rgb_points[rr,:]
+            pcd.colors = o3d.utility.Vector3dVector(rgb2[:,[2,1,0]]/255) 
 
     return pcd
 
