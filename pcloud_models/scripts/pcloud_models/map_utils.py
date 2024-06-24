@@ -86,6 +86,9 @@ class rgbd_file_list():
     def get_annotation_file(self):
         return self.intermediate_save_dir+"annotations.json"
     
+    def get_labeled_pcloud_fileName(self, cls:str):
+        return self.intermediate_save_dir+"%s.labeled.ply"%(cls)
+
 # Process all images with yolo - creating
 #   pickle files for the results and storing alongside the 
 #   original color images

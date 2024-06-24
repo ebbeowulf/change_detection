@@ -10,7 +10,8 @@ import cv2
 import torch
 import numpy as np
 
-LABEL_CSV="/data2/datasets/scannet/scannetv2-labels.combined.tsv"
+#LABEL_CSV="/data2/datasets/scannet/scannetv2-labels.combined.tsv"
+LABEL_CSV="/home/emartinso/data/scannet/scannetv2-labels.combined.tsv"
 ID2STR=None
 STR2ID=None
 def read_label_csv():
@@ -172,7 +173,7 @@ if __name__ == '__main__':
     parser.add_argument('--raw_dir',type=str,default='raw_output', help='subdirectory containing the color, depth, and pose information')
     parser.add_argument('--label_dir',type=str,default='label-filt', help='subdirectory containing the label images')
     parser.add_argument('--save_dir',type=str,default='raw_output/save_results', help='subdirectory in which to store the intermediate files')
-    parser.add_argument('--headless', dest='draw', action='store_false')
+    parser.add_argument('--draw', dest='draw', action='store_true')
     parser.set_defaults(draw=False)    
     args = parser.parse_args()
 
@@ -190,7 +191,7 @@ if __name__ == '__main__':
 
     pcd=visualize_combined_label(fList, params, args.object_type)
     if pcd is not None:
-        labeled_file=fList.intermediate_save_dir+"/"+str(args.object_type)+".labeled.ply"
+        labeled_file=fList.get_labaled_pcloud_fileName(args.object_type)
         o3d.io.write_point_cloud(labeled_file,pcd)
         if args.draw:
             o3d.visualization.draw_geometries([pcd])

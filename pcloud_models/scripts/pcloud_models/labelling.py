@@ -184,6 +184,25 @@ def visualize_box(fList, pts, row, col, cam_info:camera_params, threshold=0.6):
         pdb.set_trace()
     
 
+def add_overlay(ply_fileName:str,color=(0,0,255)):
+    global image_interface, mouse_clicks
+    try:
+        pcl_target=o3d.io.read_point_cloud(ply_fileName)
+        if pcl_target is None:
+            return False
+    except Exception as e:
+        return False
+
+    tgt_pts=np.array(pcl_target.points)
+
+    # need to filter out NaN's ... not sure why they
+    #   are being added to the pcloud, but it causes 
+    #   problems downstream
+    validP=np.where(np.isnan(tgt_pts).sum(1)==0)
+    tgt_pts=tgt_pts[validP]
+    image=image_interface.overlay_dots(tgt_pts,color)
+    image_interface.set_fg_image(image)
+
 def label_scannet_pcloud(root_dir, raw_dir, save_dir, targets):
     global image_interface, mouse_clicks
 
@@ -218,24 +237,15 @@ def label_scannet_pcloud(root_dir, raw_dir, save_dir, targets):
     #Load target pcloud
     for tgt in targets:
         print(tgt)
-        ply_fileName=fList.get_combined_pcloud_fileName(tgt)
-        try:
-            pcl_target=o3d.io.read_point_cloud(ply_fileName)
-            if pcl_target is None:
-                raise Exception("file not found")
-        except Exception as e:
-            print(ply_fileName + " - not found")
+        ply_combo_fileName=fList.get_combined_pcloud_fileName(tgt)
+        ply_label_fileName=fList.get_labeled_pcloud_fileName(tgt)
+        if not add_overlay(ply_combo_fileName,color=(0,0,255)):
+            print(f"Missing ply file: {ply_combo_fileName}")
+            continue
+        if not add_overlay(ply_label_fileName,color=(128,0,128)):
+            print(f"Missing ply file: {ply_label_fileName}")
             continue
 
-        tgt_pts=np.array(pcl_target.points)
-
-        # need to filter out NaN's ... not sure why they
-        #   are being added to the pcloud, but it causes 
-        #   problems downstream
-        validP=np.where(np.isnan(tgt_pts).sum(1)==0)
-        tgt_pts=tgt_pts[validP]
-        image=image_interface.overlay_dots(tgt_pts)
-        image_interface.set_fg_image(image)
         if tgt not in annotations:
             annotations[tgt]=[]
         else:
