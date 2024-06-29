@@ -1,15 +1,14 @@
 import open3d as o3d
 import numpy as np
-from map_utils import rgbd_file_list, camera_params
 import argparse
 import cv2
-import pickle
 from map_from_scannet import build_file_structure, load_camera_info
 import pdb
-import time
 import os
 import copy
 import json
+from camera_params import camera_params
+from rgbd_file_list import rgbd_file_list
 
 MAX_POINTS=200000
 
@@ -181,6 +180,7 @@ def visualize_box(fList, pts, row, col, cam_info:camera_params, threshold=0.6):
             cv2.imshow("views",image)
             cv2.waitKey(1)
     except Exception as e:
+        print(e)
         pdb.set_trace()
     
 
@@ -189,9 +189,9 @@ def add_overlay(ply_fileName:str,color=(0,0,255)):
     try:
         pcl_target=o3d.io.read_point_cloud(ply_fileName)
         if pcl_target is None:
-            return False
+            return None
     except Exception as e:
-        return False
+        return None
 
     tgt_pts=np.array(pcl_target.points)
 
@@ -202,18 +202,21 @@ def add_overlay(ply_fileName:str,color=(0,0,255)):
     tgt_pts=tgt_pts[validP]
     image=image_interface.overlay_dots(tgt_pts,color)
     image_interface.set_fg_image(image)
+    return tgt_pts
 
 def label_scannet_pcloud(root_dir, raw_dir, save_dir, targets):
     global image_interface, mouse_clicks
 
     fList=build_file_structure(root_dir+"/"+raw_dir, root_dir+"/"+save_dir)
 
+    # Load a previously created annotation file
     if os.path.exists(fList.get_annotation_file()):
         with open(fList.get_annotation_file(),'r') as handle:
             annotations=json.load(handle)
     else:
         annotations=dict()
 
+    # Load the camera info file
     s_root=root_dir.split('/')
     if s_root[-1]=='':
         par_file=root_dir+"%s.txt"%(s_root[-2])
@@ -225,11 +228,24 @@ def label_scannet_pcloud(root_dir, raw_dir, save_dir, targets):
     s2=root_dir
     if s2[-1]=="/":
         s2=s2[:-1]
-    
+
+    # Check the existence of the labeled pointclouds
+    #   do this here before creating the named window
+    #   so that we can exit faster if none of the 
+    #   targets are found
+    is_valid_target=False
+    for tgt in targets:
+        ply_label_fileName=fList.get_labeled_pcloud_fileName(tgt)        
+        is_valid_target=is_valid_target or os.path.exists(ply_label_fileName)
+    if not is_valid_target:
+        print("No labeled target files found - saving annotation file and exiting")
+        with open(fList.get_annotation_file(),'w') as handle:
+            json.dump(annotations, handle)
+        return
+
+    # Create the named window        
     window_name=root_dir
-    # cv2.namedWindow(window_name, cv2.WINDOW_GUI_NORMAL)
     cv2.namedWindow(window_name)
-    # pcloud_model_fName=root_dir+"/"+s2.split('/')[-1]+"_vh_clean_2.ply"
     pcl_raw=o3d.io.read_point_cloud(fList.get_combined_pcloud_fileName())
     image_interface=drawn_image(pcl_raw,window_name=window_name)
     cv2.setMouseCallback(window_name, mouse_cb)
@@ -237,13 +253,23 @@ def label_scannet_pcloud(root_dir, raw_dir, save_dir, targets):
     #Load target pcloud
     for tgt in targets:
         print(tgt)
+        # Load both the labeled annotation + the clip pointclouds
+        # useful to have both as we can switch between to identify
+        # object boundaries
         ply_combo_fileName=fList.get_combined_pcloud_fileName(tgt)
-        ply_label_fileName=fList.get_labeled_pcloud_fileName(tgt)
-        if not add_overlay(ply_combo_fileName,color=(0,0,255)):
-            print(f"Missing ply file: {ply_combo_fileName}")
-            continue
-        if not add_overlay(ply_label_fileName,color=(128,0,128)):
-            print(f"Missing ply file: {ply_label_fileName}")
+        ply_label_fileName=fList.get_labeled_pcloud_fileName(tgt)        
+        tgt_pts_clip=add_overlay(ply_combo_fileName,color=(0,0,255))
+        tgt_pts_label=add_overlay(ply_label_fileName,color=(128,0,128))
+        # pdb.set_trace()
+        if tgt_pts_label is not None and tgt_pts_label.shape[0]>0:
+            tgt_pts=tgt_pts_label
+            activeP='label'
+        # elif tgt_pts_clip is not None:
+        #     tgt_pts=tgt_pts_clip
+        #     activeP='clip'
+        else:
+            # print(f"Missing ply files: {ply_combo_fileName} and {ply_label_fileName}")
+            print(f"Missing ply files: {ply_label_fileName}")
             continue
 
         if tgt not in annotations:
@@ -265,6 +291,23 @@ def label_scannet_pcloud(root_dir, raw_dir, save_dir, targets):
                 with open(fList.get_annotation_file(),'w') as handle:
                     json.dump(annotations, handle)
                 break
+            elif input_key==ord('a'):   # switch the set of active points between clip + label
+                if activeP=='clip':
+                    if tgt_pts_label is not None:
+                        tgt_pts=tgt_pts_label
+                        activeP='label'
+                        image=image_interface.overlay_dots(tgt_pts,(128,0,128))
+                        image_interface.set_fg_image(image)
+                    else:
+                        print("Cannot switch set of active points")
+                else:
+                    if tgt_pts_clip is not None:
+                        tgt_pts=tgt_pts_clip
+                        activeP='clip'
+                        image=image_interface.overlay_dots(tgt_pts,(0,0,255))
+                        image_interface.set_fg_image(image)
+                    else:
+                        print("Cannot switch set of active points")                        
             elif input_key==ord('q'):
                 print("exiting labeling task")
                 import sys
@@ -285,7 +328,7 @@ def label_scannet_pcloud(root_dir, raw_dir, save_dir, targets):
                     yMin=min(y1,y2)
                     yMax=max(y1,y2)
                     containsP=np.where((tgt_pts[:,0]>=xMin)*(tgt_pts[:,0]<=xMax)*(tgt_pts[:,1]>=yMin)*(tgt_pts[:,1]<=yMax))
-                    if len(containsP[0])==0:                   
+                    if len(containsP[0])==0:
                         closestP=get_closest_point(tgt_pts,x1,y1)
                         annotations[tgt].append([xMin,yMin,closestP[2],xMax,yMax,closestP[2]])
                     else:

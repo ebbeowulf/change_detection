@@ -44,20 +44,20 @@ def load_camera_info(info_file):
     info_dict = {}
     with open(info_file) as f:
         for line in f:
-            try:
-                if line[-1]=='\n':
-                    line=line[:-1]
-                (key, val) = line.split(" = ")
-                if key=='sceneType':
-                    info_dict[key] = val
-                elif key=='axisAlignment':
-                    info_dict[key] = np.fromstring(val, sep=' ')
-                elif key=='colorToDepthExtrinsics':
-                    info_dict[key] = np.fromstring(val, sep=' ')
-                else:
+            if line[-1]=='\n':
+                line=line[:-1]
+            (key, val) = line.split(" = ")
+            if key=='sceneType':
+                info_dict[key] = val
+            elif key=='axisAlignment' or key=='colorToDepthExtrinsics':
+                info_dict[key] = np.fromstring(val, sep=' ')
+            elif key=='colorToDepthExtrinsics':
+                info_dict[key] = np.fromstring(val, sep=' ')
+            else:
+                try:
                     info_dict[key] = float(val)
-            except Exception as e:
-                pdb.set_trace()
+                except Exception as e:
+                    info_dict[key] = val
 
     return info_dict
 

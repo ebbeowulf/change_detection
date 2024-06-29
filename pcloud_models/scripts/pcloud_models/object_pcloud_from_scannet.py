@@ -1,13 +1,11 @@
 from map_from_scannet import load_camera_info, read_scannet_pose
-from map_utils import rgbd_file_list, camera_params, pointcloud_open3d
+from camera_params import camera_params
+from rgbd_file_list import rgbd_file_list
 import argparse
-import open3d as o3d
 import pdb
-import map_utils
 import os
 import glob
 import cv2
-import torch
 import numpy as np
 
 #LABEL_CSV="/data2/datasets/scannet/scannetv2-labels.combined.tsv"
@@ -54,7 +52,7 @@ def string_from_id(id):
     return None
 
 def build_file_structure(raw_dir, label_dir, save_dir):
-    fList = map_utils.rgbd_file_list(label_dir, raw_dir, save_dir)
+    fList = rgbd_file_list(label_dir, raw_dir, save_dir)
     if not os.path.exists(save_dir):
         os.mkdir(save_dir)
 
@@ -115,13 +113,6 @@ def visualize_combined_label(fList:rgbd_file_list, params:camera_params, object_
     
     print(f"Labels found include: {[string_from_id(val) for val in list(label_dict.keys())]}")
 
-    rows=torch.tensor(np.tile(np.arange(params.height).reshape(params.height,1),(1,params.width))-params.cy)
-    cols=torch.tensor(np.tile(np.arange(params.width),(params.height,1))-params.cx)
-
-    combined_xyz=np.zeros((0,3),dtype=float)
-    combined_rgb=np.zeros((0,3),dtype=np.uint8)
-
-    rot_matrixT=torch.tensor(params.rot_matrix)
 
     all_keys=[]
     for id in label_ids:
@@ -132,6 +123,14 @@ def visualize_combined_label(fList:rgbd_file_list, params:camera_params, object_
         return None
 
     all_keys=np.unique(all_keys).tolist()
+
+    #Prepare for poincloud creation
+    import torch
+    from map_utils import pointcloud_open3d
+    rows=torch.tensor(np.tile(np.arange(params.height).reshape(params.height,1),(1,params.width))-params.cy)
+    cols=torch.tensor(np.tile(np.arange(params.width),(params.height,1))-params.cx)
+    combined_xyz=np.zeros((0,3),dtype=float)
+    rot_matrixT=torch.tensor(params.rot_matrix)
     
     howmany=0
     for key in all_keys:
@@ -166,6 +165,8 @@ def visualize_combined_label(fList:rgbd_file_list, params:camera_params, object_
 
 
 if __name__ == '__main__':
+    import datetime
+    start=datetime.datetime.now()
     parser = argparse.ArgumentParser()
     parser.add_argument('root_dir',type=str,help='location of scannet directory to process')
     parser.add_argument('object_type', type=str, help='object type to search for (see scannet/scannetv2-labels.combined.tsv for list)')
@@ -176,8 +177,8 @@ if __name__ == '__main__':
     parser.add_argument('--draw', dest='draw', action='store_true')
     parser.set_defaults(draw=False)    
     args = parser.parse_args()
+    T1=datetime.datetime.now()
 
-    fList=build_file_structure(args.root_dir+"/"+args.raw_dir, args.root_dir+"/"+args.label_dir, args.root_dir+"/"+args.save_dir)
 
     if args.param_file is not None:
         par_file=args.param_file
@@ -188,10 +189,19 @@ if __name__ == '__main__':
         else:
             par_file=args.root_dir+"/%s.txt"%(s_root[-1])
     params=load_camera_info(par_file)
+    T2=datetime.datetime.now()
 
+    fList=build_file_structure(args.root_dir+"/"+args.raw_dir, args.root_dir+"/"+args.label_dir, args.root_dir+"/"+args.save_dir)
     pcd=visualize_combined_label(fList, params, args.object_type)
+    T3=datetime.datetime.now()
     if pcd is not None:
-        labeled_file=fList.get_labaled_pcloud_fileName(args.object_type)
+        import open3d as o3d
+        labeled_file=fList.get_labeled_pcloud_fileName(args.object_type)
         o3d.io.write_point_cloud(labeled_file,pcd)
         if args.draw:
             o3d.visualization.draw_geometries([pcd])
+    
+    delta1=(T1-start).total_seconds()
+    delta2=(T2-T1).total_seconds()
+    delta3=(T3-T2).total_seconds()
+    print(f"Seconds: 1){delta1}, 2){delta2}, 3){delta3}")

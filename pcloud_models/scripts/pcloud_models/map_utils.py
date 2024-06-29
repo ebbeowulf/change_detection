@@ -1,93 +1,19 @@
+import datetime
+B1=datetime.datetime.now()
 import torch
+print(f"Library Load Time: {(datetime.datetime.now()-B1).total_seconds()}")
 import pickle
-import open3d as o3d
 import numpy as np
 import cv2
 import os
 import pdb
 from change_detection.segmentation import image_segmentation
+from rgbd_file_list import rgbd_file_list
+from camera_params import camera_params
 import copy
 
 # DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 DEVICE = torch.device("cpu")
-
-class camera_params():
-    def __init__(self, height, width, fx, fy, cx, cy, rot_matrix):
-        self.height=int(height)
-        self.width=int(width)
-        self.fx=fx
-        self.fy=fy
-        self.cx=cx
-        self.cy=cy
-        self.rot_matrix=rot_matrix
-        self.K=np.array([[fx,0,cx],[0,fy,cy],[0,0,1]])
-    
-    def globalXYZ_to_imageRC(self, tX, tY, tZ, globalM:np.array):
-        invR=np.linalg.inv(globalM)
-        Vi=np.matmul(invR,[tX, tY, tZ, 1])
-        col=Vi[0]*self.fx/Vi[2]+self.cx
-        row=Vi[1]*self.fy/Vi[2]+self.cy
-        return row,col
-
-class rgbd_file_list():
-    def __init__(self, color_image_dir:str, depth_image_dir:str, intermediate_save_dir:str):
-        self.all_files=dict()
-        self.color_image_dir=color_image_dir + "/"
-        self.depth_image_dir=depth_image_dir + "/"
-        self.intermediate_save_dir=intermediate_save_dir + "/"
-    
-    def add_file(self, id:int, color_fName:str, depth_fName:str):
-        if id in self.all_files:
-            print("ID %d is already in the file list - replacing existing entry")
-
-        self.all_files[id]={'color': color_fName, 'depth': depth_fName}
-
-    def add_pose(self, id:int, pose:np.array):
-        self.all_files[id]['pose']=pose
-
-    def keys(self):
-        return self.all_files.keys()
-    
-    def is_key(self, id:int):
-        return id in self.all_files
-    
-    def get_color_fileName(self, id:int):
-        return self.color_image_dir+self.all_files[id]['color']
-
-    def get_segmentation_fileName(self, id:int, is_yolo:bool, tgt_class:str):
-        if is_yolo:
-            return self.get_yolo_fileName(id)
-        else:
-            return self.get_clip_fileName(id, tgt_class)
-        
-    def get_yolo_fileName(self, id:int):
-        return self.intermediate_save_dir+self.all_files[id]['color']+".yolo.pkl"
-
-    def get_clip_fileName(self, id:int, tgt_class:str):
-        cls_str=copy.copy(tgt_class)
-        cls_str.replace(" ","_")
-        return self.intermediate_save_dir+self.all_files[id]['color']+".%s.clip.pkl"%(cls_str)
-
-    def get_depth_fileName(self, id:int):
-        return self.depth_image_dir+self.all_files[id]['depth']
-    
-    def get_pose(self, id:int):
-        return self.all_files[id]['pose']
-    
-    def get_class_pcloud_fileName(self, id:int, cls:str):
-        return self.intermediate_save_dir+self.all_files[id]['color']+".%s.pkl"%(cls)
-
-    def get_combined_pcloud_fileName(self, cls:str=None):
-        if cls==None:
-            return self.intermediate_save_dir+"combined.ply"
-        else:
-            return self.intermediate_save_dir+"%s.ply"%(cls)
-
-    def get_annotation_file(self):
-        return self.intermediate_save_dir+"annotations.json"
-    
-    def get_labeled_pcloud_fileName(self, cls:str):
-        return self.intermediate_save_dir+"%s.labeled.ply"%(cls)
 
 # Process all images with yolo - creating
 #   pickle files for the results and storing alongside the 
@@ -168,6 +94,7 @@ def get_high_confidence_objects(obj_list, confidence_threshold=0.5):
 # Create an open3d pointcloud object - will randomly sample the cloud
 #   to reduce the number of points as necessary
 def pointcloud_open3d(xyz_points,rgb_points=None,max_num_points=2000000):
+    import open3d as o3d
     pcd=o3d.geometry.PointCloud()
     if xyz_points.shape[0]<max_num_points:
         pcd.points = o3d.utility.Vector3dVector(xyz_points)
@@ -441,6 +368,7 @@ def create_pclouds(tgt_classes:list, fList:rgbd_file_list, params:camera_params,
     return pclouds
 
 def create_pclouds_from_images(fList:rgbd_file_list, params:camera_params, targets:list=None, display_pclouds=False, use_connected_components=False):
+    import open3d as o3d
     process_images_with_yolo(fList)
     if targets is None:
         obj_list=create_object_list(fList)

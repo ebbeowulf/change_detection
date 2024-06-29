@@ -1,15 +1,10 @@
-import cv2
 import numpy as np
 import argparse
 import glob
-import pdb
 import pickle
 import os
-import torch
-import open3d as o3d
-import map_utils
-# DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-# DEVICE = torch.device("cpu")
+from rgbd_file_list import rgbd_file_list
+from camera_params import camera_params
 
 def load_camera_info(info_file):
     info_dict = {}
@@ -25,14 +20,17 @@ def load_camera_info(info_file):
             elif key=='colorToDepthExtrinsics':
                 info_dict[key] = np.fromstring(val, sep=' ')
             else:
-                info_dict[key] = float(val)
+                try:
+                    info_dict[key] = float(val)
+                except Exception as e:
+                    info_dict[key] = val
 
     if 'axisAlignment' not in info_dict:
         rot_matrix = np.identity(4)
     else:
         rot_matrix = info_dict['axisAlignment'].reshape(4, 4)
     
-    return map_utils.camera_params(info_dict['colorHeight'], info_dict['colorWidth'],info_dict['fx_color'],info_dict['fy_color'],info_dict['mx_color'],info_dict['my_color'],rot_matrix)
+    return camera_params(info_dict['colorHeight'], info_dict['colorWidth'],info_dict['fx_color'],info_dict['fy_color'],info_dict['mx_color'],info_dict['my_color'],rot_matrix)
 
 def read_scannet_pose(pose_fName):
     # Get the pose - 
@@ -51,7 +49,7 @@ def read_scannet_pose(pose_fName):
         return None
     
 def build_file_structure(image_dir, save_dir):
-    fList = map_utils.rgbd_file_list(image_dir, image_dir, save_dir)
+    fList = rgbd_file_list(image_dir, image_dir, save_dir)
     if not os.path.exists(save_dir):
         os.mkdir(save_dir)
 
@@ -94,6 +92,8 @@ if __name__ == '__main__':
         else:
             par_file=args.root_dir+"/%s.txt"%(s_root[-1])
     params=load_camera_info(par_file)
+    
+    import map_utils
     if args.yolo:
         map_utils.process_images_with_yolo(fList)
     else:
@@ -111,11 +111,12 @@ if __name__ == '__main__':
     else:
         pclouds=map_utils.create_pclouds(args.targets,fList,params, args.yolo, conf_threshold=args.threshold)
 
+    import open3d as o3d
     for key in pclouds.keys():
         ply_fileName=fList.get_combined_pcloud_fileName(key)
         pcd=map_utils.pointcloud_open3d(pclouds[key]['xyz'],pclouds[key]['rgb'])
         o3d.io.write_point_cloud(ply_fileName,pcd)
-        raw_fileName=save_dir+"/"+key+".raw.pkl"
+        raw_fileName=fList.get_combined_raw_fileName(key)
 
         with open(raw_fileName, 'wb') as handle:
             pickle.dump(pclouds[key], handle, protocol=pickle.HIGHEST_PROTOCOL)

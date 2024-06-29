@@ -7,7 +7,6 @@ from change_detection.segmentation import image_segmentation
 from PIL import Image
 import pdb
 import pickle
-from sklearn.cluster import DBSCAN
 
 #from https://github.com/NielsRogge/Transformers-Tutorials/blob/master/CLIPSeg/Zero_shot_image_segmentation_with_CLIPSeg.ipynb
 
