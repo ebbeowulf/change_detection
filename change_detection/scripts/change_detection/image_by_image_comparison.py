@@ -407,14 +407,6 @@ if __name__ == '__main__':
                            args.changed_dir + "/" + args.changed_images_csv, 
                            args.search_category, args.positive, args.clip)
 
-    # ln_s=args.image_name.split('/')
-    # if len(ln_s)>1:
-    #     directory=ln_s[0]
-    #     image_name=ln_s[1]
-    # else:
-    #     directory=None
-    #     image_name=args.image_name
-
     if eval_.detect_change(args.changed_dir+"/",
                            args.nerf_output_dir,
                            args.changed_color_dir,
@@ -432,6 +424,4 @@ if __name__ == '__main__':
     else:
         print("No change found -exiting")
 
-    # elif args.annotation_file is not None:
-    #     eval_.evaluate_vs_gt(args.annotation_file)
 
