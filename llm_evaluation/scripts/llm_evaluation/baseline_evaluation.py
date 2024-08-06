@@ -2,7 +2,7 @@ import open3d as o3d
 import os
 import json
 import glob
-from rgbd_file_list import rgbd_file_list
+from pcloud_models.rgbd_file_list import rgbd_file_list
 import pdb
 import numpy as np
 from sklearn.cluster import DBSCAN
@@ -31,7 +31,7 @@ def build_test_data_structure(root_dir:str, tgt_object:str):
             #     test_files[fName]['annotation']=annot[tgt_object]
     return test_files
 
-def build_clusters(xyz, prob, threshold:float, grid_cell_size=0.01, eps=0.1, min_count=[1000]):
+def build_clusters(xyz, prob, threshold:float, grid_cell_size=0.01, eps=0.02, min_count=[10]):
     pcd=o3d.geometry.PointCloud()
     F1=np.where(prob>threshold)
     xyzF=xyz[F1]

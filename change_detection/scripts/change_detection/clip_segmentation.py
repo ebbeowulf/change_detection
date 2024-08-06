@@ -80,7 +80,7 @@ class clip_seg(image_segmentation):
             P2=torch.sigmoid(outputs.logits.unsqueeze(0)).to('cpu').numpy()
         for dim in range(P2.shape[0]):
             self.max_probs[dim]=P2[dim,:,:].max()
-            print("%s = %f"%(self.prompts[dim],self.max_probs[dim]))            
+            # print("%s = %f"%(self.prompts[dim],self.max_probs[dim]))            
             self.probs[dim]=cv2.resize(P2[dim,:,:],(image_size[0],image_size[1]))
             self.masks[dim]=self.probs[dim]>threshold
 

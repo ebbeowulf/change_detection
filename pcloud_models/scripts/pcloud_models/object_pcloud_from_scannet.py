@@ -1,4 +1,4 @@
-from map_from_scannet import load_camera_info, read_scannet_pose
+from scannet_processing import load_camera_info, read_scannet_pose, get_scene_type
 from camera_params import camera_params
 from rgbd_file_list import rgbd_file_list
 import argparse
@@ -12,6 +12,21 @@ import numpy as np
 LABEL_CSV="/home/emartinso/data/scannet/scannetv2-labels.combined.tsv"
 ID2STR=None
 STR2ID=None
+
+def add_known_id_and_label(lbl_, id):
+    global ID2STR, STR2ID
+    if id in ID2STR:
+        if lbl_ not in ID2STR[id]:
+            ID2STR[id].append(lbl_)
+    else:
+        ID2STR[id]=[lbl_]
+
+    if lbl_ in STR2ID:
+        if id not in STR2ID[lbl_]:
+            STR2ID[lbl_].append(id)
+    else:
+        STR2ID[lbl_]=[id]
+    
 def read_label_csv():
     global ID2STR, STR2ID
     with open(LABEL_CSV,"r") as fin:
@@ -19,22 +34,17 @@ def read_label_csv():
     categories=lines[0].split('\t')
     id_idx=categories.index('id')
     cat_idx=categories.index('category')
+    nyu_idx=categories.index('nyuClass')
     ID2STR=dict()
     STR2ID=dict()    
     for line in lines[1:]:
         lineS=line.split('\t')
         id=int(lineS[id_idx])
-        if id in ID2STR:
-            if lineS[cat_idx] not in ID2STR[id]:
-                ID2STR[id].append(lineS[cat_idx])
-        else:
-            ID2STR[id]=[lineS[cat_idx]]
-        if lineS[cat_idx] in STR2ID:
-            if id not in STR2ID[lineS[cat_idx]]:
-                STR2ID[lineS[cat_idx]].append(id)
-        else:
-            STR2ID[lineS[cat_idx]]=[id]
 
+        # Add an entry for the category AND the nyu category
+        add_known_id_and_label(lineS[cat_idx], id)
+        add_known_id_and_label(lineS[nyu_idx], id)
+        
 def id_from_string(obj_name):
     global STR2ID
     if STR2ID is None:
@@ -163,6 +173,18 @@ def visualize_combined_label(fList:rgbd_file_list, params:camera_params, object_
             print(f"Exception loading file {key}: {e}")
     return pointcloud_open3d(combined_xyz, max_num_points=max_num_points)
 
+def retrieve_object_pcloud(params:camera_params, fList:rgbd_file_list, object_type):
+    import open3d as o3d
+    labeled_file=fList.get_labeled_pcloud_fileName(object_type)
+    if os.path.exists(labeled_file):
+        pcd=o3d.io.read_point_cloud(labeled_file)
+        if pcd.is_empty():
+            return None
+    else:
+        pcd=visualize_combined_label(fList, params, object_type)
+        if pcd is not None:
+            o3d.io.write_point_cloud(labeled_file,pcd)
+    return pcd
 
 if __name__ == '__main__':
     import datetime
@@ -178,7 +200,6 @@ if __name__ == '__main__':
     parser.set_defaults(draw=False)    
     args = parser.parse_args()
     T1=datetime.datetime.now()
-
 
     if args.param_file is not None:
         par_file=args.param_file
