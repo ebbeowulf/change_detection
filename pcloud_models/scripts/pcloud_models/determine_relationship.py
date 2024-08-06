@@ -146,7 +146,8 @@ class determine_relationship():
         if self.object_pcloud is None or 'xyz' not in self.object_pcloud or 'probs' not in self.object_pcloud:
             print(f"Error processing object pointcloud for {tgt_class}")
         
-        whichP=(self.object_pcloud['xyz']>=conf_threshold)
+        pdb.set_trace()
+        whichP=(self.object_pcloud['probs']>=initial_threshold)
         pcd=o3d.geometry.PointCloud()
         xyzF=self.object_pcloud['xyz'][whichP]
         F2=np.where(np.isnan(xyzF).sum(1)==0)        
@@ -210,10 +211,11 @@ if __name__ == '__main__':
     parser.add_argument('tgt_class',type=str,help='class to build descriptive file for')
     parser.add_argument('--raw_dir',type=str,default='raw_output', help='subdirectory containing the color images')
     parser.add_argument('--save_dir',type=str,default='raw_output/save_results', help='subdirectory in which to store the intermediate files')
+    parser.add_argument('--label_dir',type=str,default='label-filt', help='subdirectory containing the label images')
     args = parser.parse_args()
-    
+   
     save_dir=args.root_dir+"/"+args.save_dir
-    fList=build_file_structure(args.root_dir+"/"+args.raw_dir, save_dir)
+    fList=build_file_structure(args.root_dir+"/"+args.raw_dir, args.root_dir+"/"+args.label_dir, save_dir)
 
     s_root=args.root_dir.split('/')
     if s_root[-1]=='':
@@ -224,5 +226,6 @@ if __name__ == '__main__':
     rel=determine_relationship()
     rel.load_furniture(fList, par_file)
     rel.load_objects(fList, args.tgt_class)
+    rel.process_objects(args.tgt_class, 0.5)
     combined_stmt=rel.get_furniture_description()
     print(combined_stmt)
