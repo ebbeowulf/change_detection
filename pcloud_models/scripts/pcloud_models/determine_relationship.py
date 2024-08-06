@@ -44,6 +44,7 @@ class object_pcloud():
         self.pts=pts
         self.label=label
         self.farthestP=farthest_point_sampling(self.pts, num_samples)
+        self.prob_stats=None
 
     def set_label(self, label):
         self.label=label
@@ -72,6 +73,13 @@ class object_pcloud():
             return ctr[2]>input_ctr[2]
         return False
     
+    def estimate_probability(self, original_xyz, original_prob):
+        filt=(original_xyz[:,0]>=self.box[0][0])*(original_xyz[:,0]<=self.box[1][0])*(original_xyz[:,1]>=self.box[0][1])*(original_xyz[:,1]<=self.box[1][1])*(original_xyz[:,2]>=self.box[0][2])*(original_xyz[:,2]<=self.box[1][2])
+        self.prob_stats=dict()
+        self.prob_stats['max']=original_prob[filt].max()
+        self.prob_stats['mean']=original_prob[filt].mean()
+        self.prob_stats['stdev']=original_prob[filt].std()
+
 class determine_relationship():
     def __init__(self, categories:list=None):
         if categories is None:
@@ -82,43 +90,51 @@ class determine_relationship():
         
         read_label_csv()
         self.category_id=[]
-        self.pclouds=dict()
+        self.furniture_pclouds=dict()
+        self.object_raw=None
+        self.object_pclouds=dict()
         for lbl_ in self.categories:
             self.category_id = self.category_id + id_from_string(lbl_)
 
-    def add_pcloud(self, cloud_dict, object_type:str):
+    # Add another object to the long-term object map
+    #   These are usually furniture or other objects that we 
+    #   have good recognition models for (i.e. Yolo or hand labeled)
+    def add_furniture(self, cloud_dict, object_type:str):
         uid=np.random.randint(1e10)
-        while uid in self.pclouds:
+        while uid in self.furniture_pclouds:
             uid=np.random.randint(1e10)
         
-        self.pclouds[uid]=cloud_dict
-        self.pclouds[uid].set_label(object_type)
+        self.furniture_pclouds[uid]=cloud_dict
+        self.furniture_pclouds[uid].set_label(object_type)
 
+    # Load the set of known furniture for the environment
+    #   and then determine the relationships between these furniture
+    #   The only relationships used are on, over and next to.
     def load_furniture(self, fList:rgbd_file_list, params_fileName):
         params=load_camera_info(params_fileName)
         self.sceneType=get_scene_type(params_fileName)
 
-        self.pclouds=dict()
+        self.furniture_pclouds=dict()
         for lbl_ in self.categories:
             pcd=retrieve_object_pcloud(params, fList, lbl_)
             clusters=get_distinct_clusters(pcd)
             for cls_ in clusters:
-                self.add_pcloud(cls_, lbl_)
+                self.add_furniture(cls_, lbl_)
         
-        key_list=list(self.pclouds.keys())
+        key_list=list(self.furniture_pclouds.keys())
         self.furniture_relationships=[]
         for idxA, uidA in enumerate(key_list):
             for uidB in key_list[(idxA+1):]:
-                print("Checking relationship %s(%d) <-> %s(%d)"%(self.pclouds[uidA].label, uidA, self.pclouds[uidB].label, uidB))
+                print("Checking relationship %s(%d) <-> %s(%d)"%(self.furniture_pclouds[uidA].label, uidA, self.furniture_pclouds[uidB].label, uidB))
 
                 # Is uidA above uidB?
-                distance=self.pclouds[uidA].compute_cloud_distance(self.pclouds[uidB])
-                if self.pclouds[uidA].is_above(self.pclouds[uidB]):
+                distance=self.furniture_pclouds[uidA].compute_cloud_distance(self.furniture_pclouds[uidB])
+                if self.furniture_pclouds[uidA].is_above(self.furniture_pclouds[uidB]):
                     if distance<CLUSTER_TOUCHING_THRESH:
                         self.furniture_relationships.append([uidA,uidB,"on"])
                     else:
                         self.furniture_relationships.append([uidA,uidB,"above"])
-                elif self.pclouds[uidB].is_above(self.pclouds[uidA]): #is uidB above uidA?
+                elif self.furniture_pclouds[uidB].is_above(self.furniture_pclouds[uidA]): #is uidB above uidA?
                     if distance<CLUSTER_TOUCHING_THRESH:
                         self.furniture_relationships.append([uidB,uidA,"on"])
                     else:
@@ -129,31 +145,65 @@ class determine_relationship():
                     print("Not related")
         print(self.furniture_relationships)
 
+    # Load the raw point cloud used to determine object hypotheses
     def load_objects(self, fList:rgbd_file_list, tgt_class:str):
         pcloud_fName=fList.get_combined_raw_fileName(tgt_class)
 
         try:
             with open(pcloud_fName, 'rb') as handle:
-                self.object_pcloud=pickle.load(handle)
+                self.object_raw=pickle.load(handle)
         except Exception as e:
             print(f"Loading pcloud from {pcloud_fName} failed ... ")
-            self.object_pcloud = None
+            self.object_raw = None
             return
         
     # Reprocess the object pointcloud to count clusters and generate
     #   relationships between candidate objects and known furniture
     def process_objects(self, tgt_class:str, initial_threshold:float, min_cluster_size=1000, floor_threshold=0.05):
-        if self.object_pcloud is None or 'xyz' not in self.object_pcloud or 'probs' not in self.object_pcloud:
+        if self.object_raw is None or 'xyz' not in self.object_raw or 'probs' not in self.object_raw:
             print(f"Error processing object pointcloud for {tgt_class}")
         
-        pdb.set_trace()
-        whichP=(self.object_pcloud['probs']>=initial_threshold)
+        whichP=(self.object_raw['probs']>=initial_threshold)
         pcd=o3d.geometry.PointCloud()
-        xyzF=self.object_pcloud['xyz'][whichP]
-        F2=np.where(np.isnan(xyzF).sum(1)==0)        
-        pcd.points=o3d.utility.Vector3dVector(xyzF[F2])
+        xyzF=self.object_raw['xyz'][whichP]
+        F2=np.where(np.isnan(xyzF).sum(1)==0)
+        xyzF2=xyzF[F2]        
+        pcd.points=o3d.utility.Vector3dVector(xyzF2)
         object_clusters=get_distinct_clusters(pcd, cluster_min_count=min_cluster_size, floor_threshold=floor_threshold)
-        pdb.set_trace()
+        self.object_pclouds=dict()
+        if len(object_clusters)>0:
+            # Create the object pclouds object - stores hypothetical locations for the target object
+            #   in a list of the same style as furniture pclouds
+            probF=self.object_raw['probs'][whichP]
+            probF2=probF[F2]
+            for idx, cl_ in enumerate(object_clusters):
+                self.object_pclouds[-idx]=cl_
+                # Estimate the probability of each cluster using max + mean
+                self.object_pclouds[-idx].estimate_probability(xyzF2,probF2)
+            
+            # Now in a similar process to that used to describe furniture, identify relationships between
+            #   possible object locations and furniture
+            furniture_key_list=list(self.furniture_pclouds.keys())
+            object_key_list=list(self.object_pclouds.keys())
+            self.object_relationships=[]
+            for idxO, uidO in enumerate(object_key_list):
+                for idxF, uidF in enumerate(furniture_key_list):
+                    print("Checking relationship %s(%d) <-> %s(%d)"%(self.object_pclouds[uidO].label, uidO, self.furniture_pclouds[uidF].label, uidF))
+
+                    # Is uidA above uidB?
+                    distance=self.object_pclouds[uidO].compute_cloud_distance(self.furniture_pclouds[uidF])
+                    if self.object_pclouds[uidO].is_above(self.furniture_pclouds[uidF]):
+                        if distance<CLUSTER_TOUCHING_THRESH:
+                            self.object_relationships.append([uidO,uidF,"on"])
+                        else:
+                            self.furniture_relationships.append([uidO,uidF,"above"])
+                    elif self.furniture_pclouds[uidF].is_above(self.object_pclouds[uidO]): #is uidB above uidA?
+                        self.furniture_relationships.append([uidO,uidF,"under"])                
+                    elif distance<CLUSTER_PROXIMITY_THRESH:  # are they close enough in the horizontal to be 'next to'
+                        self.furniture_relationships.append([uidO, uidF, "next to"])
+                    else:
+                        print("Not related")
+            print(self.object_relationships)
 
     def get_room_statement(self):
         if self.sceneType is not None:
@@ -163,10 +213,10 @@ class determine_relationship():
     def get_furniture_statement(self):
         # count objects
         o_count={}
-        for id in self.pclouds:
-            if self.pclouds[id].label not in o_count:
-                o_count[self.pclouds[id].label] = 0
-            o_count[self.pclouds[id].label]+=1
+        for id in self.furniture_pclouds:
+            if self.furniture_pclouds[id].label not in o_count:
+                o_count[self.furniture_pclouds[id].label] = 0
+            o_count[self.furniture_pclouds[id].label]+=1
         
         # generate statement to summarize objects
         object_stmt="There is "
@@ -192,9 +242,9 @@ class determine_relationship():
         # Now describe relationships
         rel_stmts=[]
         for rel in self.furniture_relationships:
-            stmt=f"There is a {self.pclouds[rel[0]].label} {rel[2]} the {self.pclouds[rel[1]].label}."
+            stmt=f"There is a {self.furniture_pclouds[rel[0]].label} {rel[2]} the {self.furniture_pclouds[rel[1]].label}."
             if stmt in rel_stmts:
-                stmt=f"There is another {self.pclouds[rel[0]].label} {rel[2]} the {self.pclouds[rel[1]].label}."
+                stmt=f"There is another {self.furniture_pclouds[rel[0]].label} {rel[2]} the {self.furniture_pclouds[rel[1]].label}."
             rel_stmts.append(stmt)
         
         for stmt in rel_stmts:
@@ -202,7 +252,12 @@ class determine_relationship():
         
         return combined_stmt
 
-    # def build_object_statements(self, tgt_class, threshold_list):
+    def build_object_statements(self, tgt_class, base_threshold):
+        self.process_objects(tgt_class, base_threshold)
+        if len(self.object_pclouds)<1:
+            return ""
+        
+        for cluster
         
 
 if __name__ == '__main__':
