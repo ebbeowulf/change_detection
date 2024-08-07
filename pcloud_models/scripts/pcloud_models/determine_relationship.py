@@ -79,6 +79,7 @@ class object_pcloud():
         self.prob_stats['max']=original_prob[filt].max()
         self.prob_stats['mean']=original_prob[filt].mean()
         self.prob_stats['stdev']=original_prob[filt].std()
+        self.prob_stats['pcount']=filt.shape[0]
 
 class determine_relationship():
     def __init__(self, categories:list=None):
@@ -177,9 +178,10 @@ class determine_relationship():
             probF=self.object_raw['probs'][whichP]
             probF2=probF[F2]
             for idx, cl_ in enumerate(object_clusters):
-                self.object_pclouds[-idx]=cl_
+                idxO=f"L{idx}"
+                self.object_pclouds[idxO]=cl_
                 # Estimate the probability of each cluster using max + mean
-                self.object_pclouds[-idx].estimate_probability(xyzF2,probF2)
+                self.object_pclouds[idxO].estimate_probability(xyzF2,probF2)
             
             # Now in a similar process to that used to describe furniture, identify relationships between
             #   possible object locations and furniture
@@ -188,7 +190,7 @@ class determine_relationship():
             self.object_relationships=[]
             for idxO, uidO in enumerate(object_key_list):
                 for idxF, uidF in enumerate(furniture_key_list):
-                    print("Checking relationship %s(%d) <-> %s(%d)"%(self.object_pclouds[uidO].label, uidO, self.furniture_pclouds[uidF].label, uidF))
+                    print("Checking relationship %s(%s) <-> %s(%d)"%(self.object_pclouds[uidO].label, uidO, self.furniture_pclouds[uidF].label, uidF))
 
                     # Is uidA above uidB?
                     distance=self.object_pclouds[uidO].compute_cloud_distance(self.furniture_pclouds[uidF])
@@ -247,18 +249,57 @@ class determine_relationship():
                 stmt=f"There is another {self.furniture_pclouds[rel[0]].label} {rel[2]} the {self.furniture_pclouds[rel[1]].label}."
             rel_stmts.append(stmt)
         
+        combined_stmt=""
         for stmt in rel_stmts:
             combined_stmt+=f" {stmt}"
         
         return combined_stmt
 
-    def build_object_statements(self, tgt_class, base_threshold):
-        self.process_objects(tgt_class, base_threshold)
+    def build_object_statements(self, tgt_class):
         if len(self.object_pclouds)<1:
             return ""
         
-        for cluster
-        
+        object_key_list=list(self.object_pclouds.keys())
+        combined_stmt=""
+        for uidO in object_key_list:
+            combined_stmt+=f"There is a possible {tgt_class}"
+            # Build the list of relationships
+            rset=[]
+            for rel in self.object_relationships:
+                if rel[0]==uidO:
+                    rset.append(rel)
+            
+            if self.object_pclouds[uidO].box[0,2]<CLUSTER_TOUCHING_THRESH:
+                combined_stmt+=" on the floor"
+
+            if len(rset)==0:
+                combined_stmt+=" next to none of the objects"
+            else:
+                if len(rset)>1:
+                    for rel in rset[:-1]:
+                        combined_stmt+=f" {rel[2]} the {self.furniture_relationships[rel[1]]} and"
+
+                combined_stmt+=f" {rset[-1][2]} the {self.furniture_pclouds[rset[-1][1]].label}"
+            combined_stmt+=f" at location {uidO}."
+        return combined_stmt
+
+    def create_map_summary(self, tgt_class:str, confidence_values:list):
+        summary={}
+        summary['room']=self.get_room_statement()
+        summary['furniture']=self.get_furniture_statement()
+        summary['furniture_relationships']=self.get_furniture_relationships()
+        summary['object_results']={}
+        for conf_threshold in confidence_values:
+            summary['object_results'][conf_threshold]=dict()
+            self.process_objects(tgt_class, conf_threshold)
+            summary['object_results'][conf_threshold]['object_list']=list(self.object_pclouds.keys())
+            summary['object_results'][conf_threshold]['max_prob']  = [ self.object_pclouds[uidO].prob_stats['max'] for uidO in self.object_pclouds.keys() ]
+            summary['object_results'][conf_threshold]['mean_prob'] = [ self.object_pclouds[uidO].prob_stats['mean'] for uidO in self.object_pclouds.keys() ]
+            summary['object_results'][conf_threshold]['stdev'] = [ self.object_pclouds[uidO].prob_stats['stdev'] for uidO in self.object_pclouds.keys() ]
+            summary['object_results'][conf_threshold]['pcount'] = [ self.object_pclouds[uidO].prob_stats['pcount'] for uidO in self.object_pclouds.keys() ]
+            summary['object_results'][conf_threshold]['combined_statement']=self.build_object_statements(tgt_class)
+        pdb.set_trace()
+        return summary
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -281,6 +322,7 @@ if __name__ == '__main__':
     rel=determine_relationship()
     rel.load_furniture(fList, par_file)
     rel.load_objects(fList, args.tgt_class)
-    rel.process_objects(args.tgt_class, 0.5)
-    combined_stmt=rel.get_furniture_description()
-    print(combined_stmt)
+    map_sum=rel.create_map_summary(args.tgt_class,np.arange(0.5,0.99,0.02))
+    # rel.process_objects(args.tgt_class, 0.5)
+    # combined_stmt=rel.get_furniture_description()
+    # print(combined_stmt)
