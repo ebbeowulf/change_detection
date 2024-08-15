@@ -1,73 +1,11 @@
-import cv2
 import numpy as np
 import argparse
 import glob
-import pdb
 import pickle
 import os
-import torch
-import open3d as o3d
-import map_utils
-# DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-# DEVICE = torch.device("cpu")
-
-def load_camera_info(info_file):
-    info_dict = {}
-    with open(info_file) as f:
-        for line in f:
-            if line[-1]=='\n':
-                line=line[:-1]
-            (key, val) = line.split(" = ")
-            if key=='sceneType':
-                info_dict[key] = val
-            elif key=='axisAlignment' or key=='colorToDepthExtrinsics':
-                info_dict[key] = np.fromstring(val, sep=' ')
-            elif key=='colorToDepthExtrinsics':
-                info_dict[key] = np.fromstring(val, sep=' ')
-            else:
-                info_dict[key] = float(val)
-
-    if 'axisAlignment' not in info_dict:
-        rot_matrix = np.identity(4)
-    else:
-        rot_matrix = info_dict['axisAlignment'].reshape(4, 4)
-    
-    return map_utils.camera_params(info_dict['colorHeight'], info_dict['colorWidth'],info_dict['fx_color'],info_dict['fy_color'],info_dict['mx_color'],info_dict['my_color'],rot_matrix)
-
-def read_scannet_pose(pose_fName):
-    # Get the pose - 
-    try:
-        with open(pose_fName,'r') as fin:
-            LNs=fin.readlines()
-            pose=np.zeros((4,4),dtype=float)
-            for r_idx,ln in enumerate(LNs):
-                if ln[-1]=='\n':
-                    ln=ln[:-1]
-                p_split=ln.split(' ')
-                for c_idx, val in enumerate(p_split):
-                    pose[r_idx, c_idx]=float(val)
-        return pose
-    except Exception as e:
-        return None
-    
-def build_file_structure(image_dir, save_dir):
-    fList = map_utils.rgbd_file_list(image_dir, image_dir, save_dir)
-    if not os.path.exists(save_dir):
-        os.mkdir(save_dir)
-
-    # Find all files with the '.txt' extension in the current directory
-    txt_files = glob.glob(image_dir+'/*.txt')
-    for fName in txt_files:
-        try:
-            ppts=fName.split('.')
-            rootName=ppts[0].split('/')[-1]
-            number=int(rootName.split('-')[-1])
-            pose=read_scannet_pose(fName)
-            fList.add_file(number,rootName+'.color.jpg',rootName+'.depth_reg.png')
-            fList.add_pose(number, pose)
-        except Exception as e:
-            continue
-    return fList
+from rgbd_file_list import rgbd_file_list
+from camera_params import camera_params
+from scannet_processing import load_camera_info, get_scene_type, read_scannet_pose, build_file_structure
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -80,6 +18,10 @@ if __name__ == '__main__':
                     help='Set of target classes to build point clouds for')
     parser.add_argument('--clip', dest='yolo', action='store_false')
     parser.add_argument('--yolo', dest='yolo', action='store_true')
+    parser.set_defaults(yolo=True)
+    parser.add_argument('--draw', dest='draw', action='store_true')
+    parser.set_defaults(draw=False)
+    parser.add_argument('--use_connected_components', dest='use_cc', action='store_true')
     parser.set_defaults(yolo=True)
     # parser.add_argument('--targets',type=list, nargs='+', default=None, help='Set of target classes to build point clouds for')
     args = parser.parse_args()
@@ -94,6 +36,8 @@ if __name__ == '__main__':
         else:
             par_file=args.root_dir+"/%s.txt"%(s_root[-1])
     params=load_camera_info(par_file)
+    
+    import map_utils
     if args.yolo:
         map_utils.process_images_with_yolo(fList)
     else:
@@ -109,17 +53,18 @@ if __name__ == '__main__':
         print(high_conf_list)
         pclouds=map_utils.create_pclouds(high_conf_list,fList,params, args.yolo, conf_threshold=args.threshold)
     else:
-        pclouds=map_utils.create_pclouds(args.targets,fList,params, args.yolo, conf_threshold=args.threshold)
+        pclouds=map_utils.create_pclouds(args.targets,fList,params, args.yolo, conf_threshold=args.threshold, use_connected_components=False)
 
+    import open3d as o3d
     for key in pclouds.keys():
         ply_fileName=fList.get_combined_pcloud_fileName(key)
         pcd=map_utils.pointcloud_open3d(pclouds[key]['xyz'],pclouds[key]['rgb'])
         o3d.io.write_point_cloud(ply_fileName,pcd)
-        raw_fileName=save_dir+"/"+key+".raw.pkl"
+        raw_fileName=fList.get_combined_raw_fileName(key)
 
         with open(raw_fileName, 'wb') as handle:
             pickle.dump(pclouds[key], handle, protocol=pickle.HIGHEST_PROTOCOL)
 
-        if 0:
+        if args.draw:
             o3d.visualization.draw_geometries([pcd])
 
