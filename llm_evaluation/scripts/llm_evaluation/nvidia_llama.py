@@ -5,8 +5,7 @@ import json
 import sys
 from query_generation import room_likelihood, object_likelihood
 import pdb
-
-API_KEY="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"
+from api_key import API_KEY
 
 def get_llm_response(client, input_text):
   completion = client.chat.completions.create(
