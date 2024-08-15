@@ -8,6 +8,7 @@ from farthest_point_sampling.fps import farthest_point_sampling
 from rgbd_file_list import rgbd_file_list
 from camera_params import camera_params
 import pickle
+import sys
 
 # FURNITURE=['chair','couch','potted plant','bed','mirror','dining table','window','desk','toilet','door']
 FURNITURE=['cabinet','chair','couch','plant','bed','dining table','desk','toilet','ottoman'] # door + window have too many errors
@@ -15,7 +16,7 @@ APPLIANCE=['tv','microwave','oven','toaster','refrigerator','sink'] #'blender' i
 
 DBSCAN_MIN_SAMPLES=20 
 DBSCAN_GRIDCELL_SIZE=0.01
-DBSCAN_EPS=DBSCAN_GRIDCELL_SIZE*2.5
+DBSCAN_EPS=0.018 # allows for connections in cells full range of surrounding cube DBSCAN_GRIDCELL_SIZE*2.5
 CLUSTER_MIN_COUNT=10000
 CLUSTER_PROXIMITY_THRESH=0.3
 CLUSTER_TOUCHING_THRESH=0.05
@@ -25,12 +26,17 @@ def get_distinct_clusters(pcloud, gridcell_size=DBSCAN_GRIDCELL_SIZE, eps=DBSCAN
     if pcloud is None or len(pcloud.points)<CLUSTER_MIN_COUNT:
         return clouds
     pcd_small=pcloud.voxel_down_sample(gridcell_size)
-    p2=DBSCAN(eps=eps, min_samples=min_samples).fit(np.array(pcd_small.points))
+    p2=DBSCAN(eps=eps, min_samples=min_samples,n_jobs=10).fit(np.array(pcd_small.points))
     pts=np.array(pcd_small.points)
 
-    for id in range(10): # don't bother with counts>10
-        whichP=(p2.labels_==id)
-        if whichP.sum()>cluster_min_count:
+    # Need to get the cluster sizes... so we can focus on the largest clusters only
+    cl_cnt=np.array([ (p2.labels_==cnt).sum() for cnt in range(p2.labels_.max()) ])
+    validID=np.where(cl_cnt>cluster_min_count)[0]
+    if validID.shape[0]>0:
+        sortedI=np.argsort(-cl_cnt[validID])
+
+        for id in validID[sortedI][:10]:
+            whichP=(p2.labels_==id)
             pts2=pts[whichP]
             whichP2=(pts2[:,2]>floor_threshold)
             if whichP2.sum()>cluster_min_count:
@@ -119,9 +125,11 @@ class determine_relationship():
         for lbl_ in self.categories:
             pcd=retrieve_object_pcloud(params, fList, lbl_)
             clusters=get_distinct_clusters(pcd)
+            print(f"Counted {len(clusters)} {lbl_}")
             for cls_ in clusters:
                 self.add_furniture(cls_, lbl_)
         
+    def process_furniture(self):
         key_list=list(self.furniture_pclouds.keys())
         self.furniture_relationships=[]
         for idxA, uidA in enumerate(key_list):
@@ -183,6 +191,11 @@ class determine_relationship():
                 # Estimate the probability of each cluster using max + mean
                 self.object_pclouds[idxO].estimate_probability(xyzF2,probF2)
             
+            if 0: # draw the result
+                rgbF=self.object_raw['rgb'][whichP]
+                pcd.colors = o3d.utility.Vector3dVector(rgbF[F2][:,[2,1,0]]/255) 
+                self.draw_pcloud(pcd)
+
             # Now in a similar process to that used to describe furniture, identify relationships between
             #   possible object locations and furniture
             furniture_key_list=list(self.furniture_pclouds.keys())
@@ -268,8 +281,8 @@ class determine_relationship():
             for rel in self.object_relationships:
                 if rel[0]==uidO:
                     rset.append(rel)
-            
-            if self.object_pclouds[uidO].box[0,2]<CLUSTER_TOUCHING_THRESH:
+                        
+            if self.object_pclouds[uidO].box[0,2]<CLUSTER_PROXIMITY_THRESH:
                 combined_stmt+=" on the floor"
 
             if len(rset)==0:
@@ -280,7 +293,7 @@ class determine_relationship():
                         combined_stmt+=f" {rel[2]} the {self.furniture_relationships[rel[1]]} and"
 
                 combined_stmt+=f" {rset[-1][2]} the {self.furniture_pclouds[rset[-1][1]].label}"
-            combined_stmt+=f" at location {uidO}."
+            combined_stmt+=f" at location {uidO}. "
         return combined_stmt
 
     def create_map_summary(self, tgt_class:str, confidence_values:list):
@@ -290,16 +303,44 @@ class determine_relationship():
         summary['furniture_relationships']=self.get_furniture_relationships()
         summary['object_results']={}
         for conf_threshold in confidence_values:
-            summary['object_results'][conf_threshold]=dict()
+            dkey=f"{conf_threshold:.2f}"
+            summary['object_results'][dkey]=dict()
             self.process_objects(tgt_class, conf_threshold)
-            summary['object_results'][conf_threshold]['object_list']=list(self.object_pclouds.keys())
-            summary['object_results'][conf_threshold]['max_prob']  = [ self.object_pclouds[uidO].prob_stats['max'] for uidO in self.object_pclouds.keys() ]
-            summary['object_results'][conf_threshold]['mean_prob'] = [ self.object_pclouds[uidO].prob_stats['mean'] for uidO in self.object_pclouds.keys() ]
-            summary['object_results'][conf_threshold]['stdev'] = [ self.object_pclouds[uidO].prob_stats['stdev'] for uidO in self.object_pclouds.keys() ]
-            summary['object_results'][conf_threshold]['pcount'] = [ self.object_pclouds[uidO].prob_stats['pcount'] for uidO in self.object_pclouds.keys() ]
-            summary['object_results'][conf_threshold]['combined_statement']=self.build_object_statements(tgt_class)
-        pdb.set_trace()
+            summary['object_results'][dkey]['object_list']=list(self.object_pclouds.keys())
+            summary['object_results'][dkey]['max_prob']  = [ self.object_pclouds[uidO].prob_stats['max'] for uidO in self.object_pclouds.keys() ]
+            summary['object_results'][dkey]['mean_prob'] = [ self.object_pclouds[uidO].prob_stats['mean'] for uidO in self.object_pclouds.keys() ]
+            summary['object_results'][dkey]['stdev'] = [ self.object_pclouds[uidO].prob_stats['stdev'] for uidO in self.object_pclouds.keys() ]
+            summary['object_results'][dkey]['pcount'] = [ self.object_pclouds[uidO].prob_stats['pcount'] for uidO in self.object_pclouds.keys() ]
+            summary['object_results'][dkey]['boxes'] = [ self.object_pclouds[uidO].box.tolist() for uidO in self.object_pclouds.keys() ]
+            summary['object_results'][dkey]['combined_statement']=self.build_object_statements(tgt_class)
         return summary
+
+    def draw_pcloud(self, pcloud, draw_furniture=True, draw_objects=True, draw_labels=False):
+        obj_boxes=[ self.object_pclouds[uidO].box.tolist() for uidO in self.object_pclouds.keys() ]
+        f_boxes=[ self.furniture_pclouds[uidO].box.tolist() for uidO in self.furniture_pclouds.keys() ]
+        labels=[ self.furniture_pclouds[uidO].label for uidO in self.furniture_pclouds.keys() ]
+        
+        from draw_pcloud import drawn_image
+        image_interface=drawn_image(pcloud)        
+        if draw_furniture:
+            image_interface.add_boxes_to_fg(f_boxes)
+        if draw_objects:
+            image_interface.add_boxes_to_fg(obj_boxes,(0,255,0))
+        image_interface.draw_fg()
+
+    def display_map(self,fList:rgbd_file_list, draw_furniture=True, draw_objects=True, draw_labels=False):
+        ply_fileName=fList.get_combined_pcloud_fileName()
+        try:
+            pcl_target=o3d.io.read_point_cloud(ply_fileName)
+            if pcl_target is None:
+                print("Pcloud not found - failed to draw")
+                return
+        except Exception as e:
+            print("Pcloud not found - failed to draw")
+            return None
+
+        self.draw_pcloud(pcl_target, draw_furniture, draw_objects, draw_labels)    
+        pdb.set_trace()
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -308,6 +349,9 @@ if __name__ == '__main__':
     parser.add_argument('--raw_dir',type=str,default='raw_output', help='subdirectory containing the color images')
     parser.add_argument('--save_dir',type=str,default='raw_output/save_results', help='subdirectory in which to store the intermediate files')
     parser.add_argument('--label_dir',type=str,default='label-filt', help='subdirectory containing the label images')
+    parser.add_argument('--save_json',type=str,default=None, help='full path to save json summary file (default={save_dir}/{tgt_class}.summary.json)')
+    parser.add_argument('--draw', dest='draw', action='store_true')
+    parser.set_defaults(draw=False)
     args = parser.parse_args()
    
     save_dir=args.root_dir+"/"+args.save_dir
@@ -322,7 +366,20 @@ if __name__ == '__main__':
     rel=determine_relationship()
     rel.load_furniture(fList, par_file)
     rel.load_objects(fList, args.tgt_class)
+    if args.draw:
+        # Cannot both draw and do the map summary thing ... go ahead and exit
+        rel.process_objects(args.tgt_class, 0.01)
+        rel.display_map(fList)
+        sys.exit(-1)
+
+    rel.process_furniture()    
     map_sum=rel.create_map_summary(args.tgt_class,np.arange(0.5,0.99,0.02))
-    # rel.process_objects(args.tgt_class, 0.5)
-    # combined_stmt=rel.get_furniture_description()
-    # print(combined_stmt)
+
+    if args.save_json is None:
+        save_json=fList.get_json_summary_fileName(args.tgt_class)
+    else:
+        save_json=args.save_json
+    
+    import json
+    with open(save_json,'w') as fout:
+        json.dump(map_sum,fout)

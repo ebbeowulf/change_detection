@@ -63,3 +63,7 @@ class rgbd_file_list():
     
     def get_labeled_pcloud_fileName(self, cls:str):
         return self.intermediate_save_dir+"%s.labeled.ply"%(cls)
+
+    def get_json_summary_fileName(self, cls:str):
+        return self.intermediate_save_dir+"%s.summary.json"%(cls)
+    

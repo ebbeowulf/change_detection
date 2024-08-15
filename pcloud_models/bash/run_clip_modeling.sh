@@ -9,9 +9,13 @@ THRESHOLD=$2
 
 cd ../scripts/pcloud_models
 
-for value in "${DARRAY[@]:170:100}"
+for value in "${DARRAY[@]:100:150}"
 do
     cmd="python scannet_processing.py $value --targets $CLIP_TARGET --threshold $THRESHOLD"
+    echo $cmd
+    eval $cmd
+
+    cmd="python determine_relationship.py $value $CLIP_TARGET"
     echo $cmd
     eval $cmd
 done
