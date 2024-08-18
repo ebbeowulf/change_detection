@@ -37,7 +37,7 @@ class rgbd_file_list():
 
     def get_clip_fileName(self, id:int, tgt_class:str):
         cls_str=copy.copy(tgt_class)
-        cls_str.replace(" ","_")
+        cls_str=cls_str.replace(" ","_")
         return self.intermediate_save_dir+self.all_files[id]['color']+".%s.clip.pkl"%(cls_str)
 
     def get_depth_fileName(self, id:int):

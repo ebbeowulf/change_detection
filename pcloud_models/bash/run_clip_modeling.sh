@@ -2,7 +2,7 @@
 
 # Need to run roscore and register.launch first...
 
-DARRAY=($(ls -d -- /data2/datasets/scannet/scans/*))
+DARRAY=($(ls -d -- /data3/datasets/scannet/scans/scene*))
 
 CLIP_TARGET=$1
 THRESHOLD=$2
@@ -11,7 +11,7 @@ cd ../scripts/pcloud_models
 
 for value in "${DARRAY[@]:100:150}"
 do
-    cmd="python scannet_processing.py $value --targets $CLIP_TARGET --threshold $THRESHOLD"
+    cmd="python scannet_processing.py $value --targets \"$CLIP_TARGET\" --threshold $THRESHOLD"
     echo $cmd
     eval $cmd
 

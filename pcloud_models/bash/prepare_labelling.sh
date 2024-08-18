@@ -2,7 +2,7 @@
 
 # Need to run roscore and register.launch first...
 
-DARRAY=($(ls -d -- /data2/datasets/scannet/scans/*))
+DARRAY=($(ls -d -- /data3/datasets/scannet/scans/scene*))
 
 TARGET=$1
 THRESHOLD=$2
@@ -11,7 +11,7 @@ SCRIPTS_DIR="$(pwd)/../scripts/pcloud_models"
 cd $SCRIPTS_DIR
 
 # for value in "${DARRAY[@]:100:150}"
-for value in "${DARRAY[@]:100:150}"
+for value in "${DARRAY[@]:0:200}"
 do
     # We need to extract the scannet labels with segmentation results
     LABEL_FLT_DIR="$value/label-filt/"
