@@ -2,7 +2,7 @@
 
 # Need to run roscore and register.launch first...
 
-DARRAY=($(ls -d -- /data2/datasets/scannet/scans/*))
+DARRAY=($(ls -d -- /data3/datasets/scannet/scans/scene*))
 
 TARGET1=$1
 
@@ -10,7 +10,7 @@ SCRIPTS_DIR="$(pwd)/../scripts/pcloud_models"
 cd $SCRIPTS_DIR
 
 # for value in "${DARRAY[@]:100:150}"
-for value in "${DARRAY[@]:184:70}"
+for value in "${DARRAY[@]:0:250}"
 do
     # LABEL_FLT_DIR="$value/label-filt/"
     # if  [ ! -d $LABEL_FLT_DIR ];then
@@ -30,13 +30,12 @@ do
     # fi
 
     ANNOT_FILE="$value/raw_output/save_results/annotations.json"
-    if [ ! -f $ANNOT_FILE ]; then
-        if grep -q $TARGET1 $ANNOT_FILE; then
-            echo "$TARGET1 already labeled for $value"
-        else
-            cmd="python labelling.py $value --targets $TARGET1 "
-            echo $cmd
-            eval $cmd
-        fi
+    #if [ ! -f $ANNOT_FILE ]; then
+    if grep -q $TARGET1 $ANNOT_FILE; then
+        echo "$TARGET1 already labeled for $value"
+    else
+        cmd="python labelling.py $value --targets $TARGET1 "
+        echo $cmd
+        eval $cmd
     fi
 done

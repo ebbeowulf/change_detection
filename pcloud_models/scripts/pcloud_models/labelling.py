@@ -10,6 +10,7 @@ import json
 from camera_params import camera_params
 from rgbd_file_list import rgbd_file_list
 from draw_pcloud import drawn_image
+from map_utils import pointcloud_open3d
 
 # Global Variables
 mouse_clicks=[]
@@ -93,17 +94,19 @@ def visualize_box(fList, pts, row, col, cam_info:camera_params, threshold=0.6):
         print(e)
         pdb.set_trace()
     
+def add_raw_overlay(raw_fileName:str, color=(0,0,255), threshold=0.75):
+    import pickle
+    with open(raw_fileName, "rb") as fin:
+        pcl_raw=pickle.load(fin)
 
-def add_overlay(ply_fileName:str,color=(0,0,255)):
-    global image_interface, mouse_clicks
-    try:
-        pcl_target=o3d.io.read_point_cloud(ply_fileName)
-        if pcl_target is None:
-            return None
-    except Exception as e:
-        return None
-
+    whichP=(pcl_raw['probs']>=threshold)
+    pcl_target=pointcloud_open3d(pcl_raw['xyz'][whichP],pcl_raw['rgb'][whichP])
     tgt_pts=np.array(pcl_target.points)
+    add_pts_overlay(tgt_pts, color=color)
+    return tgt_pts
+
+def add_pts_overlay(tgt_pts:np.array, color=(0,0,255)):
+    global image_interface, mouse_clicks
 
     # need to filter out NaN's ... not sure why they
     #   are being added to the pcloud, but it causes 
@@ -113,6 +116,28 @@ def add_overlay(ply_fileName:str,color=(0,0,255)):
     image=image_interface.overlay_dots(tgt_pts,color)
     image_interface.set_fg_image(image)
     return tgt_pts
+
+def add_overlay(ply_fileName:str,color=(0,0,255)):
+    try:
+        pcl_target=o3d.io.read_point_cloud(ply_fileName)
+        if pcl_target is None:
+            return None
+    except Exception as e:
+        return None
+
+    tgt_pts=np.array(pcl_target.points)
+    add_pts_overlay(tgt_pts, color=color)
+    return tgt_pts
+    # tgt_pts=np.array(pcl_target.points)
+
+    # # need to filter out NaN's ... not sure why they
+    # #   are being added to the pcloud, but it causes 
+    # #   problems downstream
+    # validP=np.where(np.isnan(tgt_pts).sum(1)==0)
+    # tgt_pts=tgt_pts[validP]
+    # image=image_interface.overlay_dots(tgt_pts,color)
+    # image_interface.set_fg_image(image)
+    # return tgt_pts
 
 def label_scannet_pcloud(root_dir, raw_dir, save_dir, targets):
     global image_interface, mouse_clicks
@@ -149,6 +174,7 @@ def label_scannet_pcloud(root_dir, raw_dir, save_dir, targets):
         is_valid_target=is_valid_target or os.path.exists(ply_label_fileName)
     if not is_valid_target:
         print("No labeled target files found - saving annotation file and exiting")
+        annotations[tgt]=[]
         with open(fList.get_annotation_file(),'w') as handle:
             json.dump(annotations, handle)
         return
@@ -166,9 +192,9 @@ def label_scannet_pcloud(root_dir, raw_dir, save_dir, targets):
         # Load both the labeled annotation + the clip pointclouds
         # useful to have both as we can switch between to identify
         # object boundaries
-        ply_combo_fileName=fList.get_combined_pcloud_fileName(tgt)
-        ply_label_fileName=fList.get_labeled_pcloud_fileName(tgt)        
-        tgt_pts_clip=add_overlay(ply_combo_fileName,color=(0,0,255))
+        ply_combo_fileName=fList.get_combined_raw_fileName(tgt)
+        ply_label_fileName=fList.get_labeled_pcloud_fileName(tgt)   
+        tgt_pts_clip=add_raw_overlay(ply_combo_fileName,color=(0,0,255))
         tgt_pts_label=add_overlay(ply_label_fileName,color=(128,0,128))
         # pdb.set_trace()
         if tgt_pts_label is not None and tgt_pts_label.shape[0]>0:
@@ -262,6 +288,7 @@ def label_scannet_pcloud(root_dir, raw_dir, save_dir, targets):
                 print("(c)lear box - deletes the existing mouse clicks")
                 print("(s)ave box - saves an existing pair of points as an annotation for the current target object")
                 print("(v)isualize box - bring up images related to the selected area")
+                print("(a)switch between clip + labeled points")
                 print("(n)ext object type - close the current set of annotations and move onto the next target type")
                 print("(q)uit - exit the program without saving annotations")
 
