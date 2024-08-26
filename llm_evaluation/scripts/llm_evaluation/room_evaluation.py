@@ -129,8 +129,9 @@ def extract_room_match_stats(llm_result, objects_per_scene, room_type_per_scene,
                 else:
                     results['tn'][t_idx]+=1
 
-        # if object_type in objects_per_scene[scene]:
-        #     pdb.set_trace()
+        if object_type in objects_per_scene[scene]:
+            print(f"{object_type} found in {scene}")
+            # pdb.set_trace()
     
     print("Set of detected room types:")
     for roomT in all_room_types:
@@ -156,8 +157,8 @@ def build_test_data_structure(root_dir:str, tgt_object:str):
     return test_files
 
 if __name__ == '__main__':
-    FIXED_ROOM_STATS_FILE="/home/emartinso/data/scannet/scans/llm_likelihoods.json"
-    OBJECT_IN_ROOM_STATS_FILE="/home/emartinso/data/scannet/scans/object_in_room_stats.json"
+    FIXED_ROOM_STATS_FILE="/data3/datasets/scannet/scans/llm_likelihoods.json"
+    OBJECT_IN_ROOM_STATS_FILE="/data3/datasets/scannet/scans/object_in_room_stats.json"
 
     with open(FIXED_ROOM_STATS_FILE, 'r') as fin:
         llm_result=json.load(fin)
