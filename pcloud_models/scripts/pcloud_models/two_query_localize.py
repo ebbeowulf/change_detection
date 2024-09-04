@@ -13,7 +13,7 @@ from determine_relationship import get_distinct_clusters
 #ROOT_DIR="/home/ebeowulf/data/scannet/scans/"
 ROOT_DIR="/data3/datasets/scannet/scans/"
 IOU_THRESHOLD=0.05
-FLOOR_THRESHOLD=0.05
+FLOOR_THRESHOLD=-0.1
 
 def calculate_iou(minA,maxA,minB,maxB):
     deltaA=maxA-minA
@@ -46,7 +46,6 @@ def build_test_data_structure(root_dir:str, main_tgt:str, llm_tgt:str):
                 test_files[fName]['annotation']=annot[main_tgt]
         else:
             print(f"build_test_data_structure> disarding {fName}...")
-    pdb.set_trace()
     return test_files
 
 def build_pcloud(object_raw, initial_threshold=0.5, draw=False):
@@ -60,7 +59,7 @@ def build_pcloud(object_raw, initial_threshold=0.5, draw=False):
         o3d.visualization.draw_geometries([pcd])
     return pcd
 
-def create_object_clusters(object_raw_file, floor_threshold=0.1, detection_threshold=0.5):
+def create_object_clusters(object_raw_file, floor_threshold=0.1, detection_threshold=0.5, min_cluster_points=10000):
     with open(object_raw_file,'rb') as handle:
         pcl_raw=pickle.load(handle)
 
@@ -73,7 +72,7 @@ def create_object_clusters(object_raw_file, floor_threshold=0.1, detection_thres
     F2=np.where(np.isnan(xyzF).sum(1)==0)
     xyzF2=xyzF[F2]        
     pcd.points=o3d.utility.Vector3dVector(xyzF2)
-    object_clusters=get_distinct_clusters(pcd, floor_threshold=floor_threshold)
+    object_clusters=get_distinct_clusters(pcd, floor_threshold=floor_threshold, cluster_min_count=min_cluster_points)
 
     probF=pcl_raw['probs'][whichP]
     probF2=probF[F2]
@@ -82,10 +81,12 @@ def create_object_clusters(object_raw_file, floor_threshold=0.1, detection_thres
 
     return object_clusters
 
-def combine_matches(test_file_dict, detection_threshold=0.5):
+def combine_matches(test_file_dict, detection_threshold=0.5, min_cluster_points=10000):
+    # if len(test_file_dict['annotation'])>0:
+    #     pdb.set_trace()
     try:
-        objects_main=create_object_clusters(test_file_dict['raw_main'], FLOOR_THRESHOLD, detection_threshold)
-        objects_llm=create_object_clusters(test_file_dict['raw_llm'], FLOOR_THRESHOLD, detection_threshold)
+        objects_main=create_object_clusters(test_file_dict['raw_main'], FLOOR_THRESHOLD, detection_threshold, min_cluster_points=min_cluster_points)
+        objects_llm=create_object_clusters(test_file_dict['raw_llm'], FLOOR_THRESHOLD, detection_threshold, min_cluster_points=min_cluster_points)
     except Exception as e:
         print(f"Exception: {e}")
         pdb.set_trace()
@@ -172,7 +173,10 @@ def get_graph_stats_per_scene(matches, positive_cl, negative_cl, cat_, threshold
     else:
         whichP=(matches.sum(1)>0)
         matched_positive_clusters=(positive_clusters*whichP).sum()
-        unmatched_annotations=(matches.sum(0)<1).sum()
+        m2=matches
+        for dim_ in range(m2.shape[1]):
+            m2[:,dim_]*=positive_clusters
+        unmatched_annotations=(m2.sum(0)<1).sum()
         count_true_negative_clusters=((~positive_clusters)*(~whichP)).sum()
 
     stats[0]+=matched_positive_clusters #TP
@@ -187,10 +191,11 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('main_target', type=str, help='main target search string')
     parser.add_argument('llm_target', type=str, help='llm target search string')
-    parser.add_argument('--threshold_low',type=str,default=0.5, help='low end of the threshold range')
-    parser.add_argument('--threshold_high',type=str,default=1.0, help='high end of the threshold range')
-    parser.add_argument('--threshold_delta',type=str,default=0.03, help='delta of the threshold range')
+    parser.add_argument('--threshold_low',type=float,default=0.5, help='low end of the threshold range')
+    parser.add_argument('--threshold_high',type=float,default=1.0, help='high end of the threshold range')
+    parser.add_argument('--threshold_delta',type=float,default=0.03, help='delta of the threshold range')
     parser.add_argument('--save_dir',type=str,default=None, help='where are the intermediate files saved? By default these are saved to the root dir')
+    parser.add_argument('--num_points',type=int,default=10000, help='number of points per cluster - derived from LLM size estimates')
     args = parser.parse_args()
 
     test_files=build_test_data_structure(ROOT_DIR,args.main_target, args.llm_target)
@@ -218,16 +223,22 @@ if __name__ == '__main__':
         else:
             all_results=dict()
             for scene in test_files.keys():
+                # scene='/data3/datasets/scannet/scans/scene0016_00'
                 print(scene)
-                matches, positive_clusters, negative_clusters = combine_matches(test_files[scene],detection_threshold=threshold)
+                matches, positive_clusters, negative_clusters = combine_matches(test_files[scene],detection_threshold=threshold, min_cluster_points=args.num_points)
                 print(matches)
                 all_results[scene]={'matches': matches, 'positive_clusters': positive_clusters, 'negative_clusters': negative_clusters}
             with open(save_file, 'wb') as handle:
                 pickle.dump(all_results, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
+        # scene='/data3/datasets/scannet/scans/scene0024_02'
+        # get_graph_stats_per_scene(all_results[scene]['matches'], all_results[scene]['positive_clusters'], all_results[scene]['negative_clusters'], 0, 0.50)
+        # get_graph_stats_per_scene(all_results[scene]['matches'], all_results[scene]['positive_clusters'], all_results[scene]['negative_clusters'], 2, 0.50)
         for cat_idx, cat_ in enumerate(cat_list):
             stats=np.zeros((4),dtype=float)
             for scene in all_results:
+                # if len(all_results[scene]['positive_clusters'])>0:
+                #     pdb.set_trace()
                 stats=stats + get_graph_stats_per_scene(all_results[scene]['matches'], all_results[scene]['positive_clusters'], all_results[scene]['negative_clusters'], cat_, threshold)
             TP=stats[0]
             FN=stats[1]

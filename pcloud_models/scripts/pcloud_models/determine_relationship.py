@@ -48,9 +48,11 @@ class object_pcloud():
     def __init__(self, pts, label:str=None, num_samples=1000):
         self.box=np.vstack((pts.min(0),pts.max(0)))
         self.pts=pts
+        self.pts_shape=self.pts.shape
         self.label=label
         self.farthestP=farthest_point_sampling(self.pts, num_samples)
         self.prob_stats=None
+        self.centroid=self.pts.mean(0)
 
     def set_label(self, label):
         self.label=label
@@ -69,14 +71,10 @@ class object_pcloud():
         return np.sqrt(min_sq_dist)
     
     def is_above(self, input_cloud):
-        # check centroid location relative to bounding box
-        ctr=self.pts.mean(0)
-
         # Should be overlapped in x + y directions
-        if ctr[0]>input_cloud.box[0,0] and ctr[0]<input_cloud.box[1,0] and ctr[1]>input_cloud.box[0,1] and ctr[1]<input_cloud.box[1,1]:
+        if self.centroid[0]>input_cloud.box[0,0] and self.centroid[0]<input_cloud.box[1,0] and self.centroid[1]>input_cloud.box[0,1] and self.centroid[1]<input_cloud.box[1,1]:
             # Should also be "above" the other centroid
-            input_ctr=input_cloud.pts.mean(0)
-            return ctr[2]>input_ctr[2]
+            return self.centroid[2]>input_cloud.centroid[2]
         return False
     
     def estimate_probability(self, original_xyz, original_prob):
@@ -86,6 +84,13 @@ class object_pcloud():
         self.prob_stats['mean']=original_prob[filt].mean()
         self.prob_stats['stdev']=original_prob[filt].std()
         self.prob_stats['pcount']=filt.shape[0]
+    
+    def size(self):
+        return self.pts_shape[0]
+    
+    def compress_object(self):
+        self.pts=None
+        self.farthestP=None
 
 class determine_relationship():
     def __init__(self, categories:list=None):
