@@ -42,12 +42,13 @@ class clip_seg(image_segmentation):
             print(e)
         return False
         
-    def process_file(self, fName, threshold=0.2, save_fileName=None):
+    def process_file(self, fName, threshold=0.5, save_fileName=None):
         # Need to use PILLOW to load the color image - it has an impact on the clip model???
         image = Image.open(fName)
+        pdb.set_trace()
         # Get the clip probabilities
-        outputs = self.process_image(image)
-        self.set_data(outputs,image.size,threshold)
+        outputs = self.process_image(image,threshold)
+        # self.set_data(outputs,image.size,threshold)
         
         if save_fileName is not None:
             save_data={'outputs': outputs, 'image_size': image.size, 'prompts': self.prompts}
@@ -57,12 +58,21 @@ class clip_seg(image_segmentation):
         # Convert the PIL image to opencv format and return
         return np.array(image) #[:,:,::-1]
 
-    def process_image(self, image):
+    def process_image_tensor(self, image: torch.tensor, threshold=0.5): #assume image is in BGR format as per standard opencv
+        #need to optimize this to use GPU
+        pil_image=Image.fromarray(image.cpu().numpy()[:,:,::-1])
+        return self.process_image(pil_image,threshold=threshold)
+
+    def process_image(self, image: Image, threshold=0.5): #image should be in PIL format
         # print("Clip Inference")
         self.clear_data()
         try:
             # inputs = self.processor(text=self.prompts, images=[image] * len(self.prompts), padding="max_length", return_tensors="pt")
-            inputs = self.processor(text=self.prompts, images=[image] * len(self.prompts), return_tensors="pt")
+            if len(self.prompts)>1:
+                inputs = self.processor(text=self.prompts, images=[image] * len(self.prompts), padding=True, return_tensors="pt")
+            else:
+                # Adding padding here always throws an error
+                inputs = self.processor(text=self.prompts, images=[image], return_tensors="pt")
             inputs.to(DEVICE)
             # predict
             with torch.no_grad():
@@ -71,6 +81,7 @@ class clip_seg(image_segmentation):
             print("Exception during inference step - returning")
             return
 
+        self.set_data(outputs,image.size,threshold)
         return outputs
           
     def set_data(self, outputs, image_size, threshold=0.2):

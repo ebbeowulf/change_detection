@@ -298,6 +298,22 @@ class pcloud_from_images():
             return False
         return True
 
+    def get_pts_per_class(self, tgt_class, use_connected_components=False):
+        # Build the class associated mask for this image
+        cls_mask=self.YS.get_mask(tgt_class)
+
+        # Apply connected components if requested       
+        if use_connected_components:
+            filtered_maskT=self.cluster_pcloud()
+        else:
+            filtered_maskT=torch.tensor(cls_mask,device=DEVICE)*self.loaded_image['depth_mask']
+
+        # Return all points associated with the target class
+        pts_rot=get_rotated_points(self.loaded_image['x'],self.loaded_image['y'],self.loaded_image['depthT'],filtered_maskT,self.loaded_image['M']) 
+        return {'xyz': pts_rot.cpu().numpy(), 
+                'rgb': self.loaded_image['colorT'][filtered_maskT].cpu().numpy(), 
+                'probs': self.YS.get_prob_array(tgt_class)[filtered_maskT]}
+
     # def process_image(self, image_key, tgt_class, conf_threshold, use_connected_components=False):
     def process_image(self, tgt_class, detection_threshold, use_connected_components=False, segmentation_save_file=None):
         # Create the image segmentation file
@@ -310,24 +326,24 @@ class pcloud_from_images():
             if not self.YS.load_file(segmentation_save_file,threshold=detection_threshold):
                 return None
         else:
-            outputs=self.YS.process_image(self.loaded_image['colorT'])    
-            self.YS.set_data(outputs,self.loaded_image['colorT'].size,threshold=detection_threshold)
+            self.YS.process_image_tensor(self.loaded_image['colorT'], detection_threshold)    
+            # self.YS.set_data(outputs,self.loaded_image['colorT'].size(),threshold=detection_threshold)
 
+        return self.get_pts_per_class(tgt_class)
+
+    def multi_prompt_process(self, prompts:list, detection_threshold):
+        if self.YS is None or prompts[0] not in self.YS.get_all_classes():
+            from change_detection.clip_segmentation import clip_seg
+            self.YS=clip_seg(prompts)
+
+        self.YS.process_image_tensor(self.loaded_image['colorT'], detection_threshold)    
+        all_pts=dict()
         # Build the class associated mask for this image
-        cls_mask=self.YS.get_mask(tgt_class)
+        for tgt_class in prompts:
+            all_pts[tgt_class]=self.get_pts_per_class(tgt_class)
 
-        # Apply connected components if requested       
-        if use_connected_components:
-            filtered_maskT=self.cluster_pcloud()
-        else:
-            filtered_maskT=(torch.tensor(cls_mask,device=DEVICE)>detection_threshold)*self.loaded_image['depth_mask']
-
-        # Return all points associated with the target class
-        pts_rot=get_rotated_points(self.loaded_image['x'],self.loaded_image['y'],self.loaded_image['depthT'],filtered_maskT,self.loaded_image['M']) 
-        return {'xyz': pts_rot.cpu().numpy(), 
-                'rgb': self.loaded_image['colorT'][filtered_maskT].cpu().numpy(), 
-                'probs': self.YS.get_prob_array(tgt_class)[filtered_maskT]}
-        
+        return all_pts
+    
     #Apply clustering - slow... probably in need of repair
     def cluster_pclouds(self, image_key, tgt_class, cls_mask, threshold):
         save_fName=self.fList.get_class_pcloud_fileName(image_key,tgt_class)
@@ -379,10 +395,10 @@ class pcloud_from_images():
             # Build the pcloud from individual images
             pcloud={'xyz': np.zeros((0,3),dtype=float),'rgb': np.zeros((0,3),dtype=np.uint8),'probs': []}
             
-            image_key_list=clip_threshold_evaluation(fList, [tgt_class], self.default_threshold)
+            image_key_list=clip_threshold_evaluation(fList, [tgt_class], conf_threshold)
             for key in image_key_list:
                 self.load_image_from_file(fList, key)
-                icloud=self.process_image(tgt_class, conf_threshold, use_connected_components=use_connected_components, segmentation_save_file=fList.fList.get_segmentation_fileName(key, False, tgt_class))
+                icloud=self.process_image(tgt_class, conf_threshold, use_connected_components=use_connected_components, segmentation_save_file=fList.get_segmentation_fileName(key, False, tgt_class))
                 if icloud is not None and icloud['xyz'].shape[0]>100:
                     pcloud['xyz']=np.vstack((pcloud['xyz'],icloud['xyz']))
                     pcloud['rgb']=np.vstack((pcloud['rgb'],icloud['rgb']))

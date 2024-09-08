@@ -171,6 +171,7 @@ if __name__ == '__main__':
     for key in llm_result:
         object_lk=get_all_max_object_lk(key)
         auc[key]=[]
+        legend.append(key)
 
         results=extract_room_match_stats(llm_result[key],detection_results['objects_per_scene'],detection_results['room_type_per_scene'],key,object_lk, method=0)
         prec=results['tp']/(results['tp']+results['fp']+1e-4)
@@ -178,28 +179,28 @@ if __name__ == '__main__':
         spec=results['tn']/(results['tn']+results['fp'])
         auc[key].append(trapz(recall,1-spec))
         
-        # plt.plot(spec,prec)
+        plt.plot(spec,prec)
 
         results=extract_room_match_stats(llm_result[key],detection_results['objects_per_scene'],detection_results['room_type_per_scene'],key,object_lk,method=1)
         prec=results['tp']/(results['tp']+results['fp']+1e-4)
         recall=results['tp']/(results['tp']+results['fn'])
         spec=results['tn']/(results['tn']+results['fp'])
         auc[key].append(trapz(recall,1-spec))
-        # plt.plot(spec,prec)
+        plt.plot(spec,prec)
 
         results=extract_room_match_stats(llm_result[key],detection_results['objects_per_scene'],detection_results['room_type_per_scene'],key,object_lk,method=2)
         prec=results['tp']/(results['tp']+results['fp']+1e-4)
         recall=results['tp']/(results['tp']+results['fn'])
         spec=results['tn']/(results['tn']+results['fp'])
         auc[key].append(trapz(recall,1-spec))
-        # plt.plot(spec,prec)
+        plt.plot(spec,prec)
 
         results=extract_room_match_stats(llm_result[key],detection_results['objects_per_scene'],detection_results['room_type_per_scene'],key,object_lk,method=3)
         prec=results['tp']/(results['tp']+results['fp']+1e-4)
         recall=results['tp']/(results['tp']+results['fn'])
         spec=results['tn']/(results['tn']+results['fp'])
         auc[key].append(trapz(recall,1-spec))
-        # plt.plot(spec,prec)
+        plt.plot(spec,prec)
 
         # plt.legend(['random','fixed room', 'mean object','combined'])
         # plt.title(key)
@@ -207,7 +208,7 @@ if __name__ == '__main__':
         # pdb.set_trace()
 
     pdb.set_trace()
-    # plt.title('Precision vs Specificity')
-    # # plt.title('Precision vs Recall')
-    # plt.legend(legend)
-    # plt.show()
+    plt.title('Precision vs Specificity')
+    # plt.title('Precision vs Recall')
+    plt.legend(legend)
+    plt.show()

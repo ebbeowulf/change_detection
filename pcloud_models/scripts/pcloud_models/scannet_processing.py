@@ -120,10 +120,10 @@ if __name__ == '__main__':
     params=load_camera_info(par_file)
     
     map_utils.process_images_with_clip(fList,args.targets)
-    pcloud_init=map_utils.pcloud_from_images(fList, params)
+    pcloud_init=map_utils.pcloud_from_images(params)
 
     for tgt_class in args.targets:
-        pcloud=pcloud_init.process_fList(tgt_class, args.threshold)
+        pcloud=pcloud_init.process_fList(fList, tgt_class, args.threshold)
         if args.draw:
             import open3d as o3d
             pcd=map_utils.pointcloud_open3d(pcloud['xyz'],pcloud['rgb'])
