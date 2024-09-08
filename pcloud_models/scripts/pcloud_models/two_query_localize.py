@@ -8,7 +8,7 @@ import numpy as np
 import json
 import open3d as o3d
 import pickle
-from determine_relationship import get_distinct_clusters
+from map_utils import get_distinct_clusters
 
 #ROOT_DIR="/home/ebeowulf/data/scannet/scans/"
 # ROOT_DIR="/data3/datasets/scannet/scans/"
@@ -68,22 +68,18 @@ def build_pcloud(object_raw, initial_threshold=0.5, draw=False):
         o3d.visualization.draw_geometries([pcd])
     return pcd
 
-def create_object_clusters(object_raw_file, floor_threshold=0.1, detection_threshold=0.5, min_cluster_points=10000):
-    with open(object_raw_file,'rb') as handle:
-        pcl_raw=pickle.load(handle)
-
-    # pcd=build_pcloud(pcl_raw, draw=False)
-    if pcl_raw['xyz'].shape[0]==0:
+def create_object_clusters(pts_xyz, pts_prob, floor_threshold=0.1, detection_threshold=0.5, min_cluster_points=ABSOLUTE_MIN_CLUSTER_SIZE):
+    if pts_xyz.shape[0]==0 or pts_xyz.shape[0]!=pts_prob.shape[0]:
         return []
-    whichP=(pcl_raw['probs']>=detection_threshold)
+    whichP=(pts_prob>=detection_threshold)
     pcd=o3d.geometry.PointCloud()
-    xyzF=pcl_raw['xyz'][whichP]
+    xyzF=pts_xyz[whichP]
     F2=np.where(np.isnan(xyzF).sum(1)==0)
     xyzF2=xyzF[F2]        
     pcd.points=o3d.utility.Vector3dVector(xyzF2)
     object_clusters=get_distinct_clusters(pcd, floor_threshold=floor_threshold, cluster_min_count=min_cluster_points)
 
-    probF=pcl_raw['probs'][whichP]
+    probF=pts_prob[whichP]
     probF2=probF[F2]
     for idx in range(len(object_clusters)):
         object_clusters[idx].estimate_probability(xyzF2,probF2)
@@ -96,7 +92,9 @@ def get_clusters(save_file, raw_pts, detection_threshold, min_cluster_points):
         with open(save_file, 'rb') as handle:
             all_objects=pickle.load(handle)
     else:
-        all_objects=create_object_clusters(raw_pts, -1.0, detection_threshold, min_cluster_points=ABSOLUTE_MIN_CLUSTER_SIZE)
+        with open(raw_pts,'rb') as handle:
+            pcl_raw=pickle.load(handle)
+        all_objects=create_object_clusters(pcl_raw['xyz'],pcl_raw['probs'], -1.0, detection_threshold, min_cluster_points=ABSOLUTE_MIN_CLUSTER_SIZE)
         with open(save_file, 'wb') as handle:
             pickle.dump(all_objects, handle, protocol=pickle.HIGHEST_PROTOCOL)
     

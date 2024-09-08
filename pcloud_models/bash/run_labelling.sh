@@ -2,7 +2,8 @@
 
 # Need to run roscore and register.launch first...
 
-DARRAY=($(ls -d -- /data3/datasets/scannet/scans/scene*))
+DARRAY=($(ls -d -- /data2/datasets/scannet/scans/scene*))
+#DARRAY=($(ls -d -- /data3/datasets/scannet/scans/scene*))
 
 TARGET1=$1
 
@@ -34,7 +35,7 @@ do
     if grep -q $TARGET1 $ANNOT_FILE; then
         echo "$TARGET1 already labeled for $value"
     else
-        cmd="python labelling.py $value --targets $TARGET1 "
+        cmd="python labelling.py $value --targets \"$TARGET1\" "
         echo $cmd
         eval $cmd
     fi

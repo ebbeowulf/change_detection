@@ -57,10 +57,9 @@ class clip_seg(image_segmentation):
         # Convert the PIL image to opencv format and return
         return np.array(image) #[:,:,::-1]
 
-    def process_image_tensor(self, image: torch.tensor, threshold=0.5): #assume image is in BGR format as per standard opencv
-        #need to optimize this to use GPU
-        pil_image=Image.fromarray(image.cpu().numpy()[:,:,::-1])
-        return self.process_image(pil_image,threshold=threshold)
+    def process_image_numpy(self, image: np.ndarray, threshold=0.5):
+        image_pil=Image.fromarray(image)
+        return self.process_image(image_pil, threshold=threshold)
 
     def process_image(self, image: Image, threshold=0.5): #image should be in PIL format
         # print("Clip Inference")
@@ -111,21 +110,35 @@ class clip_seg(image_segmentation):
         #     self.masks[0]=self.probs[0]>threshold
         #     self.build_dbscan_boxes(0,threshold)
 
-
-
-
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('image',type=str,help='location of image to process')
     parser.add_argument('tgt_prompt',type=str,default=None,help='specific prompt for clip class')
     parser.add_argument('--threshold',type=float,default=0.2,help='(optional) threshold to apply during computation ')
+    parser.add_argument('--options', type=str, default=None, help="Other options: PIL = open with PIL library, CV2 = open with opencv library, CV2_ROTATE = open with opencv and rotate during clip processing")
     args = parser.parse_args()
 
     CS=clip_seg([args.tgt_prompt])
-    #for i in range(1000):
-    #    print(i)
-    image=CS.process_file(args.image, threshold=args.threshold)
-    mask=CS.get_mask(0)
+
+    if args.options is None or args.options=="PIL":
+        image=CS.process_file(args.image, threshold=args.threshold)
+        mask=CS.get_mask(0)
+    elif args.options =="CV2":
+        image=cv2.imread(args.image)        
+        CS.process_image_numpy(image, threshold=args.threshold)
+        mask=CS.get_mask(0)
+    elif args.options=="CV2_ROTATE":
+        image=cv2.imread(args.image)
+        image_rot=np.rot90(image, k=1, axes=(1,0))
+        image_pil=Image.fromarray(image_rot)
+        CS.process_image(image_pil, threshold=args.threshold)
+        mask=np.rot90(CS.get_mask(0),axes=(0,1))
+        pdb.set_trace()
+    else:
+        print(f"Invalid option {args.options}")
+        import sys
+        sys.exit(-1)
+
     if mask is None:
         print("Something went wrong - no mask to display")
     else:

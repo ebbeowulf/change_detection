@@ -10,7 +10,11 @@ from threading import Lock
 import tf
 import message_filters
 from camera_params import camera_params
-from map_utils import pcloud_from_images
+from map_utils import pcloud_from_images, pointcloud_open3d
+from std_srvs.srv import Trigger, TriggerResponse
+from two_query_localize import create_object_clusters, calculate_iou, estimate_likelihood
+
+TRACK_COLOR=True
 
 def normalizeAngle(angle):
     while angle>=np.pi:
@@ -18,9 +22,6 @@ def normalizeAngle(angle):
     while angle<-np.pi:
         angle+=2*np.pi
     return angle
-
-# DEVICE = torch.device("cpu")
-
 
 class two_query_localize:
     def __init__(self, main_query, llm_query, cluster_min_points, detection_threshold, travel_params, storage_dir=None):
@@ -45,8 +46,8 @@ class two_query_localize:
         self.pcloud_creator=None
         self.query_main=main_query
         self.query_llm=llm_query
-        self.pcloud_main={'pts': np.zeros((0,3),dtype=float), 'probs': np.zeros((0),dtype=float)}
-        self.pcloud_llm={'pts': np.zeros((0,3),dtype=float), 'probs': np.zeros((0),dtype=float)}
+        self.pcloud_main={'xyz': np.zeros((0,3),dtype=float), 'probs': np.zeros((0),dtype=float), 'rgb': np.zeros((0,3),dtype=float)}
+        self.pcloud_llm={'xyz': np.zeros((0,3),dtype=float), 'probs': np.zeros((0),dtype=float), 'rgb': np.zeros((0,3),dtype=float)}
         self.cluster_min_points=cluster_min_points
         self.detection_threshold=detection_threshold
 
@@ -58,7 +59,104 @@ class two_query_localize:
         self.ts = message_filters.ApproximateTimeSynchronizer([self.rgb_sub, self.depth_sub], 10, 0.1)
         self.ts.registerCallback(self.rgbd_callback)
 
-        # Setup service calls to clear 
+        # Setup service calls
+        self.clear_srv = rospy.Service('clear_clouds', Trigger, self.clear_clouds_service)
+        self.print_srv = rospy.Service('print_clouds', Trigger, self.print_clouds_service)
+        self.draw_clusters_srv = rospy.Service('draw_clusters', Trigger, self.draw_clusters_service)
+
+    def clear_clouds_service(self, msg):
+        resp=TriggerResponse()
+        resp.success=True
+        self.pcloud_main={'xyz': np.zeros((0,3),dtype=float), 'probs': np.zeros((0),dtype=float), 'rgb': np.zeros((0,3),dtype=float)}
+        self.pcloud_llm={'xyz': np.zeros((0,3),dtype=float), 'probs': np.zeros((0),dtype=float), 'rgb': np.zeros((0,3),dtype=float)}
+        self.last_image=None
+        resp.message="clouds cleared"
+        return resp
+
+    def print_clouds_service(self, msg):
+        resp=TriggerResponse()
+        resp.success=False
+        if self.pcloud_creator is None:
+            resp.message="Pcloud creator not initialized"
+            return resp
+        import open3d as o3d
+        if TRACK_COLOR:
+            pcd_main=pointcloud_open3d(self.pcloud_main['xyz'],self.pcloud_main['rgb'])
+            pcd_llm=pointcloud_open3d(self.pcloud_llm['xyz'],self.pcloud_llm['rgb'])
+        else:
+            resp.message="Color from probability ... not implemented yet"
+            return resp
+        fileName_main=f"{self.query_main}.{self.pcloud_main['xyz'].shape[0]}.ply"
+        fileName_llm=f"{self.query_llm}.{self.pcloud_llm['xyz'].shape[0]}.ply"
+        if self.storage_dir:
+            fileName_llm=self.storage_dir+"/"+fileName_llm
+            fileName_main=self.storage_dir+"/"+fileName_main
+        o3d.io.write_point_cloud(fileName_main,pcd_main)
+        o3d.io.write_point_cloud(fileName_llm,pcd_llm)
+        resp.success=True
+        resp.message=f"{fileName_main},{fileName_llm}"
+        return resp
+
+    # create the object clusters and filter by the number of points in each
+    def get_clusters_ros(self, pcd):
+        all_objects=create_object_clusters(pcd['xyz'],pcd['probs'], -1.0, self.detection_threshold)
+        objects_out=[]
+        for obj in all_objects:
+            if obj.size()>self.cluster_min_points:
+                objects_out.append(obj)
+        return objects_out
+
+    # create the clusters and match them, returning any that exceed the detection threshold
+    def match_clusters(self, method):
+        objects_main=self.get_clusters_ros(self.pcloud_main)
+        objects_llm=self.get_clusters_ros(self.pcloud_llm)
+        print(f"Clustering.... main {len(objects_main)}, llm {len(objects_llm)}")
+        pdb.set_trace()
+        positive_clusters=[]
+        # Match with other clusters
+        if method=='main':
+            return objects_main
+        elif method=='llm':
+            return objects_llm
+        else:
+            for idx0 in range(len(objects_main)):                    
+                cl_stats=[idx0, objects_main[idx0].prob_stats['max'], objects_main[idx0].prob_stats['mean'], -1, -1]
+                for idx1 in range(len(objects_llm)):
+                    IOU=calculate_iou(objects_main[idx0].box[0],objects_main[idx0].box[1],objects_llm[idx1].box[0],objects_llm[idx1].box[1])
+                    if IOU>0.5:
+                        cl_stats[3]=max(cl_stats[3],objects_llm[idx1].prob_stats['max'])
+                        cl_stats[4]=max(cl_stats[4],objects_llm[idx1].prob_stats['mean'])
+
+                if method=='llm_mean' and estimate_likelihood(cl_stats, 2)>self.detection_threshold:
+                    positive_clusters.append(objects_main[idx0])
+                elif method=='llm_max' and estimate_likelihood(cl_stats, 3)>self.detection_threshold:
+                    positive_clusters.append(objects_main[idx0])
+                elif method=='combo_max' and estimate_likelihood(cl_stats, 4)>self.detection_threshold:
+                    positive_clusters.append(objects_main[idx0])
+                elif method=='combo_mean' and estimate_likelihood(cl_stats, 5)>self.detection_threshold:
+                    positive_clusters.append(objects_main[idx0])
+        return positive_clusters
+    
+    def draw_clusters_service(self, msg):
+        positive_clusters=self.match_clusters('combo_mean')
+        import open3d as o3d
+        from draw_pcloud import drawn_image
+        if TRACK_COLOR:
+            pcd_main=pointcloud_open3d(self.pcloud_main['xyz'],self.pcloud_main['rgb'])
+        else:
+            pcd_main=pointcloud_open3d(self.pcloud_main['xyz'], None)
+        pdb.set_trace()
+        dI=drawn_image(pcd_main)
+        boxes = [ obj_.box for obj_ in positive_clusters ]
+        dI.add_boxes_to_fg(boxes)
+        fName=f"draw_clusters.{self.pcloud_main['xyz'].shape[0]}.png"
+        if self.storage_dir is not None:
+            fName=self.storage_dir+"/"+fName
+        dI.save_fg(fName)
+        resp=TriggerResponse()
+        resp.success=True
+        resp.message=fName
+        return resp
 
     def cam_info_callback(self, cam_info):
         # print("Cam info received")
@@ -122,7 +220,6 @@ class two_query_localize:
         if dist>self.travel_params[0] or deltaAngle>self.travel_params[1]:
             print(f"Dist {dist}, angle {deltaAngle} - new")        
             return True
-        # print(f"Dist {dist}, angle {deltaAngle} - old")        
         return False
 
     def rgbd_callback(self, rgb_img, depth_img):
@@ -132,8 +229,6 @@ class two_query_localize:
         if 0: # if the /map transform is correctly setup, then use tf all the way
             try:
                 (trans,rot) = self.listener.lookupTransform('/map',depth_img.header.frame_id,depth_img.header.stamp)
-                # (trans,rot) = self.listener.lookupTransform('/map','/base_link',depth_img.header.stamp)
-                # (trans,rot) = self.listener.lookupTransform('/base_link',rgb_img.header.frame_id,rgb_img.header.stamp)
                 poseM=np.matmul(tf.transformations.translation_matrix(trans),tf.transformations.quaternion_matrix(rot))
             except (tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException):
                 print("No Transform found")
@@ -170,13 +265,19 @@ class two_query_localize:
         if self.storage_dir is not None:
             cv2.imwrite(self.storage_dir+"/rgb"+uid_key+".png",rgb)
             cv2.imwrite(self.storage_dir+"/depth"+uid_key+".png",rgb)
-        results=self.pcloud_creator.multi_prompt_process([self.query_main, self.query_llm], self.detection_threshold)
+        results=self.pcloud_creator.multi_prompt_process([self.query_main, self.query_llm], self.detection_threshold, rotate90=True)
         if results[self.query_main]['xyz'].shape[0]>0:
-            self.pcloud_main['pts']=np.vstack((self.pcloud_main['pts'],results[self.query_main]['xyz']))
+            self.pcloud_main['xyz']=np.vstack((self.pcloud_main['xyz'],results[self.query_main]['xyz']))
             self.pcloud_main['probs']=np.hstack((self.pcloud_main['probs'],results[self.query_main]['probs']))
+            if TRACK_COLOR:
+                self.pcloud_main['rgb']=np.vstack((self.pcloud_main['rgb'],results[self.query_main]['rgb']))
+
         if results[self.query_llm]['xyz'].shape[0]>0:
-            self.pcloud_llm['pts']=np.vstack((self.pcloud_llm['pts'],results[self.query_llm]['xyz']))
+            self.pcloud_llm['xyz']=np.vstack((self.pcloud_llm['xyz'],results[self.query_llm]['xyz']))
             self.pcloud_llm['probs']=np.hstack((self.pcloud_llm['probs'],results[self.query_llm]['probs']))
+            if TRACK_COLOR:
+                self.pcloud_llm['rgb']=np.vstack((self.pcloud_llm['rgb'],results[self.query_llm]['rgb']))
+        print(f"Adding main:{results[self.query_main]['xyz'].shape[0]}, llm:{results[self.query_llm]['xyz'].shape[0]}.... Totals main:{self.pcloud_main['xyz'].shape[0]}, llm:{self.pcloud_llm['xyz'].shape[0]}")
 
 if __name__ == '__main__': 
     import argparse
