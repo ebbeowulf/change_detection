@@ -45,7 +45,6 @@ class clip_seg(image_segmentation):
     def process_file(self, fName, threshold=0.5, save_fileName=None):
         # Need to use PILLOW to load the color image - it has an impact on the clip model???
         image = Image.open(fName)
-        pdb.set_trace()
         # Get the clip probabilities
         outputs = self.process_image(image,threshold)
         # self.set_data(outputs,image.size,threshold)
