@@ -2,11 +2,12 @@ import copy
 import numpy as np
 
 class rgbd_file_list():
-    def __init__(self, color_image_dir:str, depth_image_dir:str, intermediate_save_dir:str):
+    def __init__(self, color_image_dir:str, depth_image_dir:str, intermediate_save_dir:str, is_pose_filtered:bool=False):
         self.all_files=dict()
         self.color_image_dir=color_image_dir + "/"
         self.depth_image_dir=depth_image_dir + "/"
         self.intermediate_save_dir=intermediate_save_dir + "/"
+        self.is_pose_filtered=is_pose_filtered
     
     def add_file(self, id:int, color_fName:str, depth_fName:str):
         if id in self.all_files:
@@ -56,6 +57,8 @@ class rgbd_file_list():
             return self.intermediate_save_dir+"%s.ply"%(cls)
 
     def get_combined_raw_fileName(self, cls:str):
+        if self.is_pose_filtered:
+            return self.intermediate_save_dir+cls+".raw.filtered.pkl"
         return self.intermediate_save_dir+cls+".raw.pkl"
 
     def get_annotation_file(self):

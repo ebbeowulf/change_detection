@@ -13,6 +13,8 @@ from camera_params import camera_params
 from map_utils import pcloud_from_images, pointcloud_open3d
 from std_srvs.srv import Trigger, TriggerResponse
 from two_query_localize import create_object_clusters, calculate_iou, estimate_likelihood
+from msg_and_srv.srv import GetCluster, GetClusterRequest, GetClusterResponse
+from geometry_msgs.msg import Point
 
 TRACK_COLOR=True
 
@@ -63,6 +65,7 @@ class two_query_localize:
         self.clear_srv = rospy.Service('clear_clouds', Trigger, self.clear_clouds_service)
         self.print_srv = rospy.Service('print_clouds', Trigger, self.print_clouds_service)
         self.draw_clusters_srv = rospy.Service('draw_clusters', Trigger, self.draw_clusters_service)
+        self.top1_cluster_srv = rospy.Service('get_top1_cluster', GetCluster, self.top1_cluster_service)
 
     def clear_clouds_service(self, msg):
         resp=TriggerResponse()
@@ -99,7 +102,7 @@ class two_query_localize:
 
     # create the object clusters and filter by the number of points in each
     def get_clusters_ros(self, pcd):
-        all_objects=create_object_clusters(pcd['xyz'],pcd['probs'], -1.0, self.detection_threshold)
+        all_objects=create_object_clusters(pcd['xyz'],pcd['probs'], -1.0, self.detection_threshold, compress_clusters=False)
         objects_out=[]
         for obj in all_objects:
             if obj.size()>self.cluster_min_points:
@@ -111,8 +114,8 @@ class two_query_localize:
         objects_main=self.get_clusters_ros(self.pcloud_main)
         objects_llm=self.get_clusters_ros(self.pcloud_llm)
         print(f"Clustering.... main {len(objects_main)}, llm {len(objects_llm)}")
-        pdb.set_trace()
         positive_clusters=[]
+        positive_cluster_likelihood=[]
         # Match with other clusters
         if method=='main':
             return objects_main
@@ -127,18 +130,15 @@ class two_query_localize:
                         cl_stats[3]=max(cl_stats[3],objects_llm[idx1].prob_stats['max'])
                         cl_stats[4]=max(cl_stats[4],objects_llm[idx1].prob_stats['mean'])
 
-                if method=='llm_mean' and estimate_likelihood(cl_stats, 2)>self.detection_threshold:
+                lk=estimate_likelihood(cl_stats, method)
+                if lk>self.detection_threshold:
                     positive_clusters.append(objects_main[idx0])
-                elif method=='llm_max' and estimate_likelihood(cl_stats, 3)>self.detection_threshold:
-                    positive_clusters.append(objects_main[idx0])
-                elif method=='combo_max' and estimate_likelihood(cl_stats, 4)>self.detection_threshold:
-                    positive_clusters.append(objects_main[idx0])
-                elif method=='combo_mean' and estimate_likelihood(cl_stats, 5)>self.detection_threshold:
-                    positive_clusters.append(objects_main[idx0])
-        return positive_clusters
+                    positive_cluster_likelihood.append(lk)
+
+        return positive_clusters, positive_cluster_likelihood
     
     def draw_clusters_service(self, msg):
-        positive_clusters=self.match_clusters('combo_mean')
+        positive_clusters, pos_likelihoods = self.match_clusters('combo-mean')
         import open3d as o3d
         from draw_pcloud import drawn_image
         if TRACK_COLOR:
@@ -158,6 +158,26 @@ class two_query_localize:
         resp.message=fName
         return resp
 
+    def top1_cluster_service(self, request:GetClusterRequest):
+        resp=GetClusterResponse()
+        resp.success=False
+
+        positive_clusters, pos_likelihoods=self.match_clusters('combo-mean')
+        if len(positive_clusters)==0:
+            resp.message="No clusters found"
+            return resp
+
+        whichC=np.argmax(pos_likelihoods)
+        for idx in range(request.num_points):
+            fPx=positive_clusters[whichC].farthestP[idx]
+            pt=Point()
+            pt.x=positive_clusters[whichC].pts[fPx][0]
+            pt.y=positive_clusters[whichC].pts[fPx][1]
+            pt.z=positive_clusters[whichC].pts[fPx][2]
+            resp.pts.append(pt)
+        resp.bbox3d=np.hstack((positive_clusters[whichC].box[0],positive_clusters[whichC].box[1])).tolist()
+        return resp
+    
     def cam_info_callback(self, cam_info):
         # print("Cam info received")
         self.params=camera_params(cam_info.height, cam_info.width, cam_info.K[0], cam_info.K[4], cam_info.K[2], cam_info.K[5], np.identity(4,dtype=float))
