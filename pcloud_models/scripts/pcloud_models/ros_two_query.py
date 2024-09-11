@@ -145,7 +145,7 @@ class two_query_localize:
             pcd_main=pointcloud_open3d(self.pcloud_main['xyz'],self.pcloud_main['rgb'])
         else:
             pcd_main=pointcloud_open3d(self.pcloud_main['xyz'], None)
-        pdb.set_trace()
+        # pdb.set_trace()
         dI=drawn_image(pcd_main)
         boxes = [ obj_.box for obj_ in positive_clusters ]
         dI.add_boxes_to_fg(boxes)
@@ -246,7 +246,7 @@ class two_query_localize:
         print("RGB-D images received")
         if self.pcloud_creator is None:
             return
-        if 0: # if the /map transform is correctly setup, then use tf all the way
+        if 1: # if the /map transform is correctly setup, then use tf all the way
             try:
                 (trans,rot) = self.listener.lookupTransform('/map',depth_img.header.frame_id,depth_img.header.stamp)
                 poseM=np.matmul(tf.transformations.translation_matrix(trans),tf.transformations.quaternion_matrix(rot))

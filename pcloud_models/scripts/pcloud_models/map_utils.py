@@ -456,14 +456,18 @@ class pcloud_from_images():
 
 def get_distinct_clusters(pcloud, gridcell_size=DBSCAN_GRIDCELL_SIZE, eps=DBSCAN_EPS, min_samples=DBSCAN_MIN_SAMPLES, cluster_min_count=CLUSTER_MIN_COUNT, floor_threshold=0.1):
     clouds=[]
-    if pcloud is None or len(pcloud.points)<CLUSTER_MIN_COUNT:
+    if pcloud is None or len(pcloud.points)<cluster_min_count:
         return clouds
-    pcd_small=pcloud.voxel_down_sample(gridcell_size)
-    p2=DBSCAN(eps=eps, min_samples=min_samples,n_jobs=10).fit(np.array(pcd_small.points))
-    pts=np.array(pcd_small.points)
+    if gridcell_size>0:
+        pcd_small=pcloud.voxel_down_sample(gridcell_size)
+        pts=np.array(pcd_small.points)
+        p2=DBSCAN(eps=eps, min_samples=min_samples,n_jobs=10).fit(pts)
+    else:
+        pts=np.array(pcloud.points)
+        p2=DBSCAN(eps=eps, min_samples=min_samples,n_jobs=10).fit(pts)
 
     # Need to get the cluster sizes... so we can focus on the largest clusters only
-    cl_cnt=np.array([ (p2.labels_==cnt).sum() for cnt in range(p2.labels_.max()) ])
+    cl_cnt=np.array([ (p2.labels_==cnt).sum() for cnt in range(p2.labels_.max() + 1) ])
     validID=np.where(cl_cnt>cluster_min_count)[0]
     if validID.shape[0]>0:
         sortedI=np.argsort(-cl_cnt[validID])
