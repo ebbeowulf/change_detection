@@ -74,7 +74,8 @@ class multi_query_localize:
     def set_cluster_size_service(self, req):
         self.min_cluster_size=req.value
         print(f"Changing minimum cluster size to {self.min_cluster_size} cm2")
-
+        return SetIntResponse()
+    
     def clear_clouds_service(self, msg):
         resp=TriggerResponse()
         resp.success=True
@@ -204,7 +205,7 @@ class multi_query_localize:
         return positive_clusters, positive_cluster_likelihood
 
     def top1_cluster_service(self, request:DynamicClusterRequest):
-        resp=GetClusterResponse()
+        resp=DynamicClusterResponse()
         resp.success=False
 
         positive_clusters, pos_likelihoods=self.match_clusters('combo-mean',request.main_query, request.llm_query)
@@ -333,19 +334,17 @@ class multi_query_localize:
         results=self.pcloud_creator.multi_prompt_process(self.query_list, self.detection_threshold, rotate90=True)
         for query in self.query_list:
             if results[query]['xyz'].shape[0]>0:
-                self.pcloud[query]['xyz']=np.vstack((self.pcloud[query]['xyz'],results[self.query[query]]['xyz']))
-                self.pcloud[query]['probs']=np.hstack((self.pcloud[query]['probs'],results[self.query[query]]['probs']))
+                self.pcloud[query]['xyz']=np.vstack((self.pcloud[query]['xyz'],results[query]['xyz']))
+                self.pcloud[query]['probs']=np.hstack((self.pcloud[query]['probs'],results[query]['probs']))
                 if TRACK_COLOR:
-                    self.pcloud[query]['rgb']=np.vstack((self.pcloud[query]['rgb'],results[self.query[query]]['rgb']))
+                    self.pcloud[query]['rgb']=np.vstack((self.pcloud[query]['rgb'],results[query]['rgb']))
             print(f"Adding {query}:{results[query]['xyz'].shape[0]}.... Total:{self.pcloud[query]['xyz'].shape[0]}")
 
 if __name__ == '__main__': 
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument('--queries', type=str, nargs='*', default=None,
+    parser.add_argument('queries', type=str, nargs='*', default=None,
                     help='Set of target queries to build point clouds for - must include at least one')
-    parser.add_argument('main_target', type=str, help='main target search string')
-    parser.add_argument('llm_target', type=str, help='llm target search string')
     parser.add_argument('--num_points',type=int,default=200, help='number of points per cluster')
     parser.add_argument('--detection_threshold',type=float,default=0.5, help='fixed detection threshold')
     parser.add_argument('--min_travel_dist',type=float,default=0.1,help='Minimum distance the robot must travel before adding a new image to the point cloud (default = 0.1m)')
@@ -355,9 +354,10 @@ if __name__ == '__main__':
 
     if args.queries is None:
         print("Must include at least one target query to execute")
+        import sys
         sys.exit(-1)
 
-    IT=two_query_localize(args.queries,
+    IT=multi_query_localize(args.queries,
                           args.num_points,
                           args.detection_threshold,
                           [args.min_travel_dist,args.min_travel_angle],

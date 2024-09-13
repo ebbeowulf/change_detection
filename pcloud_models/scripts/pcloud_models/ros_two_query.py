@@ -76,6 +76,7 @@ class two_query_localize:
     def set_cluster_size_service(self, req):
         self.min_cluster_size=req.value
         print(f"Changing minimum cluster size to {self.min_cluster_size} cm2")
+        return SetIntResponse()
 
     def clear_clouds_service(self, msg):
         resp=TriggerResponse()
