@@ -10,6 +10,7 @@ import open3d as o3d
 import pickle
 from map_utils import get_distinct_clusters, object_pcloud
 from scannet_processing import get_scene_type
+import sys
 
 #ROOT_DIR="/home/ebeowulf/data/scannet/scans/"
 # ROOT_DIR="/data3/datasets/scannet/scans/"
@@ -318,7 +319,7 @@ def vary_threshold(test_files, cat_list, fixed_size_threshold):
     return recallN, precisionN, recall_top1, precision_top1, specificity_top1, thresholds
 
 def vary_size(test_files, cat_list, fixed_detection_threshold):
-    size_thresholds=np.arange(200,30000,200)
+    size_thresholds=np.hstack((np.arange(200,3000,200), np.arange(3000,50000,500)))
 
     recallN = np.zeros((size_thresholds.shape[0],len(cat_list)))
     precisionN = np.zeros((size_thresholds.shape[0],len(cat_list)))
@@ -379,10 +380,12 @@ if __name__ == '__main__':
     parser.add_argument('--root_dir',type=str,default='/data3/datasets/scannet/scans/', help='where is the root dir (default = /data3/datasets/scannet/scans/)')
     parser.add_argument('--num_points',type=int,default=None, help='number of points per cluster')
     parser.add_argument('--detection_threshold',type=float,default=None, help='fixed detection threshold')
+    parser.add_argument('--pose_filter', dest='pose_filter', action='store_true')
+    parser.set_defaults(pose_filter=False)
     args = parser.parse_args()
 
     # if args.num_points is None and args.detection_threshold is None:
-    test_files=build_test_data_structure(args.root_dir,args.main_target, args.llm_target)
+    test_files=build_test_data_structure(args.root_dir,args.main_target, args.llm_target, args.pose_filter)
 
     # legend=['max', 'mean', 'max-llm', 'mean-llm', 'max-combo', 'mean-combo']
     # legend=['main-max', 'main-mean', 'llm-max', 'llm-mean', 'combo-max', 'combo-mean']

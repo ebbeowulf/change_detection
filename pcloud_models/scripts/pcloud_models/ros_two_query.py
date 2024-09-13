@@ -15,6 +15,7 @@ from std_srvs.srv import Trigger, TriggerResponse
 from two_query_localize import create_object_clusters, calculate_iou, estimate_likelihood
 from msg_and_srv.srv import GetCluster, GetClusterRequest, GetClusterResponse
 from geometry_msgs.msg import Point
+from visualization_msgs.msg import Marker, MarkerArray
 
 TRACK_COLOR=True
 
@@ -44,6 +45,9 @@ class two_query_localize:
         self.last_image=None
         self.travel_params=travel_params
 
+        # Previously detected clusters
+        self.known_objects=[]
+
         # Create Pcloud Data Structures
         self.pcloud_creator=None
         self.query_main=main_query
@@ -66,6 +70,7 @@ class two_query_localize:
         self.print_srv = rospy.Service('print_clouds', Trigger, self.print_clouds_service)
         self.draw_clusters_srv = rospy.Service('draw_clusters', Trigger, self.draw_clusters_service)
         self.top1_cluster_srv = rospy.Service('get_top1_cluster', GetCluster, self.top1_cluster_service)
+        self.marker_pub=rospy.Publisher('cluster_markers',MarkerArray,queue_size=5)
 
     def clear_clouds_service(self, msg):
         resp=TriggerResponse()
@@ -109,18 +114,64 @@ class two_query_localize:
                 objects_out.append(obj)
         return objects_out
 
+    def publish_object_markers(self):
+        msg=MarkerArray()
+        for idx, obj_ in enumerate(self.known_objects):
+            M=Marker()
+            M.header.frame_id="map"
+            M.header.stamp=self.last_image['time']
+            M.type=Marker.SPHERE
+            M.action=Marker.ADD
+            mn_=obj_[1].mean(0)
+            M.id=idx
+            M.pose.position.x=mn_[0]
+            M.pose.position.y=mn_[1]
+            M.pose.position.z=mn_[2]
+            M.pose.orientation.x=0.0
+            M.pose.orientation.y=0.0
+            M.pose.orientation.z=0.0
+            M.pose.orientation.w=1.0
+            M.scale.x=0.5
+            M.scale.y=0.5
+            M.scale.z=0.5
+            M.color.a=1.0
+            if obj_[0]=='main':
+                M.color.r=1.0
+                M.color.g=0.0
+                M.color.b=0.0
+            elif obj_[0]=='llm':
+                M.color.r=0.0
+                M.color.g=0.0
+                M.color.b=1.0
+            else:
+                M.color.r=0.0
+                M.color.g=1.0
+                M.color.b=0.0
+            msg.markers.append(M)
+        self.marker_pub.publish(msg)
+
     # create the clusters and match them, returning any that exceed the detection threshold
     def match_clusters(self, method):
         objects_main=self.get_clusters_ros(self.pcloud_main)
         objects_llm=self.get_clusters_ros(self.pcloud_llm)
+
+        # Update current object list so that markers are published correctly
+        self.known_objects=[]
+        for obj_ in objects_main:
+            self.known_objects.append(['main',obj_.box])
+        for obj_ in objects_llm:
+            self.known_objects.append(['llm',obj_.box])
+
         print(f"Clustering.... main {len(objects_main)}, llm {len(objects_llm)}")
         positive_clusters=[]
         positive_cluster_likelihood=[]
         # Match with other clusters
         if method=='main':
-            return objects_main
+            positive_clusters=objects_main
+            positive_cluster_likelihood=[ obj_.prob_stats['mean'] for obj_ in objects_main ]
         elif method=='llm':
-            return objects_llm
+            positive_clusters=objects_llm
+            positive_cluster_likelihood=[ obj_.prob_stats['mean'] for obj_ in objects_llm ]
         else:
             for idx0 in range(len(objects_main)):                    
                 cl_stats=[idx0, objects_main[idx0].prob_stats['max'], objects_main[idx0].prob_stats['mean'], -1, -1]
@@ -134,6 +185,12 @@ class two_query_localize:
                 if lk>self.detection_threshold:
                     positive_clusters.append(objects_main[idx0])
                     positive_cluster_likelihood.append(lk)
+
+            for obj_ in positive_clusters:
+                self.known_objects.append(['combo',obj_.box])
+
+        # publish the markers
+        self.publish_object_markers()
 
         return positive_clusters, positive_cluster_likelihood
     
@@ -242,7 +299,7 @@ class two_query_localize:
             return True
         return False
 
-    def rgbd_callback(self, rgb_img, depth_img):
+    def rgbd_callback(self, rgb_img:Image, depth_img:Image):
         print("RGB-D images received")
         if self.pcloud_creator is None:
             return
@@ -276,10 +333,10 @@ class two_query_localize:
             return
 
         if self.is_new_image(poseM):
-            self.update_point_cloud(cv_image_rgb, cv_image_depth, poseM)
+            self.update_point_cloud(cv_image_rgb, cv_image_depth, poseM, rgb_img.header)
     
-    def update_point_cloud(self, rgb, depth, poseM):
-        self.last_image={'depth': rgb, 'rgb': depth, 'poseM': poseM}
+    def update_point_cloud(self, rgb, depth, poseM, header):
+        self.last_image={'depth': rgb, 'rgb': depth, 'poseM': poseM, 'time': header.stamp}
         uid_key="%0.3f_%0.3f_%0.3f"%(poseM[0][3],poseM[1][3],poseM[2][3])
         self.pcloud_creator.load_image(rgb, depth, poseM, uid_key=uid_key)
         if self.storage_dir is not None:
