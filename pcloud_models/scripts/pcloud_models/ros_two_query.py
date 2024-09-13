@@ -131,9 +131,9 @@ class two_query_localize:
             M.pose.orientation.y=0.0
             M.pose.orientation.z=0.0
             M.pose.orientation.w=1.0
-            M.scale.x=0.5
-            M.scale.y=0.5
-            M.scale.z=0.5
+            M.scale.x=0.2
+            M.scale.y=0.2
+            M.scale.z=0.2
             M.color.a=1.0
             if obj_[0]=='main':
                 M.color.r=1.0
@@ -143,9 +143,16 @@ class two_query_localize:
                 M.color.r=0.0
                 M.color.g=0.0
                 M.color.b=1.0
-            else:
+            elif obj_[0]=='top1':
                 M.color.r=0.0
                 M.color.g=1.0
+                M.color.b=0.0
+                M.scale.x=0.5
+                M.scale.y=0.5
+                M.scale.z=0.5
+            else:
+                M.color.r=0.5
+                M.color.g=0.5
                 M.color.b=0.0
             msg.markers.append(M)
         self.marker_pub.publish(msg)
@@ -162,7 +169,6 @@ class two_query_localize:
         for obj_ in objects_llm:
             self.known_objects.append(['llm',obj_.box])
 
-        print(f"Clustering.... main {len(objects_main)}, llm {len(objects_llm)}")
         positive_clusters=[]
         positive_cluster_likelihood=[]
         # Match with other clusters
@@ -185,12 +191,19 @@ class two_query_localize:
                 if lk>self.detection_threshold:
                     positive_clusters.append(objects_main[idx0])
                     positive_cluster_likelihood.append(lk)
+ 
 
-            for obj_ in positive_clusters:
-                self.known_objects.append(['combo',obj_.box])
+            if len(positive_clusters)>0:
+                best_idx=np.argmax(positive_cluster_likelihood) 
+                for idx,obj_ in enumerate(positive_clusters): 
+                    if idx==best_idx: 
+                        self.known_objects.append(['top1',obj_.box])
+                    else: 
+                        self.known_objects.append(['combo',obj_.box])
 
         # publish the markers
         self.publish_object_markers()
+        print(f"Clustering.... main {len(objects_main)}, llm {len(objects_llm)}, combo {len(positive_clusters)}")
 
         return positive_clusters, positive_cluster_likelihood
     
@@ -363,8 +376,8 @@ if __name__ == '__main__':
     parser.add_argument('llm_target', type=str, help='llm target search string')
     parser.add_argument('--num_points',type=int,default=200, help='number of points per cluster')
     parser.add_argument('--detection_threshold',type=float,default=0.5, help='fixed detection threshold')
-    parser.add_argument('--min_travel_dist',type=float,default=0.1,help='Minimum distance the robot must travel before adding a new image to the point cloud (default = 0.1m)')
-    parser.add_argument('--min_travel_angle',type=float,default=0.1,help='Minimum angle the camera must have moved before adding a new image to the point cloud (default = 0.1 rad)')
+    parser.add_argument('--min_travel_dist',type=float,default=0.05,help='Minimum distance the robot must travel before adding a new image to the point cloud (default = 0.05m)')
+    parser.add_argument('--min_travel_angle',type=float,default=0.05,help='Minimum angle the camera must have moved before adding a new image to the point cloud (default = 0.05 rad)')
     parser.add_argument('--storage_dir',type=str,default=None,help='A place to store intermediate files - but only if specified (default = None)')
     args = parser.parse_args()
 
