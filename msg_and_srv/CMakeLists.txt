@@ -59,6 +59,8 @@ add_message_files(
 add_service_files(
   FILES
   GetCluster.srv
+  DynamicCluster.srv
+  SetInt.srv
 )
 
 ## Generate actions in the 'action' folder
