@@ -55,6 +55,7 @@ class multi_query_localize:
         for query in self.query_list:
             self.pcloud[query]={'xyz': np.zeros((0,3),dtype=float), 'probs': np.zeros((0),dtype=float), 'rgb': np.zeros((0,3),dtype=float)}
         self.cluster_min_points=cluster_min_points
+        self.cluster_iou=0.5
         self.detection_threshold=detection_threshold
 
         # Setup callback function
@@ -67,15 +68,21 @@ class multi_query_localize:
 
         # Setup service calls
         self.setclustersize_srv = rospy.Service('set_cluster_size', SetInt, self.set_cluster_size_service)
+        self.setiou_srv = rospy.Service('set_cluster_iou_pct', SetInt, self.set_cluster_iou_pct)
         self.clear_srv = rospy.Service('clear_clouds', Trigger, self.clear_clouds_service)
         self.top1_cluster_srv = rospy.Service('get_top1_cluster', DynamicCluster, self.top1_cluster_service)
         self.marker_pub=rospy.Publisher('cluster_markers',MarkerArray,queue_size=5)
 
     def set_cluster_size_service(self, req):
-        self.min_cluster_size=req.value
-        print(f"Changing minimum cluster size to {self.min_cluster_size} cm2")
+        self.cluster_min_points=req.value
+        print(f"Changing minimum cluster size to {self.cluster_min_points} cm2")
         return SetIntResponse()
-    
+
+    def set_cluster_iou_pct(self, req):
+        self.cluster_iou=req.value
+        print(f"Changing minimum cluster iou to {self.cluster_iou} pct")
+        return SetIntResponse()
+
     def clear_clouds_service(self, msg):
         resp=TriggerResponse()
         resp.success=True
@@ -187,7 +194,7 @@ class multi_query_localize:
                 cl_stats=[idx0, objects_main[idx0].prob_stats['max'], objects_main[idx0].prob_stats['mean'], -1, -1]
                 for idx1 in range(len(objects_llm)):
                     IOU=calculate_iou(objects_main[idx0].box[0],objects_main[idx0].box[1],objects_llm[idx1].box[0],objects_llm[idx1].box[1])
-                    if IOU>0.5:
+                    if IOU>self.cluster_iou:
                         cl_stats[3]=max(cl_stats[3],objects_llm[idx1].prob_stats['max'])
                         cl_stats[4]=max(cl_stats[4],objects_llm[idx1].prob_stats['mean'])
 
