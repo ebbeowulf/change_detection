@@ -79,7 +79,7 @@ class multi_query_localize:
         return SetIntResponse()
 
     def set_cluster_iou_pct(self, req):
-        self.cluster_iou=req.value
+        self.cluster_iou=req.value/100.0
         print(f"Changing minimum cluster iou to {self.cluster_iou} pct")
         return SetIntResponse()
 
