@@ -124,7 +124,7 @@ if __name__ == '__main__':
                     help='Set of target classes to build point clouds for')
     parser.add_argument('--param_file',type=str,default=None,help='camera parameter file for this scene - default is of form <raw_dir>/scene????_??.txt')
     parser.add_argument('--raw_dir',type=str,default='raw_output', help='subdirectory containing the color images')
-    parser.add_argument('--save_dir',type=str,default='raw_output/save_results', help='subdirectory in which to store the intermediate files')
+    parser.add_argument('--save_dir',type=str,default='raw_output/save_results2', help='subdirectory in which to store the intermediate files')
     parser.add_argument('--threshold',type=float,default=0.75, help='proposed detection threshold (default = 0.75)')
     parser.add_argument('--draw', dest='draw', action='store_true')
     parser.set_defaults(draw=False)
@@ -146,7 +146,7 @@ if __name__ == '__main__':
             par_file=args.root_dir+"/%s.txt"%(s_root[-1])
     params=load_camera_info(par_file)
     
-    map_utils.process_images_with_clip(fList,args.targets)
+    #map_utils.process_images_with_yolo(fList,args.targets)
     pcloud_init=map_utils.pcloud_from_images(params)
 
     for tgt_class in args.targets:

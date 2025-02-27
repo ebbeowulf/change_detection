@@ -29,12 +29,14 @@ class rgbd_file_list():
 
     def get_segmentation_fileName(self, id:int, is_yolo:bool, tgt_class:str):
         if is_yolo:
-            return self.get_yolo_fileName(id)
+            return self.get_yolo_fileName(id, tgt_class)
         else:
             return self.get_clip_fileName(id, tgt_class)
         
-    def get_yolo_fileName(self, id:int):
-        return self.intermediate_save_dir+self.all_files[id]['color']+".yolo.pkl"
+    def get_yolo_fileName(self, id:int, tgt_class:str):
+        cls_str=copy.copy(tgt_class)
+        cls_str=cls_str.replace(" ","_")
+        return self.intermediate_save_dir+self.all_files[id]['color']+".%s.yolo.pkl"%(cls_str)
 
     def get_clip_fileName(self, id:int, tgt_class:str):
         cls_str=copy.copy(tgt_class)
