@@ -1,4 +1,4 @@
-from ultralytics import YOLO
+from ultralytics import YOLO, SAM
 import pdb
 import cv2
 from change_detection.segmentation import image_segmentation
@@ -9,12 +9,14 @@ import sys
 import pickle
 
 class yolo_segmentation(image_segmentation):
-    def __init__(self, model_name='yolov8n-seg.pt'):
+    def __init__(self, prompts, model_name='yolov8x-worldv2.pt'):
         # Load a model
         self.model_name=model_name
-        self.model=None
-        self.label2id = None
-        self.id2label = None
+        self.yolo_model=None
+        self.sam_model=None
+        self.prompts=prompts
+        self.id2label={idx: key for idx,key in enumerate(self.prompts)}
+        self.label2id={self.id2label[key]: key for key in self.id2label }
         self.loaded_fileName=None # used to track the last file loaded
         self.clear_data()
     
@@ -31,69 +33,139 @@ class yolo_segmentation(image_segmentation):
 
     # Clear model to save a smaller file
     def clear_model(self):
-        self.model=None
+        self.yolo_model=None
+        self.sam_model=None
 
     def process_file(self, fName, threshold=0.25, save_fileName=None):
-        if self.model is None:
-            print("Loading model")
-            self.model = YOLO(self.model_name)  # load an official model
-            print("Model load finished")
-
+        if self.yolo_model is None:
+            print("Loading yolo model")
+            self.yolo_model = YOLO(self.model_name)  # load an official model
+            print("Yolo Model load finished")
+        if self.sam_model is None:
+            print("Loading SAM model")
+            self.sam_model = SAM('sam2.1_l.pt')  # load an official model
+            print("SAM Model load finished")
         # Predict with the model
         cv_image=cv2.imread(fName,-1)
+        self.image_size = (cv_image.shape[1], cv_image.shape[0])  # (width, height)
         results=self.process_image(cv_image, threshold)
         if save_fileName is not None:
+            save_data={'outputs': results, 'image_size': self.image_size, 'prompts': self.prompts}
             with open(save_fileName, 'wb') as handle:
-                pickle.dump(results, handle, protocol=pickle.HIGHEST_PROTOCOL)
+                pickle.dump(save_data, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
         return cv_image
 
     def load_file(self, fileName, threshold=None):
         try:
-            # Don't reload the same file over and over
-            if self.loaded_fileName==fileName:
-                return
-            # Otherwise load the file             
+            if self.loaded_fileName == fileName:
+                return True
             with open(fileName, 'rb') as handle:
-                results=pickle.load(handle)
-                self.load_prior_results(results)
-            self.loaded_fileName=fileName
+                results = pickle.load(handle)
+                if results['outputs'] is not None:
+                    self.load_prior_results(results)
+                else:
+                    print("No Detections found in file")
+            self.loaded_fileName = fileName
             return True
         except Exception as e:
-            self.loaded_fileName=None
-        return False
-    
+            print(f"Error loading file: {e}")
+            self.loaded_fileName = None
+            return False
+
     def load_prior_results(self, results):
-        self.set_data(results)
+        """Load prior results from a saved file."""
+        # Ensure results is a dictionary from the pickled file
+        if isinstance(results, dict) and 'outputs' in results:
+            self.image_size = results['image_size']
+            self.prompts = results['prompts']
+            self.set_data(results['outputs'])
+        else:
+            raise ValueError("Loaded results must be a dictionary with 'outputs', 'image_size', and 'prompts'")
 
     def process_image(self, cv_image, threshold=0.25):
-        # Predict with the model
-        results = self.model(cv_image, conf=threshold)[0].cpu()  # predict on an image
-        self.set_data(results)
-        return results
-    
-    def set_data(self, results):
-        self.set_classes(results)
-        self.clear_data()
-        for result in results:
-            cls = int(result.boxes.cls.numpy())
-            prob = result.boxes.conf.numpy()[0]
-            # Save clusters
-            if cls not in self.boxes:
-                self.boxes[cls]=[]        
-            self.boxes[cls].append((prob, result.boxes.xyxy.numpy()[0]))
+        # Predict with YOLO
+        if len(self.prompts) > 1:
+            self.yolo_model.set_classes(self.prompts)
+        
+        yolo_results = self.yolo_model(cv_image, conf=threshold)  # Predict on an image
+        if yolo_results and yolo_results[0].boxes is not None and len(yolo_results[0].boxes) > 0:
+            # Extract YOLO detection data and move to CPU
+            boxes = yolo_results[0].boxes.xyxy.cpu().numpy().tolist()  # Bounding boxes as list
+            class_ids = yolo_results[0].boxes.cls.cpu().numpy().tolist()  # Class IDs as list
+            confs = yolo_results[0].boxes.conf.cpu().numpy().tolist()  # Confidence scores as list
+            
+            # Run SAM with YOLO bounding boxes
+            sam_results = self.sam_model(cv_image, bboxes=boxes)
+            sam_results[0].class_ids=class_ids
+            sam_results[0].confs=confs
+            #sam_results[0].show()
+            # Pass SAM results and YOLO data to set_data
+            self.set_data(sam_results)
+            return sam_results
+        else:
+            print("No objects detected by YOLO.")
+            return None
+          
 
-            msk_resized=cv2.resize(result.masks.data.numpy().squeeze(),(result.orig_shape[1],result.orig_shape[0]))
-            prob_array=prob*msk_resized
-            # Save mask + max prob
-            if cls in self.masks:
-                self.masks[cls] += msk_resized
-                self.max_probs[cls] = max(self.max_probs[cls],prob)
-                self.probs[cls] = np.maximum.reduce([self.probs[cls], prob_array])
+    def sigmoid(self, arr):
+        return (1.0/(1.0+np.exp(-arr)))
+
+
+    def set_data(self, sam_results):
+        """Set internal data from SAM results and optional YOLO data."""
+        self.clear_data()
+        class_ids = sam_results[0].class_ids
+        confs = sam_results[0].confs
+        boxes = sam_results[0].boxes.xyxy.cpu().numpy().tolist()
+        # Handle case from process_image (SAM results + YOLO data)
+        if sam_results and class_ids is not None and confs is not None and boxes is not None:
+            if sam_results[0].masks is not None:
+                masks = sam_results[0].masks.data.cpu().numpy()  # SAM masks as NumPy array
+                if len(masks) != len(class_ids):
+                    raise ValueError("Number of masks must match number of detections")
+                
+                for i, mask in enumerate(masks):
+                    # Convert data type
+                    if mask.dtype == bool:
+                        mask = mask.astype(np.uint8)
+                    elif mask.dtype == np.float32:
+                        mask = (mask * 255).astype(np.uint8)
+                    else:
+                        print(f"Unexpected mask dtype: {mask.dtype}")
+                        continue
+
+                    cls = int(class_ids[i])
+                    prob = confs[i]
+                    box = boxes[i]
+                    
+                    # Store bounding box and confidence
+                    if cls not in self.boxes:
+                        self.boxes[cls] = []
+                    self.boxes[cls].append((prob, box))
+                    
+                    # Resize mask to original image size
+                    mask_resized = cv2.resize(
+                        mask, 
+                        (self.image_size[0], self.image_size[1]),  # (width, height)
+                        interpolation=cv2.INTER_NEAREST
+                    )
+                    prob_array = prob * mask_resized
+                    
+                    # Store mask and probabilities
+                    if cls in self.masks:
+                        self.masks[cls] += mask_resized
+                        self.max_probs[cls] = max(self.max_probs[cls], prob)
+                        self.probs[cls] = np.maximum(self.probs[cls], prob_array)
+                    else:
+                        self.masks[cls] = mask_resized
+                        self.max_probs[cls] = prob
+                        self.probs[cls] = prob_array
             else:
-                self.masks[cls] = msk_resized
-                self.max_probs[cls]=prob
-                self.probs[cls]=prob_array
+                print("No masks returned by SAM.")
+        
+        else:
+            print("No valid data to set.")
     
     def plot(self, img, results):
         for result in results:
@@ -113,7 +185,7 @@ if __name__ == '__main__':
     parser.add_argument('--threshold',type=float,default=0.25,help='threshold to apply during computation')
     args = parser.parse_args()
 
-    CS=yolo_segmentation()
+    CS=yolo_segmentation([args.tgt_prompt])
     img, res=CS.process_file(args.image,args.threshold)
     if args.tgt_class is None:
         IM=CS.plot(img, res)
