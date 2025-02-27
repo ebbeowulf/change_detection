@@ -33,7 +33,7 @@ DEVICE = torch.device("cpu")
 #   original color images
 def process_images_with_yolo(fList:rgbd_file_list, targets:list):
     print("process_images")
-    from change_detection.yolo_segmentation import yolo_segmentation
+    from change_detection.yolo_world_segmentation import yolo_segmentation
     YS=yolo_segmentation(targets ,'yolov8x-worldv2.pt')
     for key in fList.keys():
         for target in targets:
@@ -76,7 +76,7 @@ def clip_threshold_evaluation(fList:rgbd_file_list, clip_targets:list, proposed_
     return np.unique(image_list).tolist()
 
 def yolo_threshold_evaluation(fList:rgbd_file_list, yolo_targets:list, proposed_threshold:float):
-    from change_detection.yolo_segmentation import yolo_segmentation
+    from change_detection.yolo_world_segmentation import yolo_segmentation
     
     YS=yolo_segmentation(yolo_targets)
     image_list=[]
