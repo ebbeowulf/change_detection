@@ -31,7 +31,7 @@ DEVICE = torch.device("cpu")
 # Process all images with yolo - creating
 #   pickle files for the results and storing alongside the 
 #   original color images
-def process_images_with_yolo(fList:rgbd_file_list, targets:list):
+def process_images_with_yolo_world(fList:rgbd_file_list, targets:list):
     print("process_images")
     from change_detection.yolo_world_segmentation import yolo_segmentation
     YS=yolo_segmentation(targets ,'yolov8x-worldv2.pt')
