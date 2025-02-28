@@ -9,7 +9,7 @@ from rgbd_file_list import rgbd_file_list
 from camera_params import camera_params
 import pickle
 import sys
-from map_utils import object_pcloud
+from map_utils import object_pcloud, get_distinct_clusters, CLUSTER_PROXIMITY_THRESH, CLUSTER_TOUCHING_THRESH
 
 # FURNITURE=['chair','couch','potted plant','bed','mirror','dining table','window','desk','toilet','door']
 FURNITURE=['cabinet','chair','couch','plant','bed','dining table','desk','toilet','ottoman'] # door + window have too many errors

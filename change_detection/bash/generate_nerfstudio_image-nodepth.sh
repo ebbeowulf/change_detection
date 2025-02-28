@@ -1,12 +1,14 @@
 #!/bin/bash
 
-BASE_NERFSTUDIO_DIR="/home/emartinso/projects/nerfstudio/"
-CONFIG_DIR="outputs/nerf_plant/nerfacto/2024-06-27_025912/"
+# BASE_NERFSTUDIO_DIR="/home/emartinso/projects/nerfstudio/"
+#CONFIG_DIR="outputs/nerf_plant/nerfacto/2024-06-27_025912/"
+BASE_NERFSTUDIO_DIR="/data3/datasets/garden/"
+CONFIG_DIR="outputs/garden_07_17_v1/nerfacto/2025-02-05_193728/"
 SCRIPTS_DIR="$(pwd)/../scripts/change_detection/"
 
 TARGET_DIR=$1
 RENDER_SAVE_DIR=$2
-IMAGE_NUM=$3
+RGB_FNAME=$3
 
 #Initialize the conda environment
 CONDA_BASE=$(conda info --base)
@@ -23,12 +25,12 @@ if [[ ! -f $transforms ]];then
 fi
 
 # Have we created the nerf images?
-rgb_fName="rgb_$IMAGE_NUM.png"
-if [[ ! -f $RENDER_SAVE_DIR/$rgb_fName ]];then
+#rgb_fName="rgb_$IMAGE_NUM.png"
+if [[ ! -f $RENDER_SAVE_DIR/$RGB_FNAME ]];then
     if [[ ! -d $RENDER_SAVE_DIR ]];then
         mkdir -p $RENDER_SAVE_DIR
     fi
-    echo "python $SCRIPTS_DIR/render_transform.py $CONFIG_DIR $transforms $RENDER_SAVE_DIR --name-filter $rgb_fName --image-type all"
-    python $SCRIPTS_DIR/render_transform.py $CONFIG_DIR $transforms $RENDER_SAVE_DIR --name-filter $rgb_fName --image-type all
+    echo "python $SCRIPTS_DIR/render_transform.py $CONFIG_DIR $transforms $RENDER_SAVE_DIR --name-filter $RGB_FNAME --image-type all"
+    python $SCRIPTS_DIR/render_transform.py $CONFIG_DIR $transforms $RENDER_SAVE_DIR --name-filter $RGB_FNAME --image-type all
 fi
 
