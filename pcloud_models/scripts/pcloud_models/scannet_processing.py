@@ -124,12 +124,13 @@ if __name__ == '__main__':
                     help='Set of target classes to build point clouds for')
     parser.add_argument('--param_file',type=str,default=None,help='camera parameter file for this scene - default is of form <raw_dir>/scene????_??.txt')
     parser.add_argument('--raw_dir',type=str,default='raw_output', help='subdirectory containing the color images')
-    parser.add_argument('--save_dir',type=str,default='raw_output/save_results2', help='subdirectory in which to store the intermediate files')
+    parser.add_argument('--save_dir',type=str,default='raw_output/save_results', help='subdirectory in which to store the intermediate files')
     parser.add_argument('--threshold',type=float,default=0.75, help='proposed detection threshold (default = 0.75)')
+    parser.add_argument('--classifier',type=str,default='clipseg', help='select from available detection algorithms {clipseg, yolo, yolo_world}')
     parser.add_argument('--draw', dest='draw', action='store_true')
     parser.set_defaults(draw=False)
-    parser.add_argument('--use_connected_components', dest='use_cc', action='store_true')
-    parser.set_defaults(use_cc=True)
+    # parser.add_argument('--use_connected_components', dest='use_cc', action='store_true')
+    # parser.set_defaults(use_cc=True)
     parser.add_argument('--pose_filter', dest='pose_filter', action='store_true')
     parser.set_defaults(pose_filter=False)
     # parser.add_argument('--targets',type=list, nargs='+', default=None, help='Set of target classes to build point clouds for')
@@ -150,7 +151,7 @@ if __name__ == '__main__':
     pcloud_init=map_utils.pcloud_from_images(params)
 
     for tgt_class in args.targets:
-        pcloud=pcloud_init.process_fList(fList, tgt_class, args.threshold)
+        pcloud=pcloud_init.process_fList(fList, tgt_class, args.threshold, args.classifier)
         if args.draw:
             import open3d as o3d
             pcd=map_utils.pointcloud_open3d(pcloud['xyz'],pcloud['rgb'])

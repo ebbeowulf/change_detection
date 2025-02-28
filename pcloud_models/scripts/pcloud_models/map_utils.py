@@ -355,39 +355,28 @@ class pcloud_from_images():
         else:
             return None
 
-    # def process_image(self, image_key, tgt_class, conf_threshold, use_connected_components=False):
-    def process_image(self, tgt_class, detection_threshold, use_connected_components=False, segmentation_save_file=None):
-        # Create the image segmentation file
+    def setup_image_processing(self, tgt_class, classifier_type):
         if self.YS is None or tgt_class not in self.YS.get_all_classes():
-            from change_detection.clip_segmentation import clip_seg
-            self.YS=clip_seg([tgt_class])
+            if classifier_type=='clipseg':
+                from change_detection.clip_segmentation import clip_seg
+                self.YS=clip_seg([tgt_class])
+            elif classifier_type=='yolo_world':
+                from change_detection.yolo_world_segmentation import yolo_world_segmentation
+                self.YS=yolo_world_segmentation([tgt_class])
+            elif classifier_type=='yolo':
+                from change_detection.yolo_segmentation import yolo_segmentation
+                self.YS=yolo_segmentation([tgt_class])
 
+    def process_image(self, tgt_class, detection_threshold, segmentation_save_file=None):
         # Recover the segmentation file
         if segmentation_save_file is not None and os.path.exists(segmentation_save_file):
             if not self.YS.load_file(segmentation_save_file,threshold=detection_threshold):
                 return None
         else:
             self.YS.process_image_numpy(self.loaded_image['colorT'].cpu().numpy(), detection_threshold)    
-            # self.YS.set_data(outputs,self.loaded_image['colorT'].size(),threshold=detection_threshold)
 
         return self.get_pts_per_class(tgt_class)
-    
-    def process_yolo_image(self, tgt_class, detection_threshold, use_connected_components=False, segmentation_save_file=None):
-        # Create the image segmentation file
-        if self.YS is None or tgt_class not in self.YS.get_all_classes():
-            from change_detection.yolo_segmentation import yolo_segmentation
-            self.YS=yolo_segmentation([tgt_class])
-
-        # Recover the segmentation file
-        if segmentation_save_file is not None and os.path.exists(segmentation_save_file):
-            if not self.YS.load_file(segmentation_save_file,threshold=detection_threshold):
-                return None
-        else:
-            self.YS.process_image_numpy(self.loaded_image['colorT'].cpu().numpy(), detection_threshold)    
-            # self.YS.set_data(outputs,self.loaded_image['colorT'].size(),threshold=detection_threshold)
-
-        return self.get_pts_per_class(tgt_class)
-
+      
     def multi_prompt_process(self, prompts:list, detection_threshold, rotate90:False):
         if self.YS is None or prompts[0] not in self.YS.get_all_classes():
             from change_detection.clip_segmentation import clip_seg
@@ -442,8 +431,42 @@ class pcloud_from_images():
 
     # Process a sequence of images, combining the resulting point clouds together
     #   The combined result will be saved to disk for faster retrieval
-    def process_fList(self, fList:rgbd_file_list, tgt_class, conf_threshold, use_connected_components=False):
+    # def process_fList(self, fList:rgbd_file_list, tgt_class, conf_threshold, use_connected_components=False):
+    #     save_fName=fList.get_combined_raw_fileName(tgt_class)
+    #     pcloud=None
+    #     if os.path.exists(save_fName):
+    #         try:
+    #             with open(save_fName, 'rb') as handle:
+    #                 pcloud=pickle.load(handle)
+    #         except Exception as e:
+    #             pcloud=None
+    #             print("Failed to load save file - rebuilding... " + save_fName)
+        
+    #     if pcloud is None:
+    #         # Build the pcloud from individual images
+    #         pcloud={'xyz': np.zeros((0,3),dtype=float),'rgb': np.zeros((0,3),dtype=np.uint8),'probs': np.array([])}
+    #         print("creating pcloud")
+    #         image_key_list=yolo_threshold_evaluation(fList, [tgt_class], conf_threshold)
+    #         for key in image_key_list:
+    #             self.load_image_from_file(fList, key)
+    #             icloud=self.process_yolo_image(tgt_class, conf_threshold, use_connected_components=use_connected_components, segmentation_save_file=fList.get_segmentation_fileName(key, True, tgt_class))
+    #             if icloud is not None and icloud['xyz'].shape[0]>100:
+    #                 pcloud['xyz']=np.vstack((pcloud['xyz'],icloud['xyz']))
+    #                 pcloud['rgb']=np.vstack((pcloud['rgb'],icloud['rgb']))
+    #                 pcloud['probs'] = np.hstack((pcloud['probs'], icloud['probs'].flatten()))
+            
+    #         # Now save the result so we don't have to keep processing this same cloud
+    #         with open(save_fName,'wb') as handle:
+    #             pickle.dump(pcloud, handle, protocol=pickle.HIGHEST_PROTOCOL)
+        
+    #     print(f"pcloud : {pcloud}")
+    #     # Finally - filter the cloud with the requested confidence threshold
+    #     whichP=(pcloud['probs']>conf_threshold)
+    #     return {'xyz':pcloud['xyz'][whichP],'rgb':pcloud['rgb'][whichP],'probs':pcloud['probs'][whichP]}
+    def process_fList(self, fList:rgbd_file_list, tgt_class, conf_threshold, classifier_type='clipseg'):
+        pdb.set_trace()
         save_fName=fList.get_combined_raw_fileName(tgt_class)
+
         pcloud=None
         if os.path.exists(save_fName):
             try:
@@ -454,27 +477,29 @@ class pcloud_from_images():
                 print("Failed to load save file - rebuilding... " + save_fName)
         
         if pcloud is None:
+            # Setup the classifier
+            self.setup_image_processing(tgt_class, classifier_type)
+
+            # Process all of the images with the target query - this creates the save files on the disk
+            image_key_list=clip_threshold_evaluation(fList, [tgt_class], conf_threshold)
+
             # Build the pcloud from individual images
-            pcloud={'xyz': np.zeros((0,3),dtype=float),'rgb': np.zeros((0,3),dtype=np.uint8),'probs': np.array([])}
-            print("creating pcloud")
-            image_key_list=yolo_threshold_evaluation(fList, [tgt_class], conf_threshold)
+            pcloud={'xyz': np.zeros((0,3),dtype=float),'rgb': np.zeros((0,3),dtype=np.uint8),'probs': []}
             for key in image_key_list:
                 self.load_image_from_file(fList, key)
-                icloud=self.process_yolo_image(tgt_class, conf_threshold, use_connected_components=use_connected_components, segmentation_save_file=fList.get_segmentation_fileName(key, True, tgt_class))
+                icloud=self.process_image(tgt_class, conf_threshold, segmentation_save_file=fList.get_segmentation_fileName(key, False, tgt_class))
                 if icloud is not None and icloud['xyz'].shape[0]>100:
                     pcloud['xyz']=np.vstack((pcloud['xyz'],icloud['xyz']))
                     pcloud['rgb']=np.vstack((pcloud['rgb'],icloud['rgb']))
-                    pcloud['probs'] = np.hstack((pcloud['probs'], icloud['probs'].flatten()))
+                    pcloud['probs']=np.hstack((pcloud['probs'],icloud['probs']))
             
             # Now save the result so we don't have to keep processing this same cloud
             with open(save_fName,'wb') as handle:
                 pickle.dump(pcloud, handle, protocol=pickle.HIGHEST_PROTOCOL)
         
-        print(f"pcloud : {pcloud}")
         # Finally - filter the cloud with the requested confidence threshold
         whichP=(pcloud['probs']>conf_threshold)
         return {'xyz':pcloud['xyz'][whichP],'rgb':pcloud['rgb'][whichP],'probs':pcloud['probs'][whichP]}
-
 # def create_pclouds_from_images(fList:rgbd_file_list, params:camera_params, targets:list=None, display_pclouds=False, use_connected_components=False):
 #     import open3d as o3d
 #     process_images_with_yolo(fList)
