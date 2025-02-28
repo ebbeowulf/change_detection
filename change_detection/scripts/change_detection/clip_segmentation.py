@@ -57,10 +57,6 @@ class clip_seg(image_segmentation):
         # Convert the PIL image to opencv format and return
         return np.array(image) #[:,:,::-1]
 
-    def process_image_numpy(self, image: np.ndarray, threshold=0.5):
-        image_pil=Image.fromarray(image)
-        return self.process_image(image_pil, threshold=threshold)
-
     def process_image(self, image: Image, threshold=0.5): #image should be in PIL format
         # print("Clip Inference")
         self.clear_data()
@@ -92,23 +88,6 @@ class clip_seg(image_segmentation):
             # print("%s = %f"%(self.prompts[dim],self.max_probs[dim]))            
             self.probs[dim]=cv2.resize(P2[dim,:,:],(image_size[0],image_size[1]))
             self.masks[dim]=self.probs[dim]>threshold
-
-        # preds = outputs.logits.unsqueeze(1)
-        # P2=self.sigmoid(preds.numpy())
-        # for dim in range(preds.shape[0]):
-        #     self.max_probs[dim]=P2[dim,0,:,:].max()
-        #     print("%s = %f"%(self.prompts[dim],self.max_probs[dim]))            
-        #     self.probs[dim]=cv2.resize(P2[dim,0,:,:],(image_size[0],image_size[1]))
-        #     self.masks[dim]=self.probs[dim]>threshold
-        #     self.build_dbscan_boxes(dim,threshold)
-        # else:
-        #     pdb.set_trace()
-        #     preds = outputs.logits.unsqueeze(0)
-        #     P2=self.sigmoid(preds.numpy())
-        #     self.probs[0]=cv2.resize(P2[0][0],(image_size[0],image_size[1]))
-        #     self.max_probs[0]=P2[0][0].max()
-        #     self.masks[0]=self.probs[0]>threshold
-        #     self.build_dbscan_boxes(0,threshold)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()

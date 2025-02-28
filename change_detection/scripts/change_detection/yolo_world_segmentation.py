@@ -7,6 +7,7 @@ import cv2
 import numpy as np
 import sys
 import pickle
+from PIL import Image
 
 class yolo_world_segmentation(image_segmentation):
     def __init__(self, prompts, model_name='yolov8x-worldv2.pt'):
@@ -19,32 +20,31 @@ class yolo_world_segmentation(image_segmentation):
         self.label2id={self.id2label[key]: key for key in self.id2label }
         self.loaded_fileName=None # used to track the last file loaded
         self.clear_data()
+        self.init_model()
     
     def set_classes(self, results):
         if self.label2id is None:
             self.id2label = results.names
             self.label2id = { self.id2label[key]: key for key in self.id2label}
 
-    # def clear_data(self):
-    #     self.cl_boxes  = np.zeros((0,4),dtype=float)
-    #     self.cl_labelID= []
-    #     self.cl_probs  = []
-    #     super().clear_data()
-
     # Clear model to save a smaller file
     def clear_model(self):
         self.yolo_model=None
         self.sam_model=None
 
-    def process_file(self, fName, threshold=0.25, save_fileName=None):
+    def init_model(self):
         if self.yolo_model is None:
             print("Loading yolo model")
             self.yolo_model = YOLO(self.model_name)  # load an official model
             print("Yolo Model load finished")
         if self.sam_model is None:
             print("Loading SAM model")
-            self.sam_model = SAM('sam2.1_l.pt')  # load an official model
+            # self.sam_model = SAM('sam2.1_l.pt')  # load an official model
+            self.sam_model = SAM('sam2_l.pt')  # load an official model
             print("SAM Model load finished")
+
+    def process_file(self, fName, threshold=0.25, save_fileName=None):
+        self.init_model()
         # Predict with the model
         cv_image=cv2.imread(fName,-1)
         self.image_size = (cv_image.shape[1], cv_image.shape[0])  # (width, height)
@@ -84,9 +84,11 @@ class yolo_world_segmentation(image_segmentation):
             raise ValueError("Loaded results must be a dictionary with 'outputs', 'image_size', and 'prompts'")
 
     def process_image(self, cv_image, threshold=0.25):
+        self.init_model()
+
         # Predict with YOLO
-        if len(self.prompts) > 1:
-            self.yolo_model.set_classes(self.prompts)
+        # if len(self.prompts) > 1:
+        self.yolo_model.set_classes(self.prompts)
         
         yolo_results = self.yolo_model(cv_image, conf=threshold)  # Predict on an image
         if yolo_results and yolo_results[0].boxes is not None and len(yolo_results[0].boxes) > 0:
@@ -107,6 +109,9 @@ class yolo_world_segmentation(image_segmentation):
             print("No objects detected by YOLO.")
             return None
           
+    def process_image_numpy(self, image: np.ndarray, threshold=0.5):
+        image_pil=Image.fromarray(image)
+        return self.process_image(image_pil, threshold=threshold)
 
     def sigmoid(self, arr):
         return (1.0/(1.0+np.exp(-arr)))
@@ -115,9 +120,12 @@ class yolo_world_segmentation(image_segmentation):
     def set_data(self, sam_results):
         """Set internal data from SAM results and optional YOLO data."""
         self.clear_data()
-        class_ids = sam_results[0].class_ids
-        confs = sam_results[0].confs
-        boxes = sam_results[0].boxes.xyxy.cpu().numpy().tolist()
+        try:
+            class_ids = sam_results[0].class_ids
+            confs = sam_results[0].confs
+            boxes = sam_results[0].boxes.xyxy.cpu().numpy().tolist()
+        except Exception as e:
+            pdb.set_trace()
         # Handle case from process_image (SAM results + YOLO data)
         if sam_results and class_ids is not None and confs is not None and boxes is not None:
             if sam_results[0].masks is not None:
