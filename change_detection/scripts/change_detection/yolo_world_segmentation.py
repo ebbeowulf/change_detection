@@ -85,8 +85,8 @@ class yolo_segmentation(image_segmentation):
 
     def process_image(self, cv_image, threshold=0.25):
         # Predict with YOLO
-        if len(self.prompts) > 1:
-            self.yolo_model.set_classes(self.prompts)
+        # if len(self.prompts) > 1:
+        self.yolo_model.set_classes(self.prompts)
         
         yolo_results = self.yolo_model(cv_image, conf=threshold)  # Predict on an image
         if yolo_results and yolo_results[0].boxes is not None and len(yolo_results[0].boxes) > 0:
@@ -185,18 +185,15 @@ if __name__ == '__main__':
     parser.add_argument('--threshold',type=float,default=0.25,help='threshold to apply during computation')
     args = parser.parse_args()
 
-    CS=yolo_segmentation([args.tgt_prompt])
-    img, res=CS.process_file(args.image,args.threshold)
-    if args.tgt_class is None:
-        IM=CS.plot(img, res)
+    CS=yolo_segmentation([args.tgt_class])
+    img=CS.process_file(args.image,args.threshold)
+    msk=CS.get_mask(args.tgt_class)
+    if msk is None:
+        print("No objects of class %s detectd"%(args.tgt_class))
+        sys.exit(-1)
     else:
-        msk=CS.get_mask(args.tgt_class)
-        if msk is None:
-            print("No objects of class %s detectd"%(args.tgt_class))
-            sys.exit(-1)
-        else:
-            print("compiling mask image")                        
-            IM=cv2.bitwise_and(res.orig_img,res.orig_img,mask=msk.astype(np.uint8))
+        print("compiling mask image")                        
+        IM=cv2.bitwise_and(img,img,mask=msk.astype(np.uint8))
 
     cv2.imshow("res",IM)
     cv2.waitKey()
