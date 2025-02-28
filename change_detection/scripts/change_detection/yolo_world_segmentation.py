@@ -7,7 +7,6 @@ import cv2
 import numpy as np
 import sys
 import pickle
-from PIL import Image
 
 class yolo_world_segmentation(image_segmentation):
     def __init__(self, prompts, model_name='yolov8x-worldv2.pt'):
@@ -39,15 +38,12 @@ class yolo_world_segmentation(image_segmentation):
             print("Yolo Model load finished")
         if self.sam_model is None:
             print("Loading SAM model")
-            # self.sam_model = SAM('sam2.1_l.pt')  # load an official model
-            self.sam_model = SAM('sam2_l.pt')  # load an official model
+            self.sam_model = SAM('sam2.1_l.pt')  # load an official model
             print("SAM Model load finished")
 
     def process_file(self, fName, threshold=0.25, save_fileName=None):
-        self.init_model()
         # Predict with the model
         cv_image=cv2.imread(fName,-1)
-        self.image_size = (cv_image.shape[1], cv_image.shape[0])  # (width, height)
         results=self.process_image(cv_image, threshold)
         if save_fileName is not None:
             save_data={'outputs': results, 'image_size': self.image_size, 'prompts': self.prompts}
@@ -84,11 +80,9 @@ class yolo_world_segmentation(image_segmentation):
             raise ValueError("Loaded results must be a dictionary with 'outputs', 'image_size', and 'prompts'")
 
     def process_image(self, cv_image, threshold=0.25):
-        self.init_model()
-
         # Predict with YOLO
-        # if len(self.prompts) > 1:
         self.yolo_model.set_classes(self.prompts)
+        self.image_size = (cv_image.shape[1], cv_image.shape[0])  # (width, height)
         
         yolo_results = self.yolo_model(cv_image, conf=threshold)  # Predict on an image
         if yolo_results and yolo_results[0].boxes is not None and len(yolo_results[0].boxes) > 0:
@@ -109,9 +103,6 @@ class yolo_world_segmentation(image_segmentation):
             print("No objects detected by YOLO.")
             return None
           
-    def process_image_numpy(self, image: np.ndarray, threshold=0.5):
-        image_pil=Image.fromarray(image)
-        return self.process_image(image_pil, threshold=threshold)
 
     def sigmoid(self, arr):
         return (1.0/(1.0+np.exp(-arr)))
@@ -120,12 +111,9 @@ class yolo_world_segmentation(image_segmentation):
     def set_data(self, sam_results):
         """Set internal data from SAM results and optional YOLO data."""
         self.clear_data()
-        try:
-            class_ids = sam_results[0].class_ids
-            confs = sam_results[0].confs
-            boxes = sam_results[0].boxes.xyxy.cpu().numpy().tolist()
-        except Exception as e:
-            pdb.set_trace()
+        class_ids = sam_results[0].class_ids
+        confs = sam_results[0].confs
+        boxes = sam_results[0].boxes.xyxy.cpu().numpy().tolist()
         # Handle case from process_image (SAM results + YOLO data)
         if sam_results and class_ids is not None and confs is not None and boxes is not None:
             if sam_results[0].masks is not None:
@@ -193,18 +181,15 @@ if __name__ == '__main__':
     parser.add_argument('--threshold',type=float,default=0.25,help='threshold to apply during computation')
     args = parser.parse_args()
 
-    CS=yolo_world_segmentation([args.tgt_prompt])
-    img, res=CS.process_file(args.image,args.threshold)
-    if args.tgt_class is None:
-        IM=CS.plot(img, res)
+    CS=yolo_world_segmentation([args.tgt_class])
+    img=CS.process_file(args.image,args.threshold)
+    msk=CS.get_mask(args.tgt_class)
+    if msk is None:
+        print("No objects of class %s detectd"%(args.tgt_class))
+        sys.exit(-1)
     else:
-        msk=CS.get_mask(args.tgt_class)
-        if msk is None:
-            print("No objects of class %s detectd"%(args.tgt_class))
-            sys.exit(-1)
-        else:
-            print("compiling mask image")                        
-            IM=cv2.bitwise_and(res.orig_img,res.orig_img,mask=msk.astype(np.uint8))
+        print("compiling mask image")                        
+        IM=cv2.bitwise_and(img,img,mask=msk.astype(np.uint8))
 
     cv2.imshow("res",IM)
     cv2.waitKey()

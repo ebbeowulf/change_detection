@@ -456,12 +456,10 @@ class pcloud_from_images():
                     self.load_image_from_file(fList, key)
                     icloud=self.process_image(tgt_class, conf_threshold, segmentation_save_file=fList.get_segmentation_fileName(key, False, tgt_class))
                     if icloud is not None and icloud['xyz'].shape[0]>100:
-                        pdb.set_trace()
                         pcloud['xyz']=np.vstack((pcloud['xyz'],icloud['xyz']))
                         pcloud['rgb']=np.vstack((pcloud['rgb'],icloud['rgb']))
                         pcloud['probs']=np.hstack((pcloud['probs'],icloud['probs']))
                 except Exception as e:
-                    pdb.set_trace()
                     print("Image not loaded - " + str(e))
             
             pdb.set_trace()
