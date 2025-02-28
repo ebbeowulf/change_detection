@@ -8,7 +8,7 @@ import numpy as np
 import sys
 import pickle
 
-class yolo_segmentation(image_segmentation):
+class yolo_world_segmentation(image_segmentation):
     def __init__(self, prompts, model_name='yolov8x-worldv2.pt'):
         # Load a model
         self.model_name=model_name
@@ -185,7 +185,7 @@ if __name__ == '__main__':
     parser.add_argument('--threshold',type=float,default=0.25,help='threshold to apply during computation')
     args = parser.parse_args()
 
-    CS=yolo_segmentation([args.tgt_prompt])
+    CS=yolo_world_segmentation([args.tgt_prompt])
     img, res=CS.process_file(args.image,args.threshold)
     if args.tgt_class is None:
         IM=CS.plot(img, res)
