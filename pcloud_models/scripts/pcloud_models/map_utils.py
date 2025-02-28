@@ -75,17 +75,17 @@ def clip_threshold_evaluation(fList:rgbd_file_list, clip_targets:list, proposed_
         print("%s: Counted %d / %d images with detections > %f"%(target, count,len(maxP),proposed_threshold))
     return np.unique(image_list).tolist()
 
-def yolo_threshold_evaluation(fList:rgbd_file_list, yolo_targets:list, proposed_threshold:float):
-    from change_detection.yolo_world_segmentation import yolo_segmentation
+# def yolo_world_threshold_evaluation(fList:rgbd_file_list, yolo_targets:list, proposed_threshold:float):
+#     from change_detection.yolo_world_segmentation import yolo_segmentation
     
-    YS=yolo_segmentation(yolo_targets)
-    image_list=[]
-    #pdb.set_trace()
-    for target in yolo_targets:
-        maxP=[]
-        for key in fList.keys():
-            image_list.append(key)
-    return np.unique(image_list).tolist()
+#     YS=yolo_segmentation(yolo_targets)
+#     image_list=[]
+#     #pdb.set_trace()
+#     for target in yolo_targets:
+#         maxP=[]
+#         for key in fList.keys():
+#             image_list.append(key)
+#     return np.unique(image_list).tolist()
 
 # Create a list of all of the objects recognized by yolo
 #   across all files. Will only load existing pkl files, not 
@@ -481,7 +481,13 @@ class pcloud_from_images():
             self.setup_image_processing(tgt_class, classifier_type)
 
             # Process all of the images with the target query - this creates the save files on the disk
-            image_key_list=clip_threshold_evaluation(fList, [tgt_class], conf_threshold)
+            pdb.set_trace()
+            if classifier_type=='clipseg':
+                image_key_list=clip_threshold_evaluation(fList, [tgt_class], conf_threshold)
+            elif classifier_type=='yolo_world':
+                image_key_list=yolo_world_threshold_evaluation(fList, [tgt_class], conf_threshold)
+            else:
+                raise Exception('only clipseg and yolo_world classifier options are valid')
 
             # Build the pcloud from individual images
             pcloud={'xyz': np.zeros((0,3),dtype=float),'rgb': np.zeros((0,3),dtype=np.uint8),'probs': []}
