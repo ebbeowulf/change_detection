@@ -16,7 +16,7 @@ from camera_params import camera_params
 import copy
 from sklearn.cluster import DBSCAN
 from farthest_point_sampling.fps import farthest_point_sampling
-
+import time
 
 DBSCAN_MIN_SAMPLES=20 
 DBSCAN_GRIDCELL_SIZE=0.01
@@ -25,8 +25,8 @@ CLUSTER_MIN_COUNT=10000
 CLUSTER_PROXIMITY_THRESH=0.3
 CLUSTER_TOUCHING_THRESH=0.05
 
-# DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-DEVICE = torch.device("cpu")
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# DEVICE = torch.device("cpu")
 
 # Process all images with yolo - creating
 #   pickle files for the results and storing alongside the 
@@ -291,6 +291,7 @@ class pcloud_from_images():
         self.cols=torch.tensor(np.tile(np.arange(params.width),(params.height,1))-params.cx,device=DEVICE)
         self.rot_matrixT=torch.tensor(params.rot_matrix,device=DEVICE)        
         self.loaded_image=None
+        self.classifier_type=None
 
     # Image loading to allow us to process more than one class in rapid succession
     def load_image_from_file(self, fList:rgbd_file_list, image_key, max_distance=10.0):
@@ -328,10 +329,16 @@ class pcloud_from_images():
         # Build the class associated mask for this image
         cls_mask=self.YS.get_mask(tgt_class)
         if cls_mask is not None:
-            if rotate90:
-                cls_maskT=torch.tensor(np.rot90(cls_mask,axes=(0,1)).copy(),device=DEVICE)
+            if type(cls_mask)==torch.Tensor:
+                if rotate90:
+                    cls_maskT=torch.rot90(cls_mask,dims=(0,1))
+                else:
+                    cls_maskT=cls_mask
             else:
-                cls_maskT=torch.tensor(cls_mask,device=DEVICE)
+                if rotate90:
+                    cls_maskT=torch.tensor(np.rot90(cls_mask,axes=(0,1)).copy(),device=DEVICE)
+                else:
+                    cls_maskT=torch.tensor(cls_mask,device=DEVICE)
 
             # Apply connected components if requested       
             if use_connected_components:
@@ -344,28 +351,42 @@ class pcloud_from_images():
             filtered_maskT = filtered_maskT.bool()
             if rotate90:
                 probs=np.rot90(self.YS.get_prob_array(tgt_class),axes=(0,1))
-                return {'xyz': pts_rot.cpu().numpy(), 
-                        'rgb': self.loaded_image['colorT'][filtered_maskT].cpu().numpy(), 
+                return {'xyz': pts_rot, 
+                        'rgb': self.loaded_image['colorT'][filtered_maskT], 
                         'probs': probs[filtered_maskT]}
             else:
-                return {'xyz': pts_rot.cpu().numpy(), 
-                        'rgb': self.loaded_image['colorT'][filtered_maskT].cpu().numpy(), 
+                return {'xyz': pts_rot, 
+                        'rgb': self.loaded_image['colorT'][filtered_maskT], 
                         'probs': self.YS.get_prob_array(tgt_class)[filtered_maskT]}
         
         else:
             return None
 
-    def setup_image_processing(self, tgt_class, classifier_type):
-        if self.YS is None or tgt_class not in self.YS.get_all_classes():
+    def setup_image_processing(self, tgt_class_list, classifier_type):
+        # Check to see if the classifier already exists AND if it has 
+        #   all of the necessary files in its class list
+        is_update_required=False
+        if self.YS is None or classifier_type!=self.classifier_type:
+            is_update_required=True
+        else:
+            for tgt in tgt_class_list:
+                if tgt not in self.YS.get_all_classes():
+                    is_update_required=True
+
+        # Something missing - update required
+        if is_update_required:
             if classifier_type=='clipseg':
                 from change_detection.clip_segmentation import clip_seg
-                self.YS=clip_seg([tgt_class])
+                self.YS=clip_seg(tgt_class_list)
+                self.classifier_type=classifier_type
             elif classifier_type=='yolo_world':
                 from change_detection.yolo_world_segmentation import yolo_world_segmentation
-                self.YS=yolo_world_segmentation([tgt_class])
+                self.YS=yolo_world_segmentation(tgt_class_list)
+                self.classifier_type=classifier_type
             elif classifier_type=='yolo':
                 from change_detection.yolo_segmentation import yolo_segmentation
-                self.YS=yolo_segmentation([tgt_class])
+                self.YS=yolo_segmentation(tgt_class_list)
+                self.classifier_type=classifier_type
 
     def process_image(self, tgt_class, detection_threshold, segmentation_save_file=None):
         # Recover the segmentation file
@@ -377,19 +398,17 @@ class pcloud_from_images():
             # This numpy bit was originally done to handle images coming from the robot ...
             #   may need to correct for live image stream processing
             self.YS.process_image(self.loaded_image['colorT'].cpu().numpy(), detection_threshold)    
-
         return self.get_pts_per_class(tgt_class)
       
-    def multi_prompt_process(self, prompts:list, detection_threshold, rotate90:False):
-        if self.YS is None or prompts[0] not in self.YS.get_all_classes():
-            from change_detection.clip_segmentation import clip_seg
-            self.YS=clip_seg(prompts)
+    def multi_prompt_process(self, prompts:list, detection_threshold, rotate90:bool=False, classifier_type='clipseg'):
+        self.setup_image_processing(prompts,classifier_type)
 
         if rotate90:
             rot_color=np.rot90(self.loaded_image['colorT'].cpu().numpy(), k=1, axes=(1,0))
             self.YS.process_image_numpy(rot_color, detection_threshold)    
         else:
             self.YS.process_image_numpy(self.loaded_image['colorT'].cpu().numpy(), detection_threshold)    
+            # self.YS.process_image(self.loaded_image['colorT'].cpu().numpy(), detection_threshold)    
 
         all_pts=dict()
         # Build the class associated mask for this image
@@ -434,7 +453,6 @@ class pcloud_from_images():
 
     def process_fList(self, fList:rgbd_file_list, tgt_class, conf_threshold, classifier_type='clipseg'):
         save_fName=fList.get_combined_raw_fileName(tgt_class,classifier_type)
-        pdb.set_trace()
         pcloud=None
         if os.path.exists(save_fName):
             try:
@@ -446,23 +464,60 @@ class pcloud_from_images():
         
         if pcloud is None:
             # Setup the classifier
-            self.setup_image_processing(tgt_class, classifier_type)
+            self.setup_image_processing([tgt_class], classifier_type)
 
             # Build the pcloud from individual images
-            pcloud={'xyz': np.zeros((0,3),dtype=float),'rgb': np.zeros((0,3),dtype=np.uint8),'probs': []}
-
+            # pcloud={'xyz': np.zeros((0,3),dtype=float),'rgb': np.zeros((0,3),dtype=np.uint8),'probs': []}
+            pcloud={'xyz': torch.zeros((0,3),dtype=torch.float32,device=DEVICE),
+                            'rgb': torch.zeros((0,3),dtype=torch.uint8,device=DEVICE),
+                            'probs': torch.zeros((0,),dtype=torch.float,device=DEVICE)}
+            count=0
+            intermediate_files=[]
+            deltaT=np.zeros((3,),dtype=float)
             for key in fList.keys():                
+                t_array=[]
                 try:
+                    t_array.append(time.time())
                     self.load_image_from_file(fList, key)
-                    icloud=self.process_image(tgt_class, conf_threshold, segmentation_save_file=fList.get_segmentation_fileName(key, False, tgt_class))
+                    t_array.append(time.time())
+                    icloud=self.process_image(tgt_class, conf_threshold, segmentation_save_file=fList.get_segmentation_fileName(key, False, tgt_class))                    
+                    t_array.append(time.time())
                     if icloud is not None and icloud['xyz'].shape[0]>100:
-                        pcloud['xyz']=np.vstack((pcloud['xyz'],icloud['xyz']))
-                        pcloud['rgb']=np.vstack((pcloud['rgb'],icloud['rgb']))
-                        pcloud['probs']=np.hstack((pcloud['probs'],icloud['probs']))
+                        # pcloud['xyz']=np.vstack((pcloud['xyz'],icloud['xyz']))
+                        # pcloud['rgb']=np.vstack((pcloud['rgb'],icloud['rgb']))
+                        # pcloud['probs']=np.hstack((pcloud['probs'],icloud['probs']))
+                        pcloud['xyz']=torch.vstack((pcloud['xyz'],icloud['xyz']))
+                        pcloud['rgb']=torch.vstack((pcloud['rgb'],icloud['rgb']))
+                        pcloud['probs']=torch.hstack((pcloud['probs'],icloud['probs']))                        
+                    t_array.append(time.time())
+                    deltaT=deltaT+np.diff(np.array(t_array))
+                    count+=1
+                    if count % 500 == 0:
+                        # Save the intermediate files and clear the cache
+                        fName_tmp=save_fName+"."+str(count)
+                        intermediate_files.append(fName_tmp)
+                        with open(fName_tmp,'wb') as handle:
+                            pickle.dump(pcloud, handle, protocol=pickle.HIGHEST_PROTOCOL)
+                        deltaT2 = deltaT/count
+                        print("Time Array")
+                        print(f" -- Loading    {deltaT2[0]}")
+                        print(f" -- Processing {deltaT2[1]}")
+                        print(f" -- np.vstack  {deltaT2[2]}")
+                        pcloud={'xyz': np.zeros((0,3),dtype=float),'rgb': np.zeros((0,3),dtype=np.uint8),'probs': []}            
                 except Exception as e:
                     print("Image not loaded - " + str(e))
-            
-            pdb.set_trace()
+            for f in intermediate_files:
+                with open(f, 'rb') as handle:
+                    pcloud_tmp=pickle.load(handle)
+                pcloud['xyz']=torch.vstack((pcloud['xyz'],pcloud_tmp['xyz']))
+                pcloud['rgb']=torch.vstack((pcloud['rgb'],pcloud_tmp['rgb']))
+                pcloud['probs']=torch.hstack((pcloud['probs'],pcloud_tmp['probs']))                        
+                os.remove(f)
+
+            pcloud['xyz']=pcloud['xyz'].cpu().numpy()
+            pcloud['rgb']=pcloud['rgb'].cpu().numpy()
+            pcloud['probs']=pcloud['probs'].cpu().numpy()
+            # pdb.set_trace()
             # Now save the result so we don't have to keep processing this same cloud
             with open(save_fName,'wb') as handle:
                 pickle.dump(pcloud, handle, protocol=pickle.HIGHEST_PROTOCOL)
@@ -471,14 +526,99 @@ class pcloud_from_images():
         whichP=(pcloud['probs']>conf_threshold)
         return {'xyz':pcloud['xyz'][whichP],'rgb':pcloud['rgb'][whichP],'probs':pcloud['probs'][whichP]}
 
+    def process_fList_multi(self, fList:rgbd_file_list, tgt_class_list:list, conf_threshold, classifier_type='clipseg'):
+        save_fName=dict()
+        pcloud=dict()
+        intermediate_files=dict()
+        for tgt in tgt_class_list:
+            save_fName[tgt]=fList.get_combined_raw_fileName(tgt,classifier_type)
+            # Only going to track point clouds for files that do not already exist...
+            if not os.path.exists(save_fName[tgt]):
+                pcloud[tgt]={'xyz': torch.zeros((0,3),dtype=torch.float32,device=DEVICE),
+                             'rgb': torch.zeros((0,3),dtype=torch.uint8,device=DEVICE),
+                             'probs': torch.zeros((0,),dtype=torch.float,device=DEVICE)}
+                intermediate_files[tgt]=[]
+
+        self.setup_image_processing(tgt_class_list, classifier_type)
+
+        # Build the pcloud from individual images
+        count=0
+        deltaT=np.zeros((3,),dtype=float)
+        for key in fList.keys():                
+            t_array=[]
+            try:
+                t_array.append(time.time())
+                self.load_image_from_file(fList, key)
+                t_array.append(time.time())
+                icloud=self.multi_prompt_process(tgt_class_list, conf_threshold, classifier_type=classifier_type)
+                t_array.append(time.time())
+                for tgt in icloud.keys():
+                    if icloud[tgt] is not None:
+                        if tgt in pcloud and icloud[tgt]['xyz'].shape[0]>100:
+                            pcloud[tgt]['xyz']=torch.vstack((pcloud[tgt]['xyz'],icloud[tgt]['xyz']))
+                            pcloud[tgt]['rgb']=torch.vstack((pcloud[tgt]['rgb'],icloud[tgt]['rgb']))
+                            pcloud[tgt]['probs']=torch.hstack((pcloud[tgt]['probs'],icloud[tgt]['probs']))
+                t_array.append(time.time())
+                deltaT=deltaT+np.diff(np.array(t_array))
+                count+=1
+                if count % 500 == 0:
+                    # Save the intermediate files and clear the cache
+                    for tgt in pcloud.keys():
+                        # Is this file basically empty? Then don't bother saving
+                        if pcloud[tgt]['xyz'].shape[0]>100:
+                            fName_tmp=save_fName[tgt]+"."+str(count)
+                            intermediate_files[tgt].append(fName_tmp)
+                            with open(fName_tmp,'wb') as handle:
+                                pickle.dump(pcloud[tgt], handle, protocol=pickle.HIGHEST_PROTOCOL)
+                            pcloud[tgt]={'xyz': torch.zeros((0,3),dtype=torch.float32,device=DEVICE),
+                                'rgb': torch.zeros((0,3),dtype=torch.uint8,device=DEVICE),
+                                'probs': torch.zeros((0,),dtype=torch.float,device=DEVICE)}      
+                    deltaT2 = deltaT/count
+                    print("Time Array")
+                    print(f" -- Loading    {deltaT2[0]}")
+                    print(f" -- Processing {deltaT2[1]}")
+                    print(f" -- np.vstack  {deltaT2[2]}")
+            except Exception as e:
+                print("Image not loaded - " + str(e))
+        
+        # All files processed - now combine the intermediate results and generate a single cloud for each
+        #   target object type
+        for tgt in pcloud.keys():
+            for f in intermediate_files[tgt]:
+                with open(f, 'rb') as handle:
+                    pcloud_tmp=pickle.load(handle)
+                pcloud[tgt]['xyz']=torch.vstack((pcloud[tgt]['xyz'],pcloud_tmp['xyz']))
+                pcloud[tgt]['rgb']=torch.vstack((pcloud[tgt]['rgb'],pcloud_tmp['rgb']))
+                pcloud[tgt]['probs']=torch.hstack((pcloud[tgt]['probs'],pcloud_tmp['probs']))
+                os.remove(f)
+
+            pcloud_np={'xyz': pcloud[tgt]['xyz'].cpu().numpy(), 
+                       'rgb': pcloud[tgt]['rgb'].cpu().numpy(), 
+                       'probs': pcloud[tgt]['probs'].cpu().numpy(), 
+                       }
+            # Now save the result so we don't have to keep processing this same cloud
+            with open(save_fName[tgt],'wb') as handle:
+                pickle.dump(pcloud_np, handle, protocol=pickle.HIGHEST_PROTOCOL)
+            
+            # And clear the final point cloud
+            pcloud[tgt]={'xyz': np.zeros((0,3),dtype=float),'rgb': np.zeros((0,3),dtype=np.uint8),'probs': []} 
+
+TIME_STRUCT={'count': 0, 'times':np.zeros((3,),dtype=float)}
+
 def get_distinct_clusters(pcloud, gridcell_size=DBSCAN_GRIDCELL_SIZE, eps=DBSCAN_EPS, min_samples=DBSCAN_MIN_SAMPLES, cluster_min_count=CLUSTER_MIN_COUNT, floor_threshold=0.1):
+    global TIME_STRUCT
+    t_array=[]
+    t_array.append(time.time())
+
     clouds=[]
     if pcloud is None or len(pcloud.points)<cluster_min_count:
         return clouds
     if gridcell_size>0:
         pcd_small=pcloud.voxel_down_sample(gridcell_size)
+        t_array.append(time.time())
         pts=np.array(pcd_small.points)
         p2=DBSCAN(eps=eps, min_samples=min_samples,n_jobs=10).fit(pts)
+        t_array.append(time.time())
     else:
         pts=np.array(pcloud.points)
         p2=DBSCAN(eps=eps, min_samples=min_samples,n_jobs=10).fit(pts)
@@ -494,19 +634,32 @@ def get_distinct_clusters(pcloud, gridcell_size=DBSCAN_GRIDCELL_SIZE, eps=DBSCAN
             pts2=pts[whichP]
             whichP2=(pts2[:,2]>floor_threshold)
             if whichP2.sum()>cluster_min_count:
-                clouds.append(object_pcloud(pts2[whichP2]))
+                clouds.append(object_pcloud(pts2[whichP2], sample=False))
+    t_array.append(time.time())
+    TIME_STRUCT['times']=TIME_STRUCT['times']+np.diff(np.array(t_array))
+    TIME_STRUCT['count']+=1
+    if TIME_STRUCT['count']%100==0:
+        print(f"******* TIME(get_distinct_clusters) - {TIME_STRUCT['count']} ****** ")
+        print(TIME_STRUCT['times']/500)
+        TIME_STRUCT['times']=np.zeros((3,),dtype=float)
+        # pdb.set_trace()
 
     return clouds
 
 class object_pcloud():
-    def __init__(self, pts, label:str=None, num_samples=1000):
+    def __init__(self, pts, label:str=None, num_samples=1000, sample=True):
         self.box=np.vstack((pts.min(0),pts.max(0)))
         self.pts=pts
         self.pts_shape=self.pts.shape
         self.label=label
-        self.farthestP=farthest_point_sampling(self.pts, num_samples)
+        self.farthestP=None
+        if sample:
+            self.sample_pcloud(num_samples)
         self.prob_stats=None
         self.centroid=self.pts.mean(0)
+
+    def sample_pcloud(self, num_samples):
+            self.farthestP=farthest_point_sampling(self.pts, num_samples)
 
     def set_label(self, label):
         self.label=label

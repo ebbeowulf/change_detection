@@ -58,15 +58,21 @@ class rgbd_file_list():
         else:
             return self.intermediate_save_dir+"%s.ply"%(cls)
 
-    def get_combined_raw_fileName(self, cls:str, classifier_type):
-        tmp=self.intermediate_save_dir+cls+"."+classifier_type+".raw"
+    def get_combined_raw_fileName(self, cls:str, classifier_type=None):
+        if classifier_type is None:
+            tmp=self.intermediate_save_dir+cls+".raw"
+        else:
+            tmp=self.intermediate_save_dir+cls+"."+classifier_type+".raw"
         if self.is_pose_filtered:
             return tmp+".filtered.pkl"
         return tmp+".pkl"
 
     def get_annotation_file(self):
         return self.intermediate_save_dir+"annotations.json"
-    
+
+    def get_combo_annotation_file(self):
+        return self.intermediate_save_dir+"annotations.combo.json"
+
     def get_labeled_pcloud_fileName(self, cls:str):
         return self.intermediate_save_dir+"%s.labeled.ply"%(cls)
 

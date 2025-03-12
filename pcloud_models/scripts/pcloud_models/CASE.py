@@ -14,10 +14,12 @@ import sys
 
 #ROOT_DIR="/home/ebeowulf/data/scannet/scans/"
 # ROOT_DIR="/data3/datasets/scannet/scans/"
-IOU_THRESHOLD=0.05
+IOU_THRESHOLD=0.1
+MATCH_CLUSTER_MIN_IOU=0.1
 FLOOR_THRESHOLD=-0.1
 ABSOLUTE_MIN_CLUSTER_SIZE=100
 DEBUG_=False
+MIN_DETECTION_THRESHOLD=0.5
 
 FIXED_ROOM_STATS_FILE="/data3/datasets/scannet/scans/llm_likelihoods.json"
 
@@ -33,62 +35,6 @@ def calculate_iou(minA,maxA,minB,maxB):
         return 0.0
     areaI=np.prod(isct_delta)
     return areaI / (areaA + areaB - areaI)
-
-def build_test_data_structure(root_dir:str, main_tgt:str, llm_tgt:str, is_pose_filtered=False, classifier_type=None):
-    with open(FIXED_ROOM_STATS_FILE, 'r') as fin:
-        all_room_probs=json.load(fin)
-    if main_tgt not in all_room_probs:
-        print(f"No room probabilities found for {main_tgt}")
-        sys.exit(-1)
-    room_prob=all_room_probs[main_tgt]
-    max_room_prob=max([room_prob[room] for room in room_prob])
-
-    # Find all files with the '.txt' extension in the current directory
-    txt_files = glob.glob(root_dir+"/scene0[0,1]*")
-    test_files=dict()
-    for fName in txt_files:
-        #We also want the scene type from params file
-        s_root=fName.split('/')
-        if s_root[-1]=='':
-            par_file=fName+"%s.txt"%(s_root[-2])
-        else:
-            par_file=fName+"/%s.txt"%(s_root[-1])        
-        sceneType=get_scene_type(par_file)
-
-
-        fList=rgbd_file_list(fName+"/raw_output",fName+"/raw_output",fName+"/raw_output/save_results", is_pose_filtered)
-        aFile=fList.get_combo_annotation_file() # use this one that merges the annotations from both directories on the server
-        raw_main=fList.get_combined_raw_fileName(main_tgt, classifier_type=classifier_type)
-        raw_llm=fList.get_combined_raw_fileName(llm_tgt, classifier_type=classifier_type)
-
-        if not os.path.exists(aFile):
-            print(f"build_test_data_structure> disarding {fName}... missing {aFile}")
-        elif not os.path.exists(raw_main):
-            print(f"build_test_data_structure> disarding {fName}... missing {raw_main}")
-        elif not os.path.exists(raw_llm):
-            print(f"build_test_data_structure> disarding {fName}... missing {raw_llm}")
-        else:
-            with open(aFile) as fin:
-                annot=json.load(fin)
-            if main_tgt in annot:
-                if sceneType in room_prob:
-                    raw_scene_prob=room_prob[sceneType]
-                    normalized_scene_prob=room_prob[sceneType]/max_room_prob
-                else:
-                    raw_scene_prob=1.0
-                    normalized_scene_prob=1.0
-                test_files[fName]={'label_file': aFile, 'raw_main': raw_main, 'raw_llm': raw_llm, 'sceneType': sceneType, 'scene_prob_raw': raw_scene_prob, 'scene_prob_norm': normalized_scene_prob}
-                test_files[fName]['annotation']=annot[main_tgt]
-                # test_files[fName]['save_dir']=fList.intermediate_save_dir                
-                test_files[fName]['cluster_main_base']=fList.intermediate_save_dir+main_tgt.replace(' ','_')
-                test_files[fName]['cluster_llm_base']=fList.intermediate_save_dir+llm_tgt.replace(' ','_')
-                if classifier_type is not None:
-                    test_files[fName]['cluster_main_base']+="."+classifier_type
-                    test_files[fName]['cluster_llm_base']+="."+classifier_type
-                if is_pose_filtered:
-                    test_files[fName]['cluster_main_base']+=".flt"
-                    test_files[fName]['cluster_llm_base']+=".flt"
-    return test_files
 
 def build_pcloud(object_raw, initial_threshold=0.5, draw=False):
     whichP=(object_raw['probs']>=initial_threshold)
@@ -137,7 +83,6 @@ def create_object_clusters(pts_xyz, pts_prob, floor_threshold=-0.1, detection_th
     return object_clusters
 
 def get_clusters(save_file, raw_pts, detection_threshold, min_cluster_points):
-
     if os.path.exists(save_file):
         with open(save_file, 'rb') as handle:
             all_objects=pickle.load(handle)
@@ -156,10 +101,16 @@ def get_clusters(save_file, raw_pts, detection_threshold, min_cluster_points):
 
 def combine_matches(test_file_dict, detection_threshold=0.5, min_cluster_points=10000):
     try:
-        save_main=test_file_dict['cluster_main_base']+".%0.2f.cl.pkl"%(detection_threshold)
-        save_llm=test_file_dict['cluster_llm_base']+".%0.2f.cl.pkl"%(detection_threshold)
-        objects_main=get_clusters(save_main, test_file_dict['raw_main'], detection_threshold, min_cluster_points)
-        objects_llm=get_clusters(save_llm, test_file_dict['raw_llm'], detection_threshold, min_cluster_points)
+        if detection_threshold<MIN_DETECTION_THRESHOLD:
+            save_main=test_file_dict['cluster_main_base']+".%0.2f.cl.pkl"%(MIN_DETECTION_THRESHOLD)
+            save_llm=test_file_dict['cluster_llm_base']+".%0.2f.cl.pkl"%(MIN_DETECTION_THRESHOLD)
+            objects_main=get_clusters(save_main, test_file_dict['raw_main'], MIN_DETECTION_THRESHOLD, min_cluster_points)
+            objects_llm=get_clusters(save_llm, test_file_dict['raw_llm'], MIN_DETECTION_THRESHOLD, min_cluster_points)
+        else:
+            save_main=test_file_dict['cluster_main_base']+".%0.2f.cl.pkl"%(detection_threshold)
+            save_llm=test_file_dict['cluster_llm_base']+".%0.2f.cl.pkl"%(detection_threshold)
+            objects_main=get_clusters(save_main, test_file_dict['raw_main'], detection_threshold, min_cluster_points)
+            objects_llm=get_clusters(save_llm, test_file_dict['raw_llm'], detection_threshold, min_cluster_points)
     except Exception as e:
         print(f"Exception: {e}")
         pdb.set_trace()
@@ -176,7 +127,7 @@ def combine_matches(test_file_dict, detection_threshold=0.5, min_cluster_points=
         cl_stats=[idx0, objects_main[idx0].prob_stats['max'], objects_main[idx0].prob_stats['mean'], -1, -1, test_file_dict['scene_prob_raw'], test_file_dict['scene_prob_norm']]
         for idx1 in range(len(objects_llm)):
             IOU=calculate_iou(objects_main[idx0].box[0],objects_main[idx0].box[1],objects_llm[idx1].box[0],objects_llm[idx1].box[1])
-            if IOU>0.5:
+            if IOU>MATCH_CLUSTER_MIN_IOU:
                 # For now - just update the prob stats on the original cloud
                 cl_stats[3]=max(cl_stats[3],objects_llm[idx1].prob_stats['max'])
                 cl_stats[4]=max(cl_stats[4],objects_llm[idx1].prob_stats['mean'])
@@ -285,7 +236,7 @@ def check_top_n(positive_clusters, negative_clusters, category, howmany=1):
     return -1
 
 def vary_threshold(test_files, cat_list, fixed_size_threshold):
-    thresholds=np.arange(0.5,1.0,0.1)
+    thresholds=np.arange(0.1,1.0,0.1)
 
     recallN = np.zeros((thresholds.shape[0],len(cat_list)))
     precisionN = np.zeros((thresholds.shape[0],len(cat_list)))
@@ -309,8 +260,9 @@ def vary_threshold(test_files, cat_list, fixed_size_threshold):
                                                                             detection_threshold=threshold, 
                                                                             min_cluster_points=fixed_size_threshold)
             print(matches)
-            all_results[scene]={'matches': matches, 'positive_clusters': positive_clusters, 'negative_clusters': negative_clusters}
-
+            all_results[scene]={'matches': matches, 
+                                'positive_clusters': positive_clusters, 
+                                'negative_clusters': negative_clusters}
 
         for cat_idx, cat_ in enumerate(cat_list):
             stats=np.zeros((4),dtype=float)
@@ -336,123 +288,137 @@ def vary_threshold(test_files, cat_list, fixed_size_threshold):
 
     return recallN, precisionN, recall_top1, precision_top1, specificity_top1, thresholds
 
-def vary_size(test_files, cat_list, fixed_detection_threshold):
-    size_thresholds=np.hstack((np.arange(200,3000,200), np.arange(3000,50000,500)))
+def build_test_data_structure(root_dir:str, main_tgt:str, llm_tgt:str, main_classifier:str, llm_classifier:str, is_pose_filtered=False):
+    with open(FIXED_ROOM_STATS_FILE, 'r') as fin:
+        all_room_probs=json.load(fin)
+    if main_tgt not in all_room_probs:
+        print(f"No room probabilities found for {main_tgt}")
+        sys.exit(-1)
+    room_prob=all_room_probs[main_tgt]
+    max_room_prob=max([room_prob[room] for room in room_prob])
 
-    recallN = np.zeros((size_thresholds.shape[0],len(cat_list)))
-    precisionN = np.zeros((size_thresholds.shape[0],len(cat_list)))
-    # specificityN = np.zeros((size_thresholds.shape[0],len(cat_list)))
-    AUC=np.zeros(len(cat_list))
-    
-    recall_top1 = np.zeros((size_thresholds.shape[0],len(cat_list)))
-    precision_top1 = np.zeros((size_thresholds.shape[0],len(cat_list)))
-    specificity_top1 = np.zeros((size_thresholds.shape[0],len(cat_list)))
+    # Find all files with the '.txt' extension in the current directory
+    txt_files = glob.glob(root_dir+"/scene0[0,1]*")
+    test_files=dict()
+    for fName in txt_files:
+        #We also want the scene type from params file
+        s_root=fName.split('/')
+        if s_root[-1]=='':
+            par_file=fName+"%s.txt"%(s_root[-2])
+        else:
+            par_file=fName+"/%s.txt"%(s_root[-1])        
+        sceneType=get_scene_type(par_file)
 
-    is_positive=np.array([ len(test_files[scene]['annotation'])>0 for scene in test_files])
-    count_positive_scenes=is_positive.sum()
-    count_negative_scenes=len(test_files)-count_positive_scenes        
+        fList=rgbd_file_list(fName+"/raw_output",fName+"/raw_output",fName+"/raw_output/save_results", is_pose_filtered)
+        aFile=fList.get_combo_annotation_file() # use this one that merges the annotations from both directories on the server
+        main_file=fList.get_combined_raw_fileName(main_tgt, classifier_type=main_classifier)
+        llm_file=fList.get_combined_raw_fileName(llm_tgt, classifier_type=llm_classifier)
 
-    for t_idx in range(len(size_thresholds)):
-        size_threshold=size_thresholds[t_idx]
-        all_results=dict()
-        for scene in test_files.keys():
-            # scene='/data3/datasets/scannet/scans/scene0003_01'
-            print(scene)
-            matches, positive_clusters, negative_clusters = combine_matches(test_files[scene],
-                                                                            detection_threshold=fixed_detection_threshold, 
-                                                                            min_cluster_points=size_threshold)
-            print(matches)
-            all_results[scene]={'matches': matches, 'positive_clusters': positive_clusters, 'negative_clusters': negative_clusters}
+        if not os.path.exists(aFile):
+            print(f"build_test_data_structure> disarding {fName}... missing {aFile}")
+        elif not os.path.exists(main_file):
+            print(f"build_test_data_structure> disarding {fName}... missing {main_file}")
+        elif not os.path.exists(llm_file):
+            print(f"build_test_data_structure> disarding {fName}... missing {llm_file}")
+        else:
+            with open(aFile) as fin:
+                annot=json.load(fin)
+            # if main_tgt in annot:
 
+            if sceneType in room_prob:
+                raw_scene_prob=room_prob[sceneType]
+                normalized_scene_prob=room_prob[sceneType]/max_room_prob
+            else:
+                raw_scene_prob=1.0
+                normalized_scene_prob=1.0
 
-        for cat_idx, cat_ in enumerate(cat_list):
-            stats=np.zeros((4),dtype=float)
-            for scene in all_results:
-                stats=stats + get_graph_stats_per_scene(all_results[scene]['matches'], all_results[scene]['positive_clusters'], all_results[scene]['negative_clusters'], cat_, fixed_detection_threshold)
-            top_1=np.array([check_top_n(all_results[scene]['positive_clusters'],all_results[scene]['negative_clusters'], cat_, howmany=1) for scene in all_results])
-            
-            # Scene level stats
-            neg1=np.where(top_1==0) # find all scenes discarded
-            pos1=np.where(top_1!=0) # find all scenes discarded
-            recall_top1[t_idx, cat_idx]=(is_positive[pos1]==1).sum()/count_positive_scenes
-            precision_top1[t_idx, cat_idx]=(is_positive[pos1]==1).sum()/(pos1[0].shape[0]+1e-6)
-            specificity_top1[t_idx, cat_idx]=(is_positive[neg1]==False).sum()/count_negative_scenes
+            test_files[fName]={'label_file': aFile, 
+                                'raw_main': main_file, 
+                                'raw_llm': llm_file, 
+                                'sceneType': sceneType, 
+                                'scene_prob_raw': raw_scene_prob, 
+                                'scene_prob_norm': normalized_scene_prob}
 
-            # Object level stats
-            TP=stats[0]
-            FN=stats[1]
-            FP=stats[2]
-            TN=stats[3]
-            precisionN[t_idx, cat_idx]=TP/(TP+FP+1e-6)
-            recallN[t_idx, cat_idx]=TP/(TP+FN+1e-6)
-            # specificityN[t_idx, cat_idx]=TN/(FP+TN+1e-6)
-            
-    return recallN, precisionN, recall_top1, precision_top1, specificity_top1, size_thresholds
+            if main_tgt in annot:
+                test_files[fName]['annotation']=annot[main_tgt]
+            else:
+                test_files[fName]['annotation']=[]
+                
+            # test_files[fName]['save_dir']=fList.intermediate_save_dir                
+            test_files[fName]['cluster_main_base']=fList.intermediate_save_dir+main_tgt.replace(' ','_')+"."+main_classifier
+            test_files[fName]['cluster_llm_base']=fList.intermediate_save_dir+llm_tgt.replace(' ','_')+"."+llm_classifier
+
+            if is_pose_filtered:
+                test_files[fName]['cluster_main_base']+=".flt"
+                test_files[fName]['cluster_llm_base']+=".flt"
+    return test_files
 
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument('main_target', type=str, help='main target search string')
     parser.add_argument('llm_target', type=str, help='llm target search string')
+    parser.add_argument('num_points',type=int,help='number of points per cluster')
     parser.add_argument('--save_dir',type=str,default=None, help='where are the intermediate files saved? By default these are saved to the root dir')
     parser.add_argument('--root_dir',type=str,default='/data3/datasets/scannet/scans/', help='where is the root dir (default = /data3/datasets/scannet/scans/)')
-    parser.add_argument('--num_points',type=int,default=None, help='number of points per cluster')
-    parser.add_argument('--detection_threshold',type=float,default=None, help='fixed detection threshold')
-    parser.add_argument('--classifier_type',type=str,default=None, help='what classifier to use {yolo_world, clipseg} (default=clipseg)')
+    parser.add_argument('--save_file',type=str,default=None, help='where should the results be saved? (default = None)')
+    # parser.add_argument('--detection_threshold',type=float,default=None, help='fixed detection threshold')
     parser.add_argument('--pose_filter', dest='pose_filter', action='store_true')
     parser.set_defaults(pose_filter=False)
     args = parser.parse_args()
 
     # if args.num_points is None and args.detection_threshold is None:
-    test_files=build_test_data_structure(args.root_dir,args.main_target, args.llm_target, args.pose_filter, args.classifier_type)
-    legend=['main-mean', 'main-room', 'llm-mean', 'llm-room', 'combo-mean', 'combo-room']
+    all_results=dict()
+    all_results['clip_100']={'test_files': build_test_data_structure(args.root_dir,args.main_target, args.llm_target, 'clipseg', 'clipseg', args.pose_filter), 'points': 100}
+    all_results['yw_100']={'test_files':build_test_data_structure(args.root_dir,args.main_target, args.llm_target, 'yolo_world', 'yolo_world', args.pose_filter), 'points': 100}
+    all_results['yw_clip_100']={'test_files':build_test_data_structure(args.root_dir,args.main_target, args.llm_target, 'yolo_world', 'clipseg', args.pose_filter), 'points': 100}
+    all_results['clip_size']={'test_files': build_test_data_structure(args.root_dir,args.main_target, args.llm_target, 'clipseg', 'clipseg', args.pose_filter), 'points': args.num_points}
+    all_results['yw_size']={'test_files':build_test_data_structure(args.root_dir,args.main_target, args.llm_target, 'yolo_world', 'yolo_world', args.pose_filter), 'points': args.num_points}
+    all_results['yw_clip_size']={'test_files':build_test_data_structure(args.root_dir,args.main_target, args.llm_target, 'yolo_world', 'clipseg', args.pose_filter), 'points': args.num_points}
+    legend=['main-mean', 'llm-mean', 'combo-mean', 'combo-room']
 
-    if args.num_points is not None:
-        recallN, precisionN, recall_top1, precision_top1, specificity_top1, all_thresholds=vary_threshold(test_files, legend, args.num_points)
-    elif args.detection_threshold is not None:
-        recallN, precisionN, recall_top1, precision_top1, specificity_top1, all_thresholds=vary_size(test_files, legend, args.detection_threshold)
-    else:
-        print("Must select either a number of points or a detection threshold")
-        import sys
-        sys.exit(-1)
+    for key in all_results:
+        recallN, precisionN, recall_top1, precision_top1, specificity_top1, thresholds=vary_threshold(all_results[key]['test_files'], legend, all_results[key]['points'])
+        all_results[key]['recallN']=recallN
+        all_results[key]['precisionN']=precisionN
+        all_results[key]['recall_top1']=recall_top1
+        all_results[key]['precision_top1']=precision_top1
+        all_results[key]['specificity_top1']=specificity_top1
+        all_results[key]['thresholds']=thresholds
+        all_results[key]['fscore_top1']=2*recall_top1*precision_top1/(recall_top1+precision_top1)
+        all_results[key]['fscoreN']=2*recallN*precisionN/(recallN+precisionN)
 
-    # N=11
-    print(legend)
-    print("recall_top1")
-    print(f"{recall_top1}")
-    print("precision_top1")
-    print(f"{precision_top1}")
-    print("F-score, top1")
-    print(f"{2*recall_top1*precision_top1/(recall_top1+precision_top1)}")
-    # print("specificity_top1")
-    # print(f"{specificity_top1[[0,N],:]}")
-    print("recallN")
-    print(f"{recallN}")
-    print("precisionN")
-    print(f"{precisionN}")
-    print("F-Score")
-    print(f"{2*recallN*precisionN/(recallN+precisionN)}")
+    print("TOP 1 scores")
+    for key in all_results:
+        print(f"***** {key} fscore_top1 *****")
+        print(all_results[key]['fscore_top1'])
+    print("N scores")
+    for key in all_results:
+        print(f"***** {key} fscoreN *****")
+        print(all_results[key]['fscoreN'])
+
+    if args.save_file is not None:
+        with open(args.save_file,'wb') as handle:
+            pickle.dump(all_results, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
     # pdb.set_trace()
-    # import matplotlib.pyplot as plt
-    # for cat_idx, cat_ in enumerate(legend):
-    #     plt.figure(1)
-    #     plt.plot(recallN[:,cat_idx], precisionN[:, cat_idx])
-    #     plt.figure(2)
-    #     tpr=np.hstack((1.0,recall_top1[:,cat_idx]))
-    #     fpr=np.hstack((1.0, 1-specificity_top1[:,cat_idx]))
-    #     plt.plot(fpr, tpr)
-    # plt.figure(1)
-    # plt.legend(legend)
-    # plt.title('Object Level Recall vs Precision')
-    # plt.xlabel('Recall')
-    # plt.ylabel('Precision')
-    # plt.figure(2)
-    # plt.legend(legend)
-    # plt.title('Scene Level ROC')
-    # plt.xlabel('False Positive Rate')
-    # plt.ylabel('True Positive Rate')
-    # plt.show()
+    # N=11
+    # print(legend)
+    # print("recall_top1")
+    # print(f"{recall_top1}")
+    # print("precision_top1")
+    # print(f"{precision_top1}")
+    # print("F-score, top1")
+    # print(f"{2*recall_top1*precision_top1/(recall_top1+precision_top1)}")
+    # # print("specificity_top1")
+    # # print(f"{specificity_top1[[0,N],:]}")
+    # print("recallN")
+    # print(f"{recallN}")
+    # print("precisionN")
+    # print(f"{precisionN}")
+    # print("F-Score")
+    # print(f"{2*recallN*precisionN/(recallN+precisionN)}")
+
 
         
 

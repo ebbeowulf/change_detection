@@ -79,6 +79,9 @@ class yolo_world_segmentation(image_segmentation):
         else:
             raise ValueError("Loaded results must be a dictionary with 'outputs', 'image_size', and 'prompts'")
 
+    def process_image_numpy(self, image: np.ndarray, threshold=0.25):
+        return self.process_image(image, threshold=threshold)
+    
     def process_image(self, cv_image, threshold=0.25):
         # Predict with YOLO
         self.yolo_model.set_classes(self.prompts)
@@ -86,16 +89,10 @@ class yolo_world_segmentation(image_segmentation):
         
         yolo_results = self.yolo_model(cv_image, conf=threshold)  # Predict on an image
         if yolo_results and yolo_results[0].boxes is not None and len(yolo_results[0].boxes) > 0:
-            # Extract YOLO detection data and move to CPU
-            boxes = yolo_results[0].boxes.xyxy.cpu().numpy().tolist()  # Bounding boxes as list
-            class_ids = yolo_results[0].boxes.cls.cpu().numpy().tolist()  # Class IDs as list
-            confs = yolo_results[0].boxes.conf.cpu().numpy().tolist()  # Confidence scores as list
-            
             # Run SAM with YOLO bounding boxes
-            sam_results = self.sam_model(cv_image, bboxes=boxes)
-            sam_results[0].class_ids=class_ids
-            sam_results[0].confs=confs
-            #sam_results[0].show()
+            sam_results = self.sam_model(cv_image, bboxes=yolo_results[0].boxes.xyxy)
+            sam_results[0].class_ids=yolo_results[0].boxes.cls
+            sam_results[0].confs=yolo_results[0].boxes.conf
             # Pass SAM results and YOLO data to set_data
             self.set_data(sam_results)
             return sam_results
@@ -111,51 +108,53 @@ class yolo_world_segmentation(image_segmentation):
     def set_data(self, sam_results):
         """Set internal data from SAM results and optional YOLO data."""
         self.clear_data()
-        class_ids = sam_results[0].class_ids
-        confs = sam_results[0].confs
-        boxes = sam_results[0].boxes.xyxy.cpu().numpy().tolist()
+        class_ids = sam_results[0].class_ids.cpu().numpy()
+        confs = sam_results[0].confs.cpu().numpy()
+        boxes = sam_results[0].boxes.xyxy.cpu().numpy()
         # Handle case from process_image (SAM results + YOLO data)
         if sam_results and class_ids is not None and confs is not None and boxes is not None:
             if sam_results[0].masks is not None:
-                masks = sam_results[0].masks.data.cpu().numpy()  # SAM masks as NumPy array
-                if len(masks) != len(class_ids):
-                    raise ValueError("Number of masks must match number of detections")
+                # pdb.set_trace()
+                # masks = sam_results[0].masks # .data.cpu().numpy()  # SAM masks as NumPy array
+                # if len(masks) != len(class_ids):
+                #     raise ValueError("Number of masks must match number of detections")
                 
-                for i, mask in enumerate(masks):
+                for i, mask in enumerate(sam_results[0].masks):
                     # Convert data type
-                    if mask.dtype == bool:
-                        mask = mask.astype(np.uint8)
-                    elif mask.dtype == np.float32:
-                        mask = (mask * 255).astype(np.uint8)
-                    else:
-                        print(f"Unexpected mask dtype: {mask.dtype}")
-                        continue
+                    # if mask.dtype == bool:
+                    #     mask = mask.astype(np.uint8)
+                    # elif mask.dtype == np.float32:
+                    #     mask = (mask * 255).astype(np.uint8)
+                    # else:
+                    #     print(f"Unexpected mask dtype: {mask.dtype}")
+                    #     continue
 
-                    cls = int(class_ids[i])
-                    prob = confs[i]
-                    box = boxes[i]
+                    cls = int(class_ids[0])
+                    # prob = confs[i]
+                    # box = boxes[i]
                     
                     # Store bounding box and confidence
                     if cls not in self.boxes:
                         self.boxes[cls] = []
-                    self.boxes[cls].append((prob, box))
+                    self.boxes[cls].append((confs[i], boxes[i]))
                     
                     # Resize mask to original image size
-                    mask_resized = cv2.resize(
-                        mask, 
-                        (self.image_size[0], self.image_size[1]),  # (width, height)
-                        interpolation=cv2.INTER_NEAREST
-                    )
-                    prob_array = prob * mask_resized
+
+                    # mask_resized = cv2.resize(
+                    #     mask, 
+                    #     (self.image_size[0], self.image_size[1]),  # (width, height)
+                    #     interpolation=cv2.INTER_NEAREST
+                    # )
+                    prob_array = (sam_results[0].confs[i] * mask.data).squeeze()
                     
                     # Store mask and probabilities
                     if cls in self.masks:
-                        self.masks[cls] += mask_resized
-                        self.max_probs[cls] = max(self.max_probs[cls], prob)
+                        self.masks[cls] += mask.data.squeeze()
+                        self.max_probs[cls] = max(self.max_probs[cls], confs[i])
                         self.probs[cls] = np.maximum(self.probs[cls], prob_array)
                     else:
-                        self.masks[cls] = mask_resized
-                        self.max_probs[cls] = prob
+                        self.masks[cls] = mask.data.squeeze()
+                        self.max_probs[cls] = confs[i]
                         self.probs[cls] = prob_array
             else:
                 print("No masks returned by SAM.")
