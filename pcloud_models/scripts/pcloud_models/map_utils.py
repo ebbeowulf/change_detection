@@ -336,7 +336,7 @@ class pcloud_from_images():
                     cls_maskT=cls_mask
             else:
                 if rotate90:
-                    cls_maskT=torch.tensor(np.rot90(cls_mask,axes=(0,1)).copy(),device=DEVICE)
+                    cls_maskT=torch.tensor(np.rot90(cls_mask,dims=(0,1)).copy(),device=DEVICE)
                 else:
                     cls_maskT=torch.tensor(cls_mask,device=DEVICE)
 
@@ -350,7 +350,7 @@ class pcloud_from_images():
             pts_rot=get_rotated_points(self.loaded_image['x'],self.loaded_image['y'],self.loaded_image['depthT'],filtered_maskT,self.loaded_image['M']) 
             filtered_maskT = filtered_maskT.bool()
             if rotate90:
-                probs=np.rot90(self.YS.get_prob_array(tgt_class),axes=(0,1))
+                probs=torch.rot90(self.YS.get_prob_array(tgt_class),dims=(0,1))
                 return {'xyz': pts_rot, 
                         'rgb': self.loaded_image['colorT'][filtered_maskT], 
                         'probs': probs[filtered_maskT]}

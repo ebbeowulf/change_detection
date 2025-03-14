@@ -16,8 +16,11 @@ from two_query_localize import create_object_clusters, calculate_iou, estimate_l
 from msg_and_srv.srv import DynamicCluster, DynamicClusterRequest, DynamicClusterResponse, SetInt, SetIntRequest, SetIntResponse
 from geometry_msgs.msg import Point
 from visualization_msgs.msg import Marker, MarkerArray
+import torch
 
 TRACK_COLOR=True
+
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 def normalizeAngle(angle):
     while angle>=np.pi:
@@ -53,9 +56,10 @@ class multi_query_localize:
         self.query_list=query_list
         self.pcloud=dict()
         for query in self.query_list:
-            self.pcloud[query]={'xyz': np.zeros((0,3),dtype=float), 'probs': np.zeros((0),dtype=float), 'rgb': np.zeros((0,3),dtype=float)}
+            # self.pcloud[query]={'xyz': np.zeros((0,3),dtype=float), 'probs': np.zeros((0),dtype=float), 'rgb': np.zeros((0,3),dtype=float)}
+            self.pcloud[query]={'xyz': torch.zeros((0,3),dtype=float,device=DEVICE), 'probs': torch.zeros((0),dtype=float,device=DEVICE), 'rgb': torch.zeros((0,3),dtype=float,device=DEVICE)}
         self.cluster_min_points=cluster_min_points
-        self.cluster_iou=0.5
+        self.cluster_iou=0.1
         self.detection_threshold=detection_threshold
 
         # Setup callback function
@@ -72,6 +76,31 @@ class multi_query_localize:
         self.clear_srv = rospy.Service('clear_clouds', Trigger, self.clear_clouds_service)
         self.top1_cluster_srv = rospy.Service('get_top1_cluster', DynamicCluster, self.top1_cluster_service)
         self.marker_pub=rospy.Publisher('cluster_markers',MarkerArray,queue_size=5)
+        self.draw_clusters_srv = rospy.Service('draw_pclouds', Trigger, self.draw_pclouds)
+
+    def draw_pclouds(self, msg):
+        # positive_clusters, pos_likelihoods = self.match_clusters('combo-mean')
+        import open3d as o3d
+        from draw_pcloud import drawn_image
+
+        for query in self.query_list:
+            if self.pcloud[query]['xyz'].shape[0]>0:
+                if TRACK_COLOR:
+                    pcd_main=pointcloud_open3d(self.pcloud[query]['xyz'].cpu().numpy(),self.pcloud[query]['rgb'].cpu().numpy())
+                else:
+                    pcd_main=pointcloud_open3d(self.pcloud[query]['xyz'].cpu().numpy(), None)
+                
+                dI=drawn_image(pcd_main)
+
+                fName=f"draw_clusters.{query.replace(' ','_')}.{self.pcloud[query]['xyz'].shape[0]}.png"
+                if self.storage_dir is not None:
+                    fName=self.storage_dir+"/"+fName
+                dI.save_fg(fName)
+
+        resp=TriggerResponse()
+        resp.success=True
+        resp.message=fName
+        return resp
 
     def set_cluster_size_service(self, req):
         self.cluster_min_points=req.value
@@ -87,7 +116,8 @@ class multi_query_localize:
         resp=TriggerResponse()
         resp.success=True
         for query in query_list:
-            self.pcloud[query]={'xyz': np.zeros((0,3),dtype=float), 'probs': np.zeros((0),dtype=float), 'rgb': np.zeros((0,3),dtype=float)}
+            # self.pcloud[query]={'xyz': np.zeros((0,3),dtype=float), 'probs': np.zeros((0),dtype=float), 'rgb': np.zeros((0,3),dtype=float)}
+            self.pcloud[query]={'xyz': torch.zeros((0,3),dtype=float,device=DEVICE), 'probs': torch.zeros((0),dtype=float,device=DEVICE), 'rgb': torch.zeros((0,3),dtype=float,device=DEVICE)}
         self.last_image=None
         resp.message="clouds cleared"
         return resp
@@ -118,7 +148,7 @@ class multi_query_localize:
 
     # create the object clusters and filter by the number of points in each
     def get_clusters_ros(self, pcd):
-        all_objects=create_object_clusters(pcd['xyz'],pcd['probs'], -1.0, self.detection_threshold, compress_clusters=False)
+        all_objects=create_object_clusters(pcd['xyz'].cpu().numpy(),pcd['probs'].cpu().numpy(), -1.0, self.detection_threshold, compress_clusters=False)
         objects_out=[]
         for obj in all_objects:
             if obj.size()>self.cluster_min_points:
@@ -221,13 +251,15 @@ class multi_query_localize:
             return resp
 
         whichC=np.argmax(pos_likelihoods)
-        for idx in range(request.num_points):
-            fPx=positive_clusters[whichC].farthestP[idx]
-            pt=Point()
-            pt.x=positive_clusters[whichC].pts[fPx][0]
-            pt.y=positive_clusters[whichC].pts[fPx][1]
-            pt.z=positive_clusters[whichC].pts[fPx][2]
-            resp.pts.append(pt)
+        if whichC>=0:
+            positive_clusters[whichC].sample_pcloud(request.num_points)
+            for idx in range(request.num_points):
+                fPx=positive_clusters[whichC].farthestP[idx]
+                pt=Point()
+                pt.x=positive_clusters[whichC].pts[fPx][0]
+                pt.y=positive_clusters[whichC].pts[fPx][1]
+                pt.z=positive_clusters[whichC].pts[fPx][2]
+                resp.pts.append(pt)
         resp.bbox3d=np.hstack((positive_clusters[whichC].box[0],positive_clusters[whichC].box[1])).tolist()
         return resp
     
@@ -241,7 +273,7 @@ class multi_query_localize:
         # print("pose received")
         self.pose_lock.acquire()
         self.pose_queue.append(odom_msg)
-        if len(self.pose_queue)>20:
+        if len(self.pose_queue)>200:
             self.pose_queue.pop(0)
         self.pose_lock.release()
 
@@ -296,10 +328,10 @@ class multi_query_localize:
         return False
 
     def rgbd_callback(self, rgb_img:Image, depth_img:Image):
-        print("RGB-D images received")
+        # print("RGB-D images received")
         if self.pcloud_creator is None:
             return
-        if 1: # if the /map transform is correctly setup, then use tf all the way
+        if 0: # if the /map transform is correctly setup, then use tf all the way
             try:
                 (trans,rot) = self.listener.lookupTransform('/map',depth_img.header.frame_id,depth_img.header.stamp)
                 poseM=np.matmul(tf.transformations.translation_matrix(trans),tf.transformations.quaternion_matrix(rot))
@@ -330,6 +362,7 @@ class multi_query_localize:
 
         if self.is_new_image(poseM):
             self.update_point_cloud(cv_image_rgb, cv_image_depth, poseM, rgb_img.header)
+        # self.update_point_cloud(cv_image_rgb, cv_image_depth, poseM, rgb_img.header)
     
     def update_point_cloud(self, rgb, depth, poseM, header):
         self.last_image={'depth': rgb, 'rgb': depth, 'poseM': poseM, 'time': header.stamp}
@@ -341,10 +374,14 @@ class multi_query_localize:
         results=self.pcloud_creator.multi_prompt_process(self.query_list, self.detection_threshold, rotate90=True)
         for query in self.query_list:
             if results[query]['xyz'].shape[0]>0:
-                self.pcloud[query]['xyz']=np.vstack((self.pcloud[query]['xyz'],results[query]['xyz']))
-                self.pcloud[query]['probs']=np.hstack((self.pcloud[query]['probs'],results[query]['probs']))
+                # self.pcloud[query]['xyz']=np.vstack((self.pcloud[query]['xyz'],results[query]['xyz']))
+                # self.pcloud[query]['probs']=np.hstack((self.pcloud[query]['probs'],results[query]['probs']))
+                # if TRACK_COLOR:
+                #     self.pcloud[query]['rgb']=np.vstack((self.pcloud[query]['rgb'],results[query]['rgb']))
+                self.pcloud[query]['xyz']=torch.vstack((self.pcloud[query]['xyz'],results[query]['xyz']))
+                self.pcloud[query]['probs']=torch.hstack((self.pcloud[query]['probs'],results[query]['probs']))
                 if TRACK_COLOR:
-                    self.pcloud[query]['rgb']=np.vstack((self.pcloud[query]['rgb'],results[query]['rgb']))
+                    self.pcloud[query]['rgb']=torch.vstack((self.pcloud[query]['rgb'],results[query]['rgb']))
             print(f"Adding {query}:{results[query]['xyz'].shape[0]}.... Total:{self.pcloud[query]['xyz'].shape[0]}")
 
 if __name__ == '__main__': 
@@ -353,9 +390,9 @@ if __name__ == '__main__':
     parser.add_argument('queries', type=str, nargs='*', default=None,
                     help='Set of target queries to build point clouds for - must include at least one')
     parser.add_argument('--num_points',type=int,default=200, help='number of points per cluster')
-    parser.add_argument('--detection_threshold',type=float,default=0.5, help='fixed detection threshold')
-    parser.add_argument('--min_travel_dist',type=float,default=0.1,help='Minimum distance the robot must travel before adding a new image to the point cloud (default = 0.1m)')
-    parser.add_argument('--min_travel_angle',type=float,default=0.1,help='Minimum angle the camera must have moved before adding a new image to the point cloud (default = 0.1 rad)')
+    parser.add_argument('--detection_threshold',type=float,default=0.2, help='fixed detection threshold')
+    parser.add_argument('--min_travel_dist',type=float,default=0.01,help='Minimum distance the robot must travel before adding a new image to the point cloud (default = 0.1m)')
+    parser.add_argument('--min_travel_angle',type=float,default=0.05,help='Minimum angle the camera must have moved before adding a new image to the point cloud (default = 0.1 rad)')
     parser.add_argument('--storage_dir',type=str,default=None,help='A place to store intermediate files - but only if specified (default = None)')
     args = parser.parse_args()
 
