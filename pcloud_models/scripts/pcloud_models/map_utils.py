@@ -613,6 +613,7 @@ def get_distinct_clusters(pcloud, gridcell_size=DBSCAN_GRIDCELL_SIZE, eps=DBSCAN
     clouds=[]
     if pcloud is None or len(pcloud.points)<cluster_min_count:
         return clouds
+    pdb.set_trace()
     if gridcell_size>0:
         pcd_small=pcloud.voxel_down_sample(gridcell_size)
         t_array.append(time.time())

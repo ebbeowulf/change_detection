@@ -14,6 +14,7 @@ from map_utils import pcloud_from_images, pointcloud_open3d
 from std_srvs.srv import Trigger, TriggerResponse
 from two_query_localize import create_object_clusters, calculate_iou, estimate_likelihood
 from msg_and_srv.srv import DynamicCluster, DynamicClusterRequest, DynamicClusterResponse, SetInt, SetIntRequest, SetIntResponse
+from msg_and_srv.srv import SetString, SetStringResponse, SetStringRequest, SetFloat, SetFloatResponse, SetFloatRequest
 from geometry_msgs.msg import Point
 from visualization_msgs.msg import Marker, MarkerArray
 import torch
@@ -61,6 +62,8 @@ class multi_query_localize:
         self.cluster_min_points=cluster_min_points
         self.cluster_iou=0.1
         self.detection_threshold=detection_threshold
+        self.cluster_metric='combo-mean'
+        self.gridcell_size=0.01
 
         # Setup callback function
         self.camera_params_sub = rospy.Subscriber('/camera_throttled/depth/camera_info', CameraInfo, self.cam_info_callback)
@@ -71,26 +74,32 @@ class multi_query_localize:
         self.ts.registerCallback(self.rgbd_callback)
 
         # Setup service calls
+        self.setClusterMetric_srv = rospy.Service('set_cluster_metric', SetString, self.set_cluster_metric_service)
         self.setclustersize_srv = rospy.Service('set_cluster_size', SetInt, self.set_cluster_size_service)
         self.setiou_srv = rospy.Service('set_cluster_iou_pct', SetInt, self.set_cluster_iou_pct)
+        self.setGridcell_srv = rospy.Service('set_gridcell_size', SetFloat, self.set_gridcell_size_service)
         self.clear_srv = rospy.Service('clear_clouds', Trigger, self.clear_clouds_service)
         self.top1_cluster_srv = rospy.Service('get_top1_cluster', DynamicCluster, self.top1_cluster_service)
         self.marker_pub=rospy.Publisher('cluster_markers',MarkerArray,queue_size=5)
         self.draw_clusters_srv = rospy.Service('draw_pclouds', Trigger, self.draw_pclouds)
 
     def draw_pclouds(self, msg):
+
         # positive_clusters, pos_likelihoods = self.match_clusters('combo-mean')
         import open3d as o3d
         from draw_pcloud import drawn_image
 
         for query in self.query_list:
             if self.pcloud[query]['xyz'].shape[0]>0:
+                positive_clusters, pos_likelihoods=self.match_clusters(self.cluster_metric,query, query)
                 if TRACK_COLOR:
                     pcd_main=pointcloud_open3d(self.pcloud[query]['xyz'].cpu().numpy(),self.pcloud[query]['rgb'].cpu().numpy())
                 else:
                     pcd_main=pointcloud_open3d(self.pcloud[query]['xyz'].cpu().numpy(), None)
                 
                 dI=drawn_image(pcd_main)
+                boxes = [ obj_.box for obj_ in positive_clusters ]
+                dI.add_boxes_to_fg(boxes)
 
                 fName=f"draw_clusters.{query.replace(' ','_')}.{self.pcloud[query]['xyz'].shape[0]}.png"
                 if self.storage_dir is not None:
@@ -102,10 +111,32 @@ class multi_query_localize:
         resp.message=fName
         return resp
 
+    def set_cluster_metric_service(self, req):
+        if req.value=='main-mean':
+            print("Setting new cluster metric as main-mean")
+            self.cluster_metric='main-mean'
+        elif req.value=='combo-mean': # combined mean
+            print("Setting new cluster metric as combo-mean")
+            self.cluster_metric='combo-mean'
+        elif req.value=='main-room': # combined main + room
+            print("Setting new cluster metric as main-room")
+            self.cluster_metric='main-room'
+        elif req.value=='combo-room': # combined main + room
+            print("Setting new cluster metric as combo-room")
+            self.cluster_metric='combo-room'
+        else:
+            print('Currently supported options include main-mean, combo-mean, main-room, combo-room')
+        return SetStringResponse()
+
     def set_cluster_size_service(self, req):
         self.cluster_min_points=req.value
         print(f"Changing minimum cluster size to {self.cluster_min_points} cm2")
         return SetIntResponse()
+
+    def set_gridcell_size_service(self, req):
+        self.gridcell_size=req.value
+        print(f"Changing gridcell size to {self.gridcell_size} m")
+        return SetFloatResponse()
 
     def set_cluster_iou_pct(self, req):
         self.cluster_iou=req.value/100.0
@@ -148,7 +179,12 @@ class multi_query_localize:
 
     # create the object clusters and filter by the number of points in each
     def get_clusters_ros(self, pcd):
-        all_objects=create_object_clusters(pcd['xyz'].cpu().numpy(),pcd['probs'].cpu().numpy(), -1.0, self.detection_threshold, compress_clusters=False)
+        all_objects=create_object_clusters(pcd['xyz'].cpu().numpy(),
+                                            pcd['probs'].cpu().numpy(), 
+                                            -1.0, 
+                                            self.detection_threshold, 
+                                            compress_clusters=False,
+                                            gridcell_size=self.gridcell_size)
         objects_out=[]
         for obj in all_objects:
             if obj.size()>self.cluster_min_points:
@@ -245,7 +281,7 @@ class multi_query_localize:
         resp=DynamicClusterResponse()
         resp.success=False
 
-        positive_clusters, pos_likelihoods=self.match_clusters('combo-mean',request.main_query, request.llm_query)
+        positive_clusters, pos_likelihoods=self.match_clusters(self.cluster_metric, request.main_query, request.llm_query)
         if len(positive_clusters)==0:
             resp.message="No clusters found"
             return resp

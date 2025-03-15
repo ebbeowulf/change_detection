@@ -104,7 +104,13 @@ def build_pcloud(object_raw, initial_threshold=0.5, draw=False):
 import time
 TIME_STRUCT={'count': 0, 'times':np.zeros((2,),dtype=float)}
 
-def create_object_clusters(pts_xyz, pts_prob, floor_threshold=-0.1, detection_threshold=0.5, min_cluster_points=ABSOLUTE_MIN_CLUSTER_SIZE, compress_clusters=True):
+def create_object_clusters(pts_xyz, 
+                            pts_prob, 
+                            floor_threshold=-0.1, 
+                            detection_threshold=0.5, 
+                            min_cluster_points=ABSOLUTE_MIN_CLUSTER_SIZE, 
+                            gridcell_size=0.01,
+                            compress_clusters=True):
     if pts_xyz.shape[0]==0 or pts_xyz.shape[0]!=pts_prob.shape[0]:
         return []
     global TIME_STRUCT
@@ -116,7 +122,12 @@ def create_object_clusters(pts_xyz, pts_prob, floor_threshold=-0.1, detection_th
     F2=np.where(np.isnan(xyzF).sum(1)==0)
     xyzF2=xyzF[F2]        
     pcd.points=o3d.utility.Vector3dVector(xyzF2)
-    object_clusters=get_distinct_clusters(pcd, floor_threshold=floor_threshold, cluster_min_count=min_cluster_points)
+    dbscan_eps=2.4*gridcell_size
+    object_clusters=get_distinct_clusters(pcd, 
+                                            floor_threshold=floor_threshold, 
+                                            cluster_min_count=min_cluster_points,
+                                            gridcell_size=gridcell_size,
+                                            eps=dbscan_eps)
     t_array.append(time.time())
 
     probF=pts_prob[whichP]
