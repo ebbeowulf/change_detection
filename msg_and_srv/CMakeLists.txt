@@ -61,6 +61,7 @@ add_service_files(
   GetCluster.srv
   DynamicCluster.srv
   SetInt.srv
+  SetString.srv
 )
 
 ## Generate actions in the 'action' folder
