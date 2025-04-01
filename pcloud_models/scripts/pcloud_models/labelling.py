@@ -139,10 +139,10 @@ def add_overlay(ply_fileName:str,color=(0,0,255)):
     # image_interface.set_fg_image(image)
     # return tgt_pts
 
-def label_scannet_pcloud(root_dir, raw_dir, save_dir, targets):
+def label_scannet_pcloud(root_dir, raw_dir, save_dir, targets, use_pose_filter=False):
     global image_interface, mouse_clicks
 
-    fList=build_file_structure(root_dir+"/"+raw_dir, root_dir+"/"+save_dir)
+    fList=build_file_structure(root_dir+"/"+raw_dir, root_dir+"/"+save_dir, use_pose_filter=use_pose_filter)
 
     # Load a previously created annotation file
     if os.path.exists(fList.get_annotation_file()):
@@ -299,8 +299,10 @@ if __name__ == '__main__':
     parser.add_argument('--save_dir',type=str,default='raw_output/save_results', help='subdirectory in which to store the intermediate files')
     parser.add_argument('--targets', type=str, nargs='*', default=None,
                     help='Set of target classes to build point clouds for')
-    parser.set_defaults(yolo=True)
+    parser.add_argument('--pose_filter', dest='pose_filter', action='store_true')
+    parser.set_defaults(pose_filter=False)
+    # parser.set_defaults(yolo=True)
     # parser.add_argument('--targets',type=list, nargs='+', default=None, help='Set of target classes to build point clouds for')
     args = parser.parse_args()
 
-    label_scannet_pcloud(args.root_dir, args.raw_dir, args.save_dir, args.targets)
+    label_scannet_pcloud(args.root_dir, args.raw_dir, args.save_dir, args.targets, args.pose_filter)

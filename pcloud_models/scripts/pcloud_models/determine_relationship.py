@@ -9,83 +9,12 @@ from rgbd_file_list import rgbd_file_list
 from camera_params import camera_params
 import pickle
 import sys
+from map_utils import object_pcloud
 
 # FURNITURE=['chair','couch','potted plant','bed','mirror','dining table','window','desk','toilet','door']
 FURNITURE=['cabinet','chair','couch','plant','bed','dining table','desk','toilet','ottoman'] # door + window have too many errors
 APPLIANCE=['tv','microwave','oven','toaster','refrigerator','sink'] #'blender' is in COCO, but not scannet
 
-DBSCAN_MIN_SAMPLES=20 
-DBSCAN_GRIDCELL_SIZE=0.01
-DBSCAN_EPS=0.018 # allows for connections in cells full range of surrounding cube DBSCAN_GRIDCELL_SIZE*2.5
-CLUSTER_MIN_COUNT=10000
-CLUSTER_PROXIMITY_THRESH=0.3
-CLUSTER_TOUCHING_THRESH=0.05
-
-def get_distinct_clusters(pcloud, gridcell_size=DBSCAN_GRIDCELL_SIZE, eps=DBSCAN_EPS, min_samples=DBSCAN_MIN_SAMPLES, cluster_min_count=CLUSTER_MIN_COUNT, floor_threshold=0.1):
-    clouds=[]
-    if pcloud is None or len(pcloud.points)<CLUSTER_MIN_COUNT:
-        return clouds
-    pcd_small=pcloud.voxel_down_sample(gridcell_size)
-    p2=DBSCAN(eps=eps, min_samples=min_samples,n_jobs=10).fit(np.array(pcd_small.points))
-    pts=np.array(pcd_small.points)
-
-    # Need to get the cluster sizes... so we can focus on the largest clusters only
-    cl_cnt=np.array([ (p2.labels_==cnt).sum() for cnt in range(p2.labels_.max()) ])
-    validID=np.where(cl_cnt>cluster_min_count)[0]
-    if validID.shape[0]>0:
-        sortedI=np.argsort(-cl_cnt[validID])
-
-        for id in validID[sortedI][:10]:
-            whichP=(p2.labels_==id)
-            pts2=pts[whichP]
-            whichP2=(pts2[:,2]>floor_threshold)
-            if whichP2.sum()>cluster_min_count:
-                clouds.append(object_pcloud(pts2[whichP2]))
-
-    return clouds
-
-class object_pcloud():
-    def __init__(self, pts, label:str=None, num_samples=1000):
-        self.box=np.vstack((pts.min(0),pts.max(0)))
-        self.pts=pts
-        self.label=label
-        self.farthestP=farthest_point_sampling(self.pts, num_samples)
-        self.prob_stats=None
-
-    def set_label(self, label):
-        self.label=label
-    
-    def is_box_overlap(self, input_cloud, dimensions=[0,1,2], threshold=0.3):
-        for dim in dimensions:
-            if self.box[1,dim]<(input_cloud.box[0,dim]-threshold) or self.box[0,dim]>=(input_cloud.box[1,dim]+threshold):
-                return False
-        return True
-
-    def compute_cloud_distance(self, input_cloud):
-        input_pt_matrix=input_cloud.pts[input_cloud.farthestP]
-        min_sq_dist=1e10
-        for pid in self.farthestP:
-            min_sq_dist=min(min_sq_dist, ((input_pt_matrix-self.pts[pid])**2).sum(1).min())
-        return np.sqrt(min_sq_dist)
-    
-    def is_above(self, input_cloud):
-        # check centroid location relative to bounding box
-        ctr=self.pts.mean(0)
-
-        # Should be overlapped in x + y directions
-        if ctr[0]>input_cloud.box[0,0] and ctr[0]<input_cloud.box[1,0] and ctr[1]>input_cloud.box[0,1] and ctr[1]<input_cloud.box[1,1]:
-            # Should also be "above" the other centroid
-            input_ctr=input_cloud.pts.mean(0)
-            return ctr[2]>input_ctr[2]
-        return False
-    
-    def estimate_probability(self, original_xyz, original_prob):
-        filt=(original_xyz[:,0]>=self.box[0][0])*(original_xyz[:,0]<=self.box[1][0])*(original_xyz[:,1]>=self.box[0][1])*(original_xyz[:,1]<=self.box[1][1])*(original_xyz[:,2]>=self.box[0][2])*(original_xyz[:,2]<=self.box[1][2])
-        self.prob_stats=dict()
-        self.prob_stats['max']=original_prob[filt].max()
-        self.prob_stats['mean']=original_prob[filt].mean()
-        self.prob_stats['stdev']=original_prob[filt].std()
-        self.prob_stats['pcount']=filt.shape[0]
 
 class determine_relationship():
     def __init__(self, categories:list=None):

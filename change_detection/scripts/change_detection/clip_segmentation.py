@@ -42,12 +42,12 @@ class clip_seg(image_segmentation):
             print(e)
         return False
         
-    def process_file(self, fName, threshold=0.2, save_fileName=None):
+    def process_file(self, fName, threshold=0.5, save_fileName=None):
         # Need to use PILLOW to load the color image - it has an impact on the clip model???
         image = Image.open(fName)
         # Get the clip probabilities
-        outputs = self.process_image(image)
-        self.set_data(outputs,image.size,threshold)
+        outputs = self.process_image(image,threshold)
+        # self.set_data(outputs,image.size,threshold)
         
         if save_fileName is not None:
             save_data={'outputs': outputs, 'image_size': image.size, 'prompts': self.prompts}
@@ -57,12 +57,20 @@ class clip_seg(image_segmentation):
         # Convert the PIL image to opencv format and return
         return np.array(image) #[:,:,::-1]
 
-    def process_image(self, image):
+    def process_image_numpy(self, image: np.ndarray, threshold=0.5):
+        image_pil=Image.fromarray(image)
+        return self.process_image(image_pil, threshold=threshold)
+
+    def process_image(self, image: Image, threshold=0.5): #image should be in PIL format
         # print("Clip Inference")
         self.clear_data()
         try:
             # inputs = self.processor(text=self.prompts, images=[image] * len(self.prompts), padding="max_length", return_tensors="pt")
-            inputs = self.processor(text=self.prompts, images=[image] * len(self.prompts), return_tensors="pt")
+            if len(self.prompts)>1:
+                inputs = self.processor(text=self.prompts, images=[image] * len(self.prompts), padding=True, return_tensors="pt")
+            else:
+                # Adding padding here always throws an error
+                inputs = self.processor(text=self.prompts, images=[image], return_tensors="pt")
             inputs.to(DEVICE)
             # predict
             with torch.no_grad():
@@ -71,6 +79,7 @@ class clip_seg(image_segmentation):
             print("Exception during inference step - returning")
             return
 
+        self.set_data(outputs,image.size,threshold)
         return outputs
           
     def set_data(self, outputs, image_size, threshold=0.2):
@@ -101,21 +110,35 @@ class clip_seg(image_segmentation):
         #     self.masks[0]=self.probs[0]>threshold
         #     self.build_dbscan_boxes(0,threshold)
 
-
-
-
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('image',type=str,help='location of image to process')
     parser.add_argument('tgt_prompt',type=str,default=None,help='specific prompt for clip class')
     parser.add_argument('--threshold',type=float,default=0.2,help='(optional) threshold to apply during computation ')
+    parser.add_argument('--options', type=str, default=None, help="Other options: PIL = open with PIL library, CV2 = open with opencv library, CV2_ROTATE = open with opencv and rotate during clip processing")
     args = parser.parse_args()
 
     CS=clip_seg([args.tgt_prompt])
-    #for i in range(1000):
-    #    print(i)
-    image=CS.process_file(args.image, threshold=args.threshold)
-    mask=CS.get_mask(0)
+
+    if args.options is None or args.options=="PIL":
+        image=CS.process_file(args.image, threshold=args.threshold)
+        mask=CS.get_mask(0)
+    elif args.options =="CV2":
+        image=cv2.imread(args.image)        
+        CS.process_image_numpy(image, threshold=args.threshold)
+        mask=CS.get_mask(0)
+    elif args.options=="CV2_ROTATE":
+        image=cv2.imread(args.image)
+        image_rot=np.rot90(image, k=1, axes=(1,0))
+        image_pil=Image.fromarray(image_rot)
+        CS.process_image(image_pil, threshold=args.threshold)
+        mask=np.rot90(CS.get_mask(0),axes=(0,1))
+        pdb.set_trace()
+    else:
+        print(f"Invalid option {args.options}")
+        import sys
+        sys.exit(-1)
+
     if mask is None:
         print("Something went wrong - no mask to display")
     else:
