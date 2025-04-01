@@ -40,6 +40,11 @@ class rgbd_file_list():
         cls_str=cls_str.replace(" ","_")
         return self.intermediate_save_dir+self.all_files[id]['color']+".%s.clip.pkl"%(cls_str)
 
+    def get_omdet_fileName(self, id:int, tgt_class:str):
+        cls_str=copy.copy(tgt_class)
+        cls_str=cls_str.replace(" ","_")        
+        return self.intermediate_save_dir+self.all_files[id]['color']+".%s.omdet.pkl"%(cls_str)
+
     def get_depth_fileName(self, id:int):
         return self.depth_image_dir+self.all_files[id]['depth']
     

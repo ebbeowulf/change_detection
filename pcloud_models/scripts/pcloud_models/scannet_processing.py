@@ -86,7 +86,7 @@ def build_file_structure(image_dir, save_dir):
             rootName=ppts[0].split('/')[-1]
             number=int(rootName.split('-')[-1])
             pose=read_scannet_pose(fName)
-            fList.add_file(number,rootName+'.color.jpg',rootName+'.depth_reg.png')
+            fList.add_file(number,rootName+'.color.jpg',rootName+'.depth.pgm')
             fList.add_pose(number, pose)
         except Exception as e:
             continue
@@ -107,6 +107,7 @@ if __name__ == '__main__':
     parser.set_defaults(use_cc=True)
     # parser.add_argument('--targets',type=list, nargs='+', default=None, help='Set of target classes to build point clouds for')
     args = parser.parse_args()
+    print(args.targets)
     save_dir=args.root_dir+"/"+args.save_dir
     fList=build_file_structure(args.root_dir+"/"+args.raw_dir, save_dir)
     if args.param_file is not None:
@@ -119,13 +120,14 @@ if __name__ == '__main__':
             par_file=args.root_dir+"/%s.txt"%(s_root[-1])
     params=load_camera_info(par_file)
     
-    map_utils.process_images_with_clip(fList,args.targets)
-    pcloud_init=map_utils.pcloud_from_images(fList, params)
+    map_utils.process_images_with_omdet(fList,args.targets)
+    pcloud_init=map_utils.pcloud_from_images(fList, params, args.threshold)
 
     for tgt_class in args.targets:
         pcloud=pcloud_init.process_fList(tgt_class, args.threshold)
+        import open3d as o3d
+        pcd=map_utils.pointcloud_open3d(pcloud['xyz'],pcloud['rgb'])
+        o3d.io.write_point_cloud(f"{args.save_dir}/{tgt_class}.ply", pcd)
         if args.draw:
-            import open3d as o3d
-            pcd=map_utils.pointcloud_open3d(pcloud['xyz'],pcloud['rgb'])
             o3d.visualization.draw_geometries([pcd])
 

@@ -9,7 +9,7 @@ import cv2
 import numpy as np
 
 #LABEL_CSV="/data2/datasets/scannet/scannetv2-labels.combined.tsv"
-LABEL_CSV="/home/emartinso/data/scannet/scannetv2-labels.combined.tsv"
+LABEL_CSV="/home/hindurthi/thesis_data/python_files/scannet/scannetv2-labels.combined.tsv"
 ID2STR=None
 STR2ID=None
 
@@ -74,7 +74,7 @@ def build_file_structure(raw_dir, label_dir, save_dir):
             rootName=ppts[0].split('/')[-1]
             number=int(rootName.split('-')[-1])
             pose=read_scannet_pose(fName)
-            fList.add_file(number,"%d.png"%(number),rootName+'.depth_reg.png')
+            fList.add_file(number,"%d.png"%(number),rootName+'.depth.pgm')
             fList.add_pose(number, pose)
         except Exception as e:
             continue

@@ -7,6 +7,9 @@ import numpy as np
 import cv2
 import os
 import pdb
+import sys
+scripts_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..', 'change_detection', 'scripts'))
+sys.path.append(scripts_path)
 from change_detection.segmentation import image_segmentation
 from rgbd_file_list import rgbd_file_list
 from camera_params import camera_params
@@ -15,9 +18,21 @@ import copy
 # DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 DEVICE = torch.device("cpu")
 
-# Process all images with yolo - creating
+# Process all images with omdet - creating
 #   pickle files for the results and storing alongside the 
 #   original color images
+
+def process_images_with_omdet(fList:rgbd_file_list, clip_targets:list):
+    print("process_images")
+    from change_detection.omdet_segmentation import omdet_seg
+    YS=omdet_seg(clip_targets)
+    for key in fList.keys():
+        print(fList.get_color_fileName(key))
+        for target in clip_targets:
+            pkl_fName=fList.get_omdet_fileName(key,target)
+            if not os.path.exists(pkl_fName):
+                img=YS.process_file(fList.get_color_fileName(key),save_fileName=pkl_fName)
+
 def process_images_with_yolo(fList:rgbd_file_list):
     print("process_images")
     from change_detection.yolo_segmentation import yolo_segmentation
@@ -61,6 +76,43 @@ def clip_threshold_evaluation(fList:rgbd_file_list, clip_targets:list, proposed_
         count=(np.array(maxP)>proposed_threshold).sum()
         print("%s: Counted %d / %d images with detections > %f"%(target, count,len(maxP),proposed_threshold))
     return np.unique(image_list).tolist()
+
+def omdet_threshold_evaluation(fList:rgbd_file_list, clip_targets:list, proposed_threshold:float):
+    from change_detection.omdet_segmentation import omdet_seg
+    YS=omdet_seg(clip_targets)
+    image_list=[]
+    for target in clip_targets:
+        maxP=[]
+        for key in fList.keys():
+            # Use a high threshold here so that we are not creating DBScan boxes unnecessarily
+            # load_file now returns True/False for success/failure
+            if not YS.load_file(fList.get_omdet_fileName(key,target)):
+                continue
+            # We need a way to get relevant scores or decide if the frame is useful without a threshold here.
+            # Placeholder: Assume if loading succeeded, the frame *might* be useful.
+            # A better approach might involve checking if YS.scores[target_index] is non-empty after loading.
+            # For now, let's just add the key if load succeeds.
+            # TODO: Revisit this logic if needed.
+            if YS.scores: # Check if any scores were loaded
+                 target_index = YS.label2id.get(target)
+                 if target_index is not None and YS.scores.get(target_index): # Check scores for specific target
+                    # Simple check: add key if scores exist for this target in this frame
+                    # More complex check could involve max(YS.scores[target_index]) > some_threshold
+                    if key not in image_list:
+                        image_list.append(key)
+
+        # This part calculating maxP seems related to the old threshold logic and might not be needed
+        # or needs adjustment based on stored scores.
+        # Commenting out for now as it relies on 'P' which wasn't calculated correctly.
+        # if maxP:
+        #     maxP=np.array(maxP)
+        #     pThresh=np.percentile(maxP,90)
+        #     if proposed_threshold<pThresh:
+        #         print("Proposed Threshold: "+str(proposed_threshold)+" -> Percentile Thresh: "+str(pThresh))
+        #         proposed_threshold=pThresh
+        #         image_list=[im for p,im in zip(maxP,image_list) if p>proposed_threshold]
+
+    return image_list
 
 # Create a list of all of the objects recognized by yolo
 #   across all files. Will only load existing pkl files, not 
@@ -126,19 +178,31 @@ def visualize_combined_xyzrgb(fList:rgbd_file_list, params:camera_params, howman
     for key in range(max(fList.keys())):
         if not fList.is_key(key):
             continue
-        count+=1
-        if count<=skip:
+        count += 1
+        if count <= skip:
             continue
-        count=0
-        # Create the generic depth data
+        count = 0
+        # Load images
         print(fList.get_color_fileName(key))
-        colorI=cv2.imread(fList.get_color_fileName(key), -1)
-        depthI=cv2.imread(fList.get_depth_fileName(key), -1)
-        depthT=torch.tensor(depthI.astype('float')/1000.0)
-        colorT=torch.tensor(colorI)
-        x = cols*depthT/params.fx
-        y = rows*depthT/params.fy
-        depth_mask=(depthT>1e-4)*(depthT<10.0)
+        colorI = cv2.imread(fList.get_color_fileName(key), -1)
+        depthI = cv2.imread(fList.get_depth_fileName(key), -1)
+        
+        # Check if images loaded successfully (optional but recommended)
+        if colorI is None or depthI is None:
+            print(f"Failed to load images for key {key}")
+            continue
+        
+        # Resize depth image to match the resolution defined in params
+        depthI_resized = cv2.resize(depthI, (params.width, params.height), interpolation=cv2.INTER_NEAREST)
+        
+        # Convert to tensor and scale depth (mm to meters)
+        depthT = torch.tensor(depthI_resized.astype('float') / 1000.0)
+        colorT = torch.tensor(colorI)
+        
+        # Compute 3D coordinates
+        x = cols * depthT / params.fx
+        y = rows * depthT / params.fy
+        depth_mask = (depthT > 1e-4) * (depthT < 10.0)
 
         # Rotate the points into the right space
         M=torch.matmul(rot_matrixT,torch.tensor(fList.get_pose(key),device=DEVICE))
@@ -267,6 +331,7 @@ class pcloud_from_images():
         self.cols=torch.tensor(np.tile(np.arange(params.width),(params.height,1))-params.cx,device=DEVICE)
         self.rot_matrixT=torch.tensor(params.rot_matrix,device=DEVICE)        
         self.loaded_image=None
+        print(f"pcloud_from_images initialized. Default Threshold: {self.default_threshold}") # Added print
 
     # Image loading to allow us to process more than one class in rapid succession
     def load_image(self, image_key, max_distance=10.0):
@@ -374,9 +439,9 @@ class pcloud_from_images():
         
         if pcloud is None:
             # Build the pcloud from individual images
-            pcloud={'xyz': np.zeros((0,3),dtype=float),'rgb': np.zeros((0,3),dtype=np.uint8),'probs': []}
+            pcloud={'xyz': np.zeros((0,3),dtype=float),'rgb': np.zeros((0,3),dtype=np.uint8),'probs': np.array([], dtype=float)}
             
-            image_key_list=clip_threshold_evaluation(self.fList, [tgt_class], self.default_threshold)
+            image_key_list=omdet_threshold_evaluation(self.fList, [tgt_class], self.default_threshold)
             for key in image_key_list:
                 icloud=self.process_image(key, tgt_class, self.default_threshold, use_connected_components=use_connected_components)
                 if icloud is not None and icloud['xyz'].shape[0]>100:
@@ -389,12 +454,15 @@ class pcloud_from_images():
                 pickle.dump(pcloud, handle, protocol=pickle.HIGHEST_PROTOCOL)
         
         # Finally - filter the cloud with the requested confidence threshold
-        whichP=(pcloud['probs']>conf_threshold)
-        return {'xyz':pcloud['xyz'][whichP],'rgb':pcloud['rgb'][whichP],'probs':pcloud['probs'][whichP]}
+        if pcloud['probs']:
+            whichP=(pcloud['probs']>conf_threshold)
+            return {'xyz':pcloud['xyz'][whichP],'rgb':pcloud['rgb'][whichP],'probs':pcloud['probs'][whichP]}
+        else:
+            return {'xyz':pcloud['xyz'],'rgb':pcloud['rgb'],'probs':pcloud['probs']}
 
 def create_pclouds_from_images(fList:rgbd_file_list, params:camera_params, targets:list=None, display_pclouds=False, use_connected_components=False):
     import open3d as o3d
-    process_images_with_yolo(fList)
+    process_images_with_clip(fList)
     if targets is None:
         obj_list=create_object_list(fList)
         print("Detected Objects (Conf > 0.75)")
@@ -409,3 +477,39 @@ def create_pclouds_from_images(fList:rgbd_file_list, params:camera_params, targe
         o3d.io.write_point_cloud(fileName,pcd)
         if display_pclouds:
             o3d.visualization.draw_geometries([pcd])
+
+def build_scene_pcd(data_path, labels, output_dir,raw_dir="raw_output", save_dir="save_results", depth_scale=1000.0, draw=False):
+    print(f"Building scene PCD from: {data_path}")
+    print(f"Labels: {labels}")
+    # Create pcloud_from_images instances for each label + one for full cloud
+    pcd_builder = pcloud_from_images(fList, labels=None, depth_scale=depth_scale) # For full cloud
+    pcd_builders_labeled = {label: pcloud_from_images(fList, labels=[label], targetClass=label, depth_scale=depth_scale) for label in labels}
+
+    # Process images and build point clouds
+    print("\nBuilding full point cloud...")
+    full_pcd = pcd_builder.process_fList()
+    if full_pcd and len(full_pcd.points)>0:
+         o3d.io.write_point_cloud(os.path.join(save_dir_path, f"combined.ply"), full_pcd)
+         print(f"Saved full point cloud to combined.ply")
+    else:
+         print("Full point cloud generation resulted in 0 points or None.")
+
+    labeled_pcds = {}
+    for label in labels:
+        print(f"\nBuilding point cloud for label: '{label}'...")
+        builder = pcd_builders_labeled[label]
+        labeled_pcd = builder.process_fList()
+
+        if labeled_pcd and len(labeled_pcd.points)>0 :
+            print(f"Successfully generated {len(labeled_pcd.points)} points for '{label}'.")
+            labeled_pcds[label] = labeled_pcd
+            # Save individual labeled PCD
+            save_path = os.path.join(save_dir_path, f"{label.replace(' ', '_')}.labeled.ply") # Replace spaces for filename
+            o3d.io.write_point_cloud(save_path, labeled_pcd)
+            print(f"Saved labeled point cloud for '{label}' to {save_path}")
+        else:
+            print(f"Failed to generate point cloud for label '{label}' (0 points or None returned).") # Modified print
+
+    # Visualization (Optional)
+    if draw:
+        o3d.visualization.draw_geometries([full_pcd] + list(labeled_pcds.values()))
