@@ -88,40 +88,23 @@ def clip_threshold_evaluation(fList:rgbd_file_list, clip_targets:list, proposed_
 
 def omdet_threshold_evaluation(fList:rgbd_file_list, clip_targets:list, proposed_threshold:float):
     from change_detection.omdet_segmentation import omdet_seg
+    #pdb.set_trace()
     YS=omdet_seg(clip_targets)
     image_list=[]
     for target in clip_targets:
         maxP=[]
         for key in fList.keys():
             # Use a high threshold here so that we are not creating DBScan boxes unnecessarily
-            # load_file now returns True/False for success/failure
-            if not YS.load_file(fList.get_omdet_fileName(key,target)):
+            if not YS.load_file(fList.get_clip_fileName(key,target)):
                 continue
-            # We need a way to get relevant scores or decide if the frame is useful without a threshold here.
-            # Placeholder: Assume if loading succeeded, the frame *might* be useful.
-            # A better approach might involve checking if YS.scores[target_index] is non-empty after loading.
-            # For now, let's just add the key if load succeeds.
-            # TODO: Revisit this logic if needed.
-            if YS.scores: # Check if any scores were loaded
-                 target_index = YS.label2id.get(target)
-                 if target_index is not None and YS.scores.get(target_index): # Check scores for specific target
-                    # Simple check: add key if scores exist for this target in this frame
-                    # More complex check could involve max(YS.scores[target_index]) > some_threshold
-                    if key not in image_list:
-                        image_list.append(key)
-
-        # This part calculating maxP seems related to the old threshold logic and might not be needed
-        # or needs adjustment based on stored scores.
-        # Commenting out for now as it relies on 'P' which wasn't calculated correctly.
-        # if maxP:
-        #     maxP=np.array(maxP)
-        #     pThresh=np.percentile(maxP,90)
-        #     if proposed_threshold<pThresh:
-        #         print("Proposed Threshold: "+str(proposed_threshold)+" -> Percentile Thresh: "+str(pThresh))
-        #         proposed_threshold=pThresh
-        #         image_list=[im for p,im in zip(maxP,image_list) if p>proposed_threshold]
-
-    return image_list
+            P=YS.get_max_prob(target)
+            if P is not None:
+                maxP.append(P)
+                if P>proposed_threshold:
+                    image_list.append(key)
+        count=(np.array(maxP)>proposed_threshold).sum()
+        print("%s: Counted %d / %d images with detections > %f"%(target, count,len(maxP),proposed_threshold))
+    return np.unique(image_list).tolist()
 
 # Create a list of all of the objects recognized by yolo
 #   across all files. Will only load existing pkl files, not 
@@ -338,7 +321,7 @@ class pcloud_from_images():
         self.cols=torch.tensor(np.tile(np.arange(params.width),(params.height,1))-params.cx,device=DEVICE)
         self.rot_matrixT=torch.tensor(params.rot_matrix,device=DEVICE)        
         self.loaded_image=None
-        print(f"pcloud_from_images initialized. Default Threshold: {self.default_threshold}") # Added print
+        print(f"pcloud_from_images initialized") # Added print
 
     # Image loading to allow us to process more than one class in rapid succession
     def load_image_from_file(self, fList:rgbd_file_list, image_key, max_distance=10.0):
@@ -402,8 +385,8 @@ class pcloud_from_images():
     def process_image(self, tgt_class, detection_threshold, use_connected_components=False, segmentation_save_file=None):
         # Create the image segmentation file
         if self.YS is None or tgt_class not in self.YS.get_all_classes():
-            from change_detection.clip_segmentation import clip_seg
-            self.YS=clip_seg([tgt_class])
+            from change_detection.omdet_segmentation import omdet_seg
+            self.YS=omdet_seg([tgt_class])
 
         # Recover the segmentation file
         if segmentation_save_file is not None and os.path.exists(segmentation_save_file):
@@ -417,8 +400,8 @@ class pcloud_from_images():
 
     def multi_prompt_process(self, prompts:list, detection_threshold, rotate90:False):
         if self.YS is None or prompts[0] not in self.YS.get_all_classes():
-            from change_detection.clip_segmentation import clip_seg
-            self.YS=clip_seg(prompts)
+            from change_detection.omdet_segmentation import omdet_seg
+            self.YS=omdet_seg(prompts)
 
         if rotate90:
             rot_color=np.rot90(self.loaded_image['colorT'].cpu().numpy(), k=1, axes=(1,0))
@@ -471,6 +454,8 @@ class pcloud_from_images():
     #   The combined result will be saved to disk for faster retrieval
     def process_fList(self, fList:rgbd_file_list, tgt_class, conf_threshold, use_connected_components=False):
         save_fName=fList.get_combined_raw_fileName(tgt_class)
+        import pdb
+        #pdb.set_trace()
         pcloud=None
         if os.path.exists(save_fName):
             try:
@@ -484,7 +469,7 @@ class pcloud_from_images():
             # Build the pcloud from individual images
             pcloud={'xyz': np.zeros((0,3),dtype=float),'rgb': np.zeros((0,3),dtype=np.uint8),'probs': np.array([], dtype=float)}
             
-            image_key_list=clip_threshold_evaluation(fList, [tgt_class], conf_threshold)
+            image_key_list=omdet_threshold_evaluation(fList, [tgt_class], conf_threshold)
             for key in image_key_list:
                 self.load_image_from_file(fList, key)
                 icloud=self.process_image(tgt_class, conf_threshold, use_connected_components=use_connected_components, segmentation_save_file=fList.get_segmentation_fileName(key, False, tgt_class))
@@ -498,7 +483,7 @@ class pcloud_from_images():
                 pickle.dump(pcloud, handle, protocol=pickle.HIGHEST_PROTOCOL)
         
         # Finally - filter the cloud with the requested confidence threshold
-        if pcloud['probs']:
+        if np.any(pcloud['probs']):
             whichP=(pcloud['probs']>conf_threshold)
             return {'xyz':pcloud['xyz'][whichP],'rgb':pcloud['rgb'][whichP],'probs':pcloud['probs'][whichP]}
         else:

@@ -14,8 +14,8 @@ from geometry_msgs.msg import TransformStamped
 import sys
 import tf2_ros
 
-ROOT_DIR="/home/ebeowulf/projects/ScanNet/data/scans/scene0000_00/raw_output/"
-CAMINFO_FILE="/home/ebeowulf/projects/ScanNet/data/scans/scene0000_00/scene0000_00.txt"
+ROOT_DIR="/home/hindurthi/thesis_data/python_files/scannet/scans/scene0050_00/raw_output/"
+CAMINFO_FILE="/home/hindurthi/thesis_data/python_files/scannet/scans/scene0050_00/scene0050_00.txt"
 
 # ROOT_DIR="/home/ebeowulf/projects/ScanNet/data/scans/scene0706_00/raw_output/"
 # CAMINFO_FILE="/home/ebeowulf/projects/ScanNet/data/scans/scene0706_00/scene0706_00.txt"
@@ -137,6 +137,7 @@ class publish_and_register():
             return True
         except Exception as e:
             print("Failed to publish")
+            print(e)
         return False
 
     def create_camera_info(self, caminfo_file):

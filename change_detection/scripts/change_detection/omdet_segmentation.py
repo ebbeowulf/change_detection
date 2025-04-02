@@ -16,12 +16,6 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 class omdet_seg(image_segmentation):
     def __init__(self, prompts):
         print("Reading model")
-        # Increased timeout for model download if needed
-        # from transformers.file_utils import hf_hub_download
-        # model_path = hf_hub_download(repo_id="omlab/omdet-turbo-swin-tiny-hf", filename="pytorch_model.bin", cache_dir=None, force_filename=None, legacy_cache_layout=False)
-        # config_path = hf_hub_download(repo_id="omlab/omdet-turbo-swin-tiny-hf", filename="config.json", cache_dir=None, force_filename=None, legacy_cache_layout=False)
-        # processor_path = hf_hub_download(repo_id="omlab/omdet-turbo-swin-tiny-hf", filename="preprocessor_config.json", cache_dir=None, force_filename=None, legacy_cache_layout=False)
-
         self.processor = AutoProcessor.from_pretrained("omlab/omdet-turbo-swin-tiny-hf")
         self.model = AutoModelForZeroShotObjectDetection.from_pretrained("omlab/omdet-turbo-swin-tiny-hf")
         self.sam_model = SAM('sam2.1_l.pt')
@@ -102,10 +96,10 @@ class omdet_seg(image_segmentation):
         self.image_size = image.size
         cv_image = np.array(image) # Keep in RGB for SAM
 
-        OMDET_CONF_THRESHOLD = 0.1 # Threshold for post-processing
-        NMS_THRESHOLD = 0.5 # Non-Maximum Suppression threshold
+        OMDET_CONF_THRESHOLD = 0.5 # Threshold for post-processing
+        #NMS_THRESHOLD = 0.5 # Non-Maximum Suppression threshold
 
-        print("Running OMDET Inference...")
+        #print("Running OMDET Inference...")
         try:
             inputs = self.processor(text=self.prompts, images=image, return_tensors="pt").to(DEVICE)
 
@@ -117,8 +111,7 @@ class omdet_seg(image_segmentation):
                 outputs,
                 text_labels=self.prompts, # Pass the original prompts
                 target_sizes=[self.image_size[::-1]], # Target size (height, width)
-                threshold=OMDET_CONF_THRESHOLD,
-                nms_threshold=NMS_THRESHOLD,
+                threshold=OMDET_CONF_THRESHOLD
             )[0] # Assuming batch size 1
 
             # Extract results from the dictionary
@@ -129,7 +122,7 @@ class omdet_seg(image_segmentation):
             # Boxes from post-processing are typically xyxy absolute
             filtered_boxes_xyxy = results["boxes"].cpu().numpy()
 
-            print(f"OMDET post-processing found {len(filtered_boxes_xyxy)} boxes above threshold {OMDET_CONF_THRESHOLD}")
+            #print(f"OMDET post-processing found {len(filtered_boxes_xyxy)} boxes above threshold {OMDET_CONF_THRESHOLD}")
 
         except Exception as e:
             print(f"Exception during OMDET inference or post-processing: {e}")
@@ -138,11 +131,11 @@ class omdet_seg(image_segmentation):
             return False
 
         if len(filtered_boxes_xyxy) == 0:
-            print("No objects detected by OMDET above threshold, skipping SAM.")
+            #print("No objects detected by OMDET above threshold, skipping SAM.")
             self.set_data(None, [], [], [], image.size)
             return True
 
-        print("Running SAM Inference...")
+        #print("Running SAM Inference...")
         try:
             if self.sam_model is None:
                 print("Error: SAM model not loaded.")
@@ -163,16 +156,8 @@ class omdet_seg(image_segmentation):
             if not isinstance(sam_results, list):
                 sam_results = [sam_results]
 
-            print(f"SAM generated masks for {len(sam_results[0].masks.data) if sam_results and sam_results[0].masks is not None else 0} boxes")
+            #print(f"SAM generated masks for {len(sam_results[0].masks.data) if sam_results and sam_results[0].masks is not None else 0} boxes")
 
-            # Store results using the new set_data method
-            # NOTE: set_data currently expects OMDET boxes in cxcywh_norm format.
-            # We need to either:
-            #   1. Convert filtered_boxes_xyxy back to cxcywh_norm before passing.
-            #   2. Modify set_data to accept xyxy_abs format.
-            # Let's choose option 1 for now to minimize changes to set_data.
-
-            # Convert xyxy_abs back to cxcywh_norm for set_data
             if len(filtered_boxes_xyxy) > 0:
                 xyxy_tensor = torch.tensor(filtered_boxes_xyxy)
                 cxcywh_norm_tensor = torch.zeros_like(xyxy_tensor)
@@ -202,7 +187,7 @@ class omdet_seg(image_segmentation):
         self.image_size = image_size
 
         if sam_results is None or sam_results[0].masks is None or len(sam_results[0].masks.data) == 0:
-            print("No SAM masks generated or provided to set_data.")
+            #print("No SAM masks generated or provided to set_data.")
             return
 
         # sam_results[0].masks.data should be a tensor of shape [N, H, W]

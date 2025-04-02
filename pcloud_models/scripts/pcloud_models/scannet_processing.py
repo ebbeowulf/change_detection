@@ -7,6 +7,7 @@ from rgbd_file_list import rgbd_file_list
 from camera_params import camera_params
 import map_utils
 import pdb
+import open3d as o3d
 
 def load_camera_info(info_file):
     info_dict = {}
@@ -147,11 +148,15 @@ if __name__ == '__main__':
             par_file=args.root_dir+"/%s.txt"%(s_root[-1])
     params=load_camera_info(par_file)
     
-    map_utils.process_images_with_clip(fList,args.targets)
+    map_utils.process_images_with_omdet(fList,args.targets)
     pcloud_init=map_utils.pcloud_from_images(params)
 
     for tgt_class in args.targets:
         pcloud=pcloud_init.process_fList(fList, tgt_class, args.threshold)
         if args.draw:
+            # Convert our point cloud data to Open3D PointCloud
+            pcd = o3d.geometry.PointCloud()
+            pcd.points = o3d.utility.Vector3dVector(pcloud['xyz'])
+            pcd.colors = o3d.utility.Vector3dVector(pcloud['rgb'] / 255.0)  # Convert RGB to float range [0,1]            
+            o3d.io.write_point_cloud("pcloud.ply", pcd)
             o3d.visualization.draw_geometries([pcd])
-
