@@ -16,6 +16,7 @@ from camera_params import camera_params
 import copy
 from sklearn.cluster import DBSCAN
 from farthest_point_sampling.fps import farthest_point_sampling
+import torch.nn.functional as F
 import time
 
 DBSCAN_MIN_SAMPLES=20 
@@ -372,7 +373,6 @@ class pcloud_from_images():
             for tgt in tgt_class_list:
                 if tgt not in self.YS.get_all_classes():
                     is_update_required=True
-
         # Something missing - update required
         if is_update_required:
             if classifier_type=='clipseg':
@@ -387,6 +387,15 @@ class pcloud_from_images():
                 from change_detection.yolo_segmentation import yolo_segmentation
                 self.YS=yolo_segmentation(tgt_class_list)
                 self.classifier_type=classifier_type
+            elif classifier_type=='omdet':
+                from change_detection.omdet_segmentation import omdet_segmentation
+                self.YS=omdet_segmentation(tgt_class_list)
+                self.classifier_type=classifier_type
+            elif classifier_type=='dino':
+                from change_detection.dino_segmentation import dino_segmentation
+                self.YS=dino_segmentation(tgt_class_list)
+                self.classifier_type=classifier_type
+            
 
     def process_image(self, tgt_class, detection_threshold, segmentation_save_file=None):
         # Recover the segmentation file
@@ -397,7 +406,7 @@ class pcloud_from_images():
             # self.YS.process_image_numpy(self.loaded_image['colorT'].cpu().numpy(), detection_threshold)    
             # This numpy bit was originally done to handle images coming from the robot ...
             #   may need to correct for live image stream processing
-            self.YS.process_image(self.loaded_image['colorT'].cpu().numpy(), detection_threshold)    
+            self.YS.process_image(self.loaded_image['colorT'].cpu().numpy(), detection_threshold)  
         return self.get_pts_per_class(tgt_class)
       
     def multi_prompt_process(self, prompts:list, detection_threshold, rotate90:bool=False, classifier_type='clipseg'):
@@ -409,12 +418,11 @@ class pcloud_from_images():
         else:
             self.YS.process_image_numpy(self.loaded_image['colorT'].cpu().numpy(), detection_threshold)    
             # self.YS.process_image(self.loaded_image['colorT'].cpu().numpy(), detection_threshold)    
-
+        
         all_pts=dict()
         # Build the class associated mask for this image
         for tgt_class in prompts:
             all_pts[tgt_class]=self.get_pts_per_class(tgt_class, rotate90=rotate90)
-
         return all_pts
     
     #Apply clustering - slow... probably in need of repair
@@ -481,6 +489,7 @@ class pcloud_from_images():
                     self.load_image_from_file(fList, key)
                     t_array.append(time.time())
                     icloud=self.process_image(tgt_class, conf_threshold, segmentation_save_file=fList.get_segmentation_fileName(key, False, tgt_class))                    
+                    print("A")
                     t_array.append(time.time())
                     if icloud is not None and icloud['xyz'].shape[0]>100:
                         # pcloud['xyz']=np.vstack((pcloud['xyz'],icloud['xyz']))
@@ -517,7 +526,6 @@ class pcloud_from_images():
             pcloud['xyz']=pcloud['xyz'].cpu().numpy()
             pcloud['rgb']=pcloud['rgb'].cpu().numpy()
             pcloud['probs']=pcloud['probs'].cpu().numpy()
-            # pdb.set_trace()
             # Now save the result so we don't have to keep processing this same cloud
             with open(save_fName,'wb') as handle:
                 pickle.dump(pcloud, handle, protocol=pickle.HIGHEST_PROTOCOL)
@@ -596,6 +604,7 @@ class pcloud_from_images():
                        'rgb': pcloud[tgt]['rgb'].cpu().numpy(), 
                        'probs': pcloud[tgt]['probs'].cpu().numpy(), 
                        }
+            print(pcloud_np)
             # Now save the result so we don't have to keep processing this same cloud
             with open(save_fName[tgt],'wb') as handle:
                 pickle.dump(pcloud_np, handle, protocol=pickle.HIGHEST_PROTOCOL)
@@ -613,7 +622,7 @@ def get_distinct_clusters(pcloud, gridcell_size=DBSCAN_GRIDCELL_SIZE, eps=DBSCAN
     clouds=[]
     if pcloud is None or len(pcloud.points)<cluster_min_count:
         return clouds
-    pdb.set_trace()
+    
     if gridcell_size>0:
         pcd_small=pcloud.voxel_down_sample(gridcell_size)
         t_array.append(time.time())

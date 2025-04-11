@@ -7,6 +7,9 @@ from rgbd_file_list import rgbd_file_list
 from camera_params import camera_params
 import map_utils
 import pdb
+import transformers
+import torch
+
 
 def load_camera_info(info_file):
     info_dict = {}
@@ -130,7 +133,34 @@ if __name__ == '__main__':
     parser.add_argument('--pose_filter', dest='pose_filter', action='store_true')
     parser.set_defaults(pose_filter=False)
     # parser.add_argument('--targets',type=list, nargs='+', default=None, help='Set of target classes to build point clouds for')
+
     args = parser.parse_args()
+    model_id = "meta-llama/Meta-Llama-3.1-8B-Instruct"
+
+    pipeline = transformers.pipeline(
+        "text-generation",
+        model=model_id,
+        model_kwargs={"torch_dtype": torch.bfloat16},
+        device_map="auto"
+    )
+    # Get the target object from command-line arguments
+    target = args.targets
+
+    # Define the messages for the task
+    messages = [
+        {"role": "system", "content": "You are an expert at providing alternate queries to improve and cluster object detection models without using their names."},
+        {"role": "user", "content": f"Describe '{target[0]}' as concise and logically as possible without using '{target[0]}' in the description within 5 words or less."},
+    ]
+
+    # Generate the alternate query
+    outputs = pipeline(
+        messages,
+        max_new_tokens=256,
+    )
+    
+    target.append(outputs[0]["generated_text"][-1]["content"])
+    print(f"Target object: {target}")
+
     save_dir=args.root_dir+"/"+args.save_dir
     fList=build_file_structure(args.root_dir+"/"+args.raw_dir, save_dir, args.pose_filter)
     if args.param_file is not None:
@@ -146,5 +176,4 @@ if __name__ == '__main__':
     #map_utils.process_images_with_yolo(fList,args.targets)
     pcloud_init=map_utils.pcloud_from_images(params)
 
-    pcloud=pcloud_init.process_fList_multi(fList, args.targets, args.threshold, args.classifier)
-
+    pcloud=pcloud_init.process_fList_multi(fList, target, args.threshold, args.classifier)

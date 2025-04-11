@@ -13,6 +13,7 @@ import tf
 from geometry_msgs.msg import TransformStamped
 import sys
 import tf2_ros
+import argparse
 
 ROOT_DIR="/home/ebeowulf/projects/ScanNet/data/scans/scene0000_00/raw_output/"
 CAMINFO_FILE="/home/ebeowulf/projects/ScanNet/data/scans/scene0000_00/scene0000_00.txt"
@@ -136,7 +137,7 @@ class publish_and_register():
             self.pub_depth.publish(depthMsg)
             return True
         except Exception as e:
-            print("Failed to publish")
+            print(f"Failed to publish {e}")
         return False
 
     def create_camera_info(self, caminfo_file):
@@ -197,11 +198,13 @@ class publish_and_register():
     
 if __name__ == '__main__':
     rospy.init_node("scannet_publisher")
-    root_dir=rospy.get_param('~root_dir')
-    r_split=root_dir.split('/')
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--root_dir',type=str,help='location of scannet directory to process')
+    args = parser.parse_args()
+    r_split=args.root_dir.split('/')
     if r_split[-1]=='':
-        cam_info=root_dir+r_split[-2]+".txt"
+        cam_info=args.root_dir+r_split[-2]+".txt"
     else:
-        cam_info=root_dir+"/" + r_split[-1]+".txt"
-    RP=publish_and_register(root_dir+"/raw_output/", cam_info)
+        cam_info=args.root_dir+"/" + r_split[-1]+".txt"
+    RP=publish_and_register(args.root_dir+"/raw_output/", cam_info)
     rospy.spin()
