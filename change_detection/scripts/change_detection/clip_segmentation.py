@@ -55,12 +55,12 @@ class clip_seg(image_segmentation):
                 pickle.dump(save_data, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
         # Convert the PIL image to opencv format and return
-        return np.array(image) #[:,:,::-1]
+        return np.array(image)
 
     def process_image_numpy(self, image: np.ndarray, threshold=0.5):
         image_pil=Image.fromarray(image)
         return self.process_image(image_pil, threshold=threshold)
-
+            
     def process_image(self, image: Image, threshold=0.5): #image should be in PIL format
         # print("Clip Inference")
         self.clear_data()
@@ -84,55 +84,42 @@ class clip_seg(image_segmentation):
           
     def set_data(self, outputs, image_size, threshold=0.2):
         if len(outputs.logits.shape)==3:  # need to check because of old libraries auto compressing the first dimension
-            P2=torch.sigmoid(outputs.logits).to('cpu').numpy()
+            # P2=torch.sigmoid(outputs.logits).to('cpu').numpy()
+            P2=torch.sigmoid(outputs.logits)
         else:
-            P2=torch.sigmoid(outputs.logits.unsqueeze(0)).to('cpu').numpy()
-        for dim in range(P2.shape[0]):
-            self.max_probs[dim]=P2[dim,:,:].max()
+            # P2=torch.sigmoid(outputs.logits.unsqueeze(0)).to('cpu').numpy()
+            P2=torch.sigmoid(outputs.logits.unsqueeze(0))
+        P2_large=torch.nn.functional.interpolate(P2.unsqueeze(0), size=(image_size[1],image_size[0]), mode='bilinear', align_corners=False)[0]
+        for dim in range(P2_large.shape[0]):
+            self.max_probs[dim]=float(P2_large[dim].max().cpu())
             # print("%s = %f"%(self.prompts[dim],self.max_probs[dim]))            
-            self.probs[dim]=cv2.resize(P2[dim,:,:],(image_size[0],image_size[1]))
+            self.probs[dim]=P2_large[dim]
             self.masks[dim]=self.probs[dim]>threshold
-
-        # preds = outputs.logits.unsqueeze(1)
-        # P2=self.sigmoid(preds.numpy())
-        # for dim in range(preds.shape[0]):
-        #     self.max_probs[dim]=P2[dim,0,:,:].max()
-        #     print("%s = %f"%(self.prompts[dim],self.max_probs[dim]))            
-        #     self.probs[dim]=cv2.resize(P2[dim,0,:,:],(image_size[0],image_size[1]))
-        #     self.masks[dim]=self.probs[dim]>threshold
-        #     self.build_dbscan_boxes(dim,threshold)
-        # else:
-        #     pdb.set_trace()
-        #     preds = outputs.logits.unsqueeze(0)
-        #     P2=self.sigmoid(preds.numpy())
-        #     self.probs[0]=cv2.resize(P2[0][0],(image_size[0],image_size[1]))
-        #     self.max_probs[0]=P2[0][0].max()
-        #     self.masks[0]=self.probs[0]>threshold
-        #     self.build_dbscan_boxes(0,threshold)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('image',type=str,help='location of image to process')
-    parser.add_argument('tgt_prompt',type=str,default=None,help='specific prompt for clip class')
+    parser.add_argument('--targets', type=str, nargs='*', default=None,
+                    help='Set of target classes to build point clouds for')
     parser.add_argument('--threshold',type=float,default=0.2,help='(optional) threshold to apply during computation ')
     parser.add_argument('--options', type=str, default=None, help="Other options: PIL = open with PIL library, CV2 = open with opencv library, CV2_ROTATE = open with opencv and rotate during clip processing")
     args = parser.parse_args()
 
-    CS=clip_seg([args.tgt_prompt])
+    CS=clip_seg(args.targets)
 
     if args.options is None or args.options=="PIL":
         image=CS.process_file(args.image, threshold=args.threshold)
-        mask=CS.get_mask(0)
+        mask=CS.get_mask(0).cpu().numpy()
     elif args.options =="CV2":
         image=cv2.imread(args.image)        
         CS.process_image_numpy(image, threshold=args.threshold)
-        mask=CS.get_mask(0)
+        mask=CS.get_mask(0).cpu().numpy()
     elif args.options=="CV2_ROTATE":
         image=cv2.imread(args.image)
         image_rot=np.rot90(image, k=1, axes=(1,0))
         image_pil=Image.fromarray(image_rot)
         CS.process_image(image_pil, threshold=args.threshold)
-        mask=np.rot90(CS.get_mask(0),axes=(0,1))
+        mask=np.rot90(CS.get_mask(0),axes=(0,1)).cpu().numpy()
         pdb.set_trace()
     else:
         print(f"Invalid option {args.options}")

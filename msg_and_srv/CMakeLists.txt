@@ -60,7 +60,9 @@ add_service_files(
   FILES
   GetCluster.srv
   DynamicCluster.srv
+  SetFloat.srv
   SetInt.srv
+  SetString.srv
 )
 
 ## Generate actions in the 'action' folder

@@ -1,5 +1,6 @@
 import copy
 import numpy as np
+import hashlib
 
 class rgbd_file_list():
     def __init__(self, color_image_dir:str, depth_image_dir:str, intermediate_save_dir:str, is_pose_filtered:bool=False):
@@ -29,12 +30,14 @@ class rgbd_file_list():
 
     def get_segmentation_fileName(self, id:int, is_yolo:bool, tgt_class:str):
         if is_yolo:
-            return self.get_yolo_fileName(id)
+            return self.get_yolo_fileName(id, tgt_class)
         else:
             return self.get_clip_fileName(id, tgt_class)
         
-    def get_yolo_fileName(self, id:int):
-        return self.intermediate_save_dir+self.all_files[id]['color']+".yolo.pkl"
+    def get_yolo_fileName(self, id:int, tgt_class:str):
+        cls_str=copy.copy(tgt_class)
+        cls_str=cls_str.replace(" ","_")
+        return self.intermediate_save_dir+self.all_files[id]['color']+".%s.yolo.pkl"%(cls_str)
 
     def get_clip_fileName(self, id:int, tgt_class:str):
         cls_str=copy.copy(tgt_class)
@@ -61,14 +64,32 @@ class rgbd_file_list():
         else:
             return self.intermediate_save_dir+"%s.ply"%(cls)
 
-    def get_combined_raw_fileName(self, cls:str):
+    def get_combined_raw_fileName(self, cls: str, classifier_type=None):
+        # Helper to shorten long class names
+        def shorten_name(name, max_length=100):
+            if len(name) > max_length:
+                hash_part = hashlib.md5(name.encode()).hexdigest()
+                return name[:max_length - len(hash_part) - 1] + "." + hash_part
+            return name
+
+        short_cls = shorten_name(cls)
+        
+        if classifier_type is None:
+            tmp = self.intermediate_save_dir + short_cls + ".raw"
+        else:
+            tmp = self.intermediate_save_dir + short_cls + "." + classifier_type + ".raw"
+        
         if self.is_pose_filtered:
-            return self.intermediate_save_dir+cls+".raw.filtered.pkl"
-        return self.intermediate_save_dir+cls+".raw.pkl"
+            return tmp + ".filtered.pkl"
+        return tmp + ".pkl"
+
 
     def get_annotation_file(self):
         return self.intermediate_save_dir+"annotations.json"
-    
+
+    def get_combo_annotation_file(self):
+        return self.intermediate_save_dir+"annotations.combo.json"
+
     def get_labeled_pcloud_fileName(self, cls:str):
         return self.intermediate_save_dir+"%s.labeled.ply"%(cls)
 

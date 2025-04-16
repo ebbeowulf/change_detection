@@ -10,7 +10,7 @@ from threading import Lock
 import tf
 import message_filters
 
-DEFAULT_SAVEDIR="/data2/datasets/"
+DEFAULT_SAVEDIR="/data2/student_data/emartinso/robot_object_detection/"
 
 def normalizeAngle(angle):
     while angle>=np.pi:
@@ -85,23 +85,44 @@ class image_saver:
         return poseM
 
     def rgbd_callback(self, rgb_img, depth_img):
-        try:
-            #(trans,rot) = self.listener.lookupTransform('/map',img_msg.header.frame_id,img_msg.header.stamp)
-            #(trans,rot) = self.listener.lookupTransform('/map','/base_link',img_msg.header.stamp)
-            (trans,rot) = self.listener.lookupTransform('/base_link',rgb_img.header.frame_id,rgb_img.header.stamp)
-            base_relativeM=np.matmul(tf.transformations.translation_matrix(trans),tf.transformations.quaternion_matrix(rot))
-        except (tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException):
-            print("No Transform found")
-            return
-        print("Transform found")
-        print(trans)
-        odom=self.get_pose(rgb_img.header.stamp)
-        if odom is None:
-            print("Missing odometry information - skipping")
-            return
+        # try:
+        #     #(trans,rot) = self.listener.lookupTransform('/map',img_msg.header.frame_id,img_msg.header.stamp)
+        #     #(trans,rot) = self.listener.lookupTransform('/map','/base_link',img_msg.header.stamp)
+        #     (trans,rot) = self.listener.lookupTransform('/base_link',rgb_img.header.frame_id,rgb_img.header.stamp)
+        #     base_relativeM=np.matmul(tf.transformations.translation_matrix(trans),tf.transformations.quaternion_matrix(rot))
+        # except (tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException):
+        #     print("No Transform found")
+        #     return
+        # print("Transform found")
+        # print(trans)
+        # odom=self.get_pose(rgb_img.header.stamp)
+        # if odom is None:
+        #     print("Missing odometry information - skipping")
+        #     return
         
-        # Convert the ROS Image message to a CV2 Image
-        poseM=np.matmul(odom,base_relativeM)
+        # # Convert the ROS Image message to a CV2 Image
+        # poseM=np.matmul(odom,base_relativeM)
+        if 1: # if the /map transform is correctly setup, then use tf all the way
+            try:
+                (trans,rot) = self.listener.lookupTransform('/map',depth_img.header.frame_id,depth_img.header.stamp)
+                poseM=np.matmul(tf.transformations.translation_matrix(trans),tf.transformations.quaternion_matrix(rot))
+            except (tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException):
+                print("No Transform found")
+                return
+        else: # otherwise just get the transform to the base and then use the published odometry ... less accurate
+            try:
+                (trans,rot) = self.listener.lookupTransform('/base_link',depth_img.header.frame_id,depth_img.header.stamp)
+                base_relativeM=np.matmul(tf.transformations.translation_matrix(trans),tf.transformations.quaternion_matrix(rot))
+            except (tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException):
+                print("No Transform found")
+                return
+            odom=self.get_pose(rgb_img.header.stamp)
+            if odom is None:
+                print("Missing odometry information - skipping")
+                return
+            
+            # Convert the ROS Image message to a CV2 Image
+            poseM=np.matmul(odom,base_relativeM)        
         poseQ=tf.transformations.quaternion_from_matrix(poseM)
 
         try:

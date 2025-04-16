@@ -1,6 +1,7 @@
 import numpy as np
 import pdb
 from sklearn.cluster import DBSCAN
+import cv2
 
 class image_segmentation():
     def __init__(self):
@@ -22,6 +23,42 @@ class image_segmentation():
     #   save_fileName - save the resulting intermediate file? (default = no)
     def process_file(self, fName:str, threshold:float, save_fileName:str=None):
         print("Base: process_file")
+    
+    def compute_dynamic_threshold(self, image, base_threshold=0.5, min_threshold=0.3, max_threshold=0.7):
+        """
+        Compute a dynamic threshold based on image brightness.
+        
+        Args:
+            image (np.ndarray): Input image in BGR format.
+            base_threshold (float): Default threshold to adjust (e.g., 0.5).
+            min_threshold (float): Minimum allowable threshold (e.g., 0.3).
+            max_threshold (float): Maximum allowable threshold (e.g., 0.7).
+        
+        Returns:
+            float: Dynamic threshold value.
+        """
+        # Convert to grayscale for brightness calculation
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        
+        # Compute mean intensity (brightness)
+        mean_intensity = np.mean(gray)
+        
+        # Normalize brightness to [0, 1]
+        normalized_intensity = mean_intensity / 255.0
+        
+        # Adjust threshold based on brightness
+        scale_factor = 0.2  # Controls sensitivity to brightness changes
+        dynamic_threshold = base_threshold + (normalized_intensity - 0.5) * scale_factor
+        
+        # Clamp to min and max thresholds
+        dynamic_threshold = max(min_threshold, min(max_threshold, dynamic_threshold))
+        
+        edges = cv2.Canny(gray, 100, 200)
+        edge_density = np.sum(edges) / (gray.shape[0] * gray.shape[1])
+        if edge_density > 0.1:
+            dynamic_threshold = base_threshold + 0.1
+
+        return dynamic_threshold
 
     # Load an existing results file - returns True if successful
     def load_file(self, fileName):

@@ -7,7 +7,9 @@ from rgbd_file_list import rgbd_file_list
 from camera_params import camera_params
 import map_utils
 import pdb
-import open3d as o3d
+import transformers
+import torch
+
 
 def load_camera_info(info_file):
     info_dict = {}
@@ -128,15 +130,37 @@ if __name__ == '__main__':
     parser.add_argument('--save_dir',type=str,default='raw_output/save_results', help='subdirectory in which to store the intermediate files')
     parser.add_argument('--threshold',type=float,default=0.75, help='proposed detection threshold (default = 0.75)')
     parser.add_argument('--classifier',type=str,default='clipseg', help='select from available detection algorithms {clipseg, yolo, yolo_world}')
-    parser.add_argument('--draw', dest='draw', action='store_true')
-    parser.set_defaults(draw=False)
-    # parser.add_argument('--use_connected_components', dest='use_cc', action='store_true')
-    # parser.set_defaults(use_cc=True)
     parser.add_argument('--pose_filter', dest='pose_filter', action='store_true')
     parser.set_defaults(pose_filter=False)
     # parser.add_argument('--targets',type=list, nargs='+', default=None, help='Set of target classes to build point clouds for')
+
     args = parser.parse_args()
-    print(args.targets)
+    model_id = "meta-llama/Meta-Llama-3.1-8B-Instruct"
+
+    pipeline = transformers.pipeline(
+        "text-generation",
+        model=model_id,
+        model_kwargs={"torch_dtype": torch.bfloat16},
+        device_map="auto"
+    )
+    # Get the target object from command-line arguments
+    target = args.targets
+
+    # Define the messages for the task
+    messages = [
+        {"role": "system", "content": "You are an expert at providing alternate queries to improve and cluster object detection models without using their names."},
+        {"role": "user", "content": f"Describe '{target[0]}' as concise and logically as possible without using '{target[0]}' in the description within 5 words or less."},
+    ]
+
+    # Generate the alternate query
+    outputs = pipeline(
+        messages,
+        max_new_tokens=256,
+    )
+    
+    target.append(outputs[0]["generated_text"][-1]["content"])
+    print(f"Target object: {target}")
+
     save_dir=args.root_dir+"/"+args.save_dir
     fList=build_file_structure(args.root_dir+"/"+args.raw_dir, save_dir, args.pose_filter)
     if args.param_file is not None:
@@ -149,19 +173,7 @@ if __name__ == '__main__':
             par_file=args.root_dir+"/%s.txt"%(s_root[-1])
     params=load_camera_info(par_file)
     
-<<<<<<< HEAD
-    map_utils.process_images_with_omdet(fList,args.targets)
-=======
     #map_utils.process_images_with_yolo(fList,args.targets)
->>>>>>> 773aa37985836ddc92484d34a04f5972cd9cf75e
     pcloud_init=map_utils.pcloud_from_images(params)
 
-    for tgt_class in args.targets:
-        pcloud=pcloud_init.process_fList(fList, tgt_class, args.threshold, args.classifier)
-        if args.draw:
-            # Convert our point cloud data to Open3D PointCloud
-            pcd = o3d.geometry.PointCloud()
-            pcd.points = o3d.utility.Vector3dVector(pcloud['xyz'])
-            pcd.colors = o3d.utility.Vector3dVector(pcloud['rgb'] / 255.0)  # Convert RGB to float range [0,1]            
-            o3d.io.write_point_cloud("pcloud.ply", pcd)
-            o3d.visualization.draw_geometries([pcd])
+    pcloud=pcloud_init.process_fList_multi(fList, target, args.threshold, args.classifier)
