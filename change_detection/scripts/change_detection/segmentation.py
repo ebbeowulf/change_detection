@@ -81,26 +81,26 @@ class image_segmentation():
         elif type(id_or_lbl)==int and id_or_lbl in self.id2label:
             return id_or_lbl
 
-    def get_mask(self, id_or_lbl):
+    def get_mask(self, id_or_lbl, source=None):
         id = self.get_id(id_or_lbl)
         if id is not None and id in self.masks:
             return self.masks[id]
         return None
     
-    def get_max_prob(self, id_or_lbl):
+    def get_max_prob(self, id_or_lbl, source=None):
         id = self.get_id(id_or_lbl)
         if id is not None and id in self.max_probs:
             return self.max_probs[id]
         return None
 
-    def get_prob_array(self, id_or_lbl):
+    def get_prob_array(self, id_or_lbl, source=None):
         id = self.get_id(id_or_lbl)
         if id is not None and id in self.probs:
             return self.probs[id]
         return None
 
     # Get saved boxes associated with the target
-    def get_boxes(self, id_or_lbl):
+    def get_boxes(self, id_or_lbl, source=None):
         id = self.get_id(id_or_lbl)
         if id is not None and id in self.boxes:
             return self.boxes[id]
