@@ -1,6 +1,6 @@
 from change_detection.segmentation import image_segmentation
 from change_detection.omdet_segmentation import omdet_segmentation
-from change_detection.clip_segmentation import clip_segmentation
+from change_detection.clip_segmentation import clip_seg
 import torch
 import numpy as np
 from PIL import Image
@@ -15,18 +15,23 @@ class hybrid_segmentation(image_segmentation):
         
         # Initialize both detectors
         self.omdet_detector = omdet_segmentation(prompts)
-        self.clipseg_detector = clip_segmentation(prompts)
+        self.clipseg_detector = clip_seg(prompts)
         
         # Common parameters
         self.prompts = prompts
+        self.id2label={idx: key for idx,key in enumerate(self.prompts)}
+        self.label2id={self.id2label[key]: key for key in self.id2label}
         self.clear_data()
-        
+    
+    
     def clear_data(self):
         self.masks = {}
         self.boxes = {}
         self.scores = {}
+        self.max_probs = {}
+        self.probs = {}
         self.sources = {}
-    
+
     def process_image(self, image, threshold=0.25):
         """Process image with both models"""
         self.clear_data()
