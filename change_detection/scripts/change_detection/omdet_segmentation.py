@@ -102,9 +102,12 @@ class omdet_seg(image_segmentation):
         #print("Running OMDET Inference...")
         try:
 <<<<<<< HEAD
+<<<<<<< HEAD
             inputs = self.processor(text=self.prompts, images=image, return_tensors="pt").to(DEVICE)
 
 =======
+=======
+>>>>>>> 31e9f23... updates
             inputs = self.processor(text=[self.prompts], images=cv_image, return_tensors="pt")
             inputs.to(DEVICE)
             # predict
@@ -357,6 +360,9 @@ class omdet_seg(image_segmentation):
         else:
             print("No valid data to set.")
     
+<<<<<<< HEAD
+>>>>>>> 31e9f23... updates
+=======
 >>>>>>> 31e9f23... updates
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -410,4 +416,7 @@ if __name__ == '__main__':
 =======
     cv2.imshow("res",IM)
     cv2.waitKey()
+<<<<<<< HEAD
+>>>>>>> 31e9f23... updates
+=======
 >>>>>>> 31e9f23... updates

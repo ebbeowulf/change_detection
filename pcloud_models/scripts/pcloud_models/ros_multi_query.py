@@ -278,8 +278,11 @@ class multi_query_localize:
         resp.success=False
 
 <<<<<<< HEAD
+<<<<<<< HEAD
         positive_clusters, pos_likelihoods=self.match_clusters('combo-mean',request.main_query, request.llm_query)
 =======
+=======
+>>>>>>> 31e9f23... updates
         self.debug_pub.publish(f"Called top1_cluster_service with num_points={request.num_points}")
 
         positive_clusters, pos_likelihoods=self.match_clusters(self.cluster_metric, self.query_list[0], self.query_list[1])
@@ -291,6 +294,7 @@ class multi_query_localize:
 
         whichC=np.argmax(pos_likelihoods)
 <<<<<<< HEAD
+<<<<<<< HEAD
         for idx in range(request.num_points):
             fPx=positive_clusters[whichC].farthestP[idx]
             pt=Point()
@@ -299,6 +303,8 @@ class multi_query_localize:
             pt.z=positive_clusters[whichC].pts[fPx][2]
             resp.pts.append(pt)
 =======
+=======
+>>>>>>> 31e9f23... updates
         self.debug_pub.publish(f"Selected cluster {whichC} with likelihood {pos_likelihoods[whichC]:.4f}")
     
         if whichC>=0:
