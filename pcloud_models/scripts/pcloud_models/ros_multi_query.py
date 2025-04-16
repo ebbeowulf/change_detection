@@ -16,6 +16,13 @@ from two_query_localize import create_object_clusters, calculate_iou, estimate_l
 from msg_and_srv.srv import DynamicCluster, DynamicClusterRequest, DynamicClusterResponse, SetInt, SetIntRequest, SetIntResponse
 from geometry_msgs.msg import Point
 from visualization_msgs.msg import Marker, MarkerArray
+<<<<<<< HEAD
+=======
+import torch
+import transformers
+from std_msgs.msg import String
+
+>>>>>>> 31e9f23... updates
 
 TRACK_COLOR=True
 
@@ -72,6 +79,57 @@ class multi_query_localize:
         self.clear_srv = rospy.Service('clear_clouds', Trigger, self.clear_clouds_service)
         self.top1_cluster_srv = rospy.Service('get_top1_cluster', DynamicCluster, self.top1_cluster_service)
         self.marker_pub=rospy.Publisher('cluster_markers',MarkerArray,queue_size=5)
+<<<<<<< HEAD
+=======
+        self.draw_clusters_srv = rospy.Service('draw_pclouds', Trigger, self.draw_pclouds)
+        self.debug_pub = rospy.Publisher('/debug_info', String, queue_size=10)
+
+    def draw_pclouds(self, msg):
+
+        # positive_clusters, pos_likelihoods = self.match_clusters('combo-mean')
+        import open3d as o3d
+        from draw_pcloud import drawn_image
+
+        for query in self.query_list:
+            if self.pcloud[query]['xyz'].shape[0]>0:
+                positive_clusters, pos_likelihoods=self.match_clusters(self.cluster_metric,query, query)
+                if TRACK_COLOR:
+                    pcd_main=pointcloud_open3d(self.pcloud[query]['xyz'].cpu().numpy(),self.pcloud[query]['rgb'].cpu().numpy())
+                else:
+                    pcd_main=pointcloud_open3d(self.pcloud[query]['xyz'].cpu().numpy(), None)
+                
+                dI=drawn_image(pcd_main)
+                boxes = [ obj_.box for obj_ in positive_clusters ]
+                dI.add_boxes_to_fg(boxes)
+                fName=f"draw_clusters.{query.replace(' ','_')}.{self.pcloud[query]['xyz'].shape[0]}.png"
+                pName=f"draw_clusters.{query.replace(' ','_')}.{self.pcloud[query]['xyz'].shape[0]}.ply"
+                if self.storage_dir is not None:
+                    fName=self.storage_dir+"/"+fName
+                dI.save_fg(fName)
+                o3d.io.write_point_cloud(pName, pcd_main)
+
+        resp=TriggerResponse()
+        resp.success=True
+        resp.message=fName
+        return resp
+
+    def set_cluster_metric_service(self, req):
+        if req.value=='main-mean':
+            print("Setting new cluster metric as main-mean")
+            self.cluster_metric='main-mean'
+        elif req.value=='combo-mean': # combined mean
+            print("Setting new cluster metric as combo-mean")
+            self.cluster_metric='combo-mean'
+        elif req.value=='main-room': # combined main + room
+            print("Setting new cluster metric as main-room")
+            self.cluster_metric='main-room'
+        elif req.value=='combo-room': # combined main + room
+            print("Setting new cluster metric as combo-room")
+            self.cluster_metric='combo-room'
+        else:
+            print('Currently supported options include main-mean, combo-mean, main-room, combo-room')
+        return SetStringResponse()
+>>>>>>> 31e9f23... updates
 
     def set_cluster_size_service(self, req):
         self.cluster_min_points=req.value
@@ -163,6 +221,7 @@ class multi_query_localize:
 
     # create the clusters and match them, returning any that exceed the detection threshold
     def match_clusters(self, method, main_query, llm_query):
+        print(f"DEBUG: Using detection_threshold = {self.detection_threshold}")
         if main_query in self.query_list:
             objects_main=self.get_clusters_ros(self.pcloud[main_query])
         else:
@@ -191,7 +250,7 @@ class multi_query_localize:
             positive_cluster_likelihood=[ obj_.prob_stats['mean'] for obj_ in objects_llm ]
         else:
             for idx0 in range(len(objects_main)):                    
-                cl_stats=[idx0, objects_main[idx0].prob_stats['max'], objects_main[idx0].prob_stats['mean'], -1, -1]
+                cl_stats=[idx0, objects_main[idx0].prob_stats['max'], objects_main[idx0].prob_stats['mean'], 0, 0]
                 for idx1 in range(len(objects_llm)):
                     IOU=calculate_iou(objects_main[idx0].box[0],objects_main[idx0].box[1],objects_llm[idx1].box[0],objects_llm[idx1].box[1])
                     if IOU>self.cluster_iou:
@@ -199,6 +258,7 @@ class multi_query_localize:
                         cl_stats[4]=max(cl_stats[4],objects_llm[idx1].prob_stats['mean'])
 
                 lk=estimate_likelihood(cl_stats, method)
+                print(f"CLUSTER {idx0}: stats={cl_stats}, method={method}, likelihood={lk:.6f}, threshold={self.detection_threshold:.6f}")
                 if lk>self.detection_threshold:
                     positive_clusters.append(objects_main[idx0])
                     positive_cluster_likelihood.append(lk)
@@ -208,19 +268,29 @@ class multi_query_localize:
 
         # publish the markers
         self.publish_object_markers()
-
+        self.debug_pub.publish(f"FINAL RESULT: Found {len(positive_clusters)} clusters that passed threshold={self.detection_threshold}")
+        if len(positive_clusters) > 0:
+            self.debug_pub.publish(f"Best likelihood: {max(positive_cluster_likelihood):.6f}")
         return positive_clusters, positive_cluster_likelihood
 
     def top1_cluster_service(self, request:DynamicClusterRequest):
         resp=DynamicClusterResponse()
         resp.success=False
 
+<<<<<<< HEAD
         positive_clusters, pos_likelihoods=self.match_clusters('combo-mean',request.main_query, request.llm_query)
+=======
+        self.debug_pub.publish(f"Called top1_cluster_service with num_points={request.num_points}")
+
+        positive_clusters, pos_likelihoods=self.match_clusters(self.cluster_metric, self.query_list[0], self.query_list[1])
+>>>>>>> 31e9f23... updates
         if len(positive_clusters)==0:
             resp.message="No clusters found"
+            self.debug_pub.publish(f"No clusters found when using queries: {self.query_list[0]} and {self.query_list[1]}")
             return resp
 
         whichC=np.argmax(pos_likelihoods)
+<<<<<<< HEAD
         for idx in range(request.num_points):
             fPx=positive_clusters[whichC].farthestP[idx]
             pt=Point()
@@ -228,6 +298,19 @@ class multi_query_localize:
             pt.y=positive_clusters[whichC].pts[fPx][1]
             pt.z=positive_clusters[whichC].pts[fPx][2]
             resp.pts.append(pt)
+=======
+        self.debug_pub.publish(f"Selected cluster {whichC} with likelihood {pos_likelihoods[whichC]:.4f}")
+    
+        if whichC>=0:
+            positive_clusters[whichC].sample_pcloud(request.num_points)
+            for idx in range(request.num_points):
+                fPx=positive_clusters[whichC].farthestP[idx]
+                pt=Point()
+                pt.x=positive_clusters[whichC].pts[fPx][0]
+                pt.y=positive_clusters[whichC].pts[fPx][1]
+                pt.z=positive_clusters[whichC].pts[fPx][2]
+                resp.pts.append(pt)
+>>>>>>> 31e9f23... updates
         resp.bbox3d=np.hstack((positive_clusters[whichC].box[0],positive_clusters[whichC].box[1])).tolist()
         return resp
     

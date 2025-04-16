@@ -377,6 +377,7 @@ class pcloud_from_images():
                     'rgb': self.loaded_image['colorT'][filtered_maskT].cpu().numpy(), 
                     'probs': probs[filtered_maskT]}
         else:
+<<<<<<< HEAD
             return {'xyz': pts_rot.cpu().numpy(), 
                     'rgb': self.loaded_image['colorT'][filtered_maskT].cpu().numpy(), 
                     'probs': self.YS.get_prob_array(tgt_class)[filtered_maskT]}
@@ -387,6 +388,34 @@ class pcloud_from_images():
         if self.YS is None or tgt_class not in self.YS.get_all_classes():
             from change_detection.omdet_segmentation import omdet_seg
             self.YS=omdet_seg([tgt_class])
+=======
+            for tgt in tgt_class_list:
+                if tgt not in self.YS.get_all_classes():
+                    is_update_required=True
+        # Something missing - update required
+        if is_update_required:
+            if classifier_type=='clipseg':
+                from change_detection.clip_segmentation import clip_seg
+                self.YS=clip_seg(tgt_class_list)
+                self.classifier_type=classifier_type
+            elif classifier_type=='yolo_world':
+                from change_detection.yolo_world_segmentation import yolo_world_segmentation
+                self.YS=yolo_world_segmentation(tgt_class_list)
+                self.classifier_type=classifier_type
+            elif classifier_type=='yolo':
+                from change_detection.yolo_segmentation import yolo_segmentation
+                self.YS=yolo_segmentation(tgt_class_list)
+                self.classifier_type=classifier_type
+            elif classifier_type=='omdet':
+                from change_detection.omdet_segmentation import omdet_segmentation
+                self.YS=omdet_segmentation(tgt_class_list)
+                self.classifier_type=classifier_type
+            elif classifier_type=='owl':
+                from change_detection.owl_segmentation import owl_segmentation
+                self.YS=owl_segmentation(tgt_class_list)
+                self.classifier_type=classifier_type
+            
+>>>>>>> 31e9f23... updates
 
         # Recover the segmentation file
         if segmentation_save_file is not None and os.path.exists(segmentation_save_file):

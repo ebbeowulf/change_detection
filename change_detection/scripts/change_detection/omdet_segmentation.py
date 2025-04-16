@@ -101,8 +101,14 @@ class omdet_seg(image_segmentation):
 
         #print("Running OMDET Inference...")
         try:
+<<<<<<< HEAD
             inputs = self.processor(text=self.prompts, images=image, return_tensors="pt").to(DEVICE)
 
+=======
+            inputs = self.processor(text=[self.prompts], images=cv_image, return_tensors="pt")
+            inputs.to(DEVICE)
+            # predict
+>>>>>>> 31e9f23... updates
             with torch.no_grad():
                 outputs = self.model(**inputs)
 
@@ -189,6 +195,7 @@ class omdet_seg(image_segmentation):
         if sam_results is None or sam_results[0].masks is None or len(sam_results[0].masks.data) == 0:
             #print("No SAM masks generated or provided to set_data.")
             return
+<<<<<<< HEAD
 
         # sam_results[0].masks.data should be a tensor of shape [N, H, W]
         # where N is the number of boxes/masks
@@ -269,6 +276,88 @@ class omdet_seg(image_segmentation):
         return self.scores[prompt_index]
 
 
+=======
+        # Use processor's post-processing
+        results = self.processor.post_process_grounded_object_detection(
+            outputs,
+            text_labels=[self.prompts],
+            target_sizes=torch.tensor([cv_image.size[::-1]]), # Target size (height, width)
+            threshold=threshold,
+            nms_threshold=0.5
+        )[0]
+        if results and results['boxes'] is not None and len(results['boxes']) > 0:
+            # Run SAM with YOLO bounding boxes    
+            print("Detected classes: ", results['text_labels'])
+            sam_results = self.sam_model(cv_image, bboxes=results['boxes'])
+            sam_results[0].class_ids=results['labels']
+            sam_results[0].confs=results['scores']
+            # Pass SAM results and YOLO data to set_data       
+            self.set_data(sam_results)
+            return sam_results
+        else:
+            return None
+
+    def process_image_numpy(self, image: np.ndarray, threshold=0.25):
+        image_pil=Image.fromarray(image)
+        return self.process_image(image_pil, threshold=threshold)
+
+
+    def set_data(self, sam_results):
+        """Set internal data from SAM results and optional YOLO data."""
+        self.clear_data()
+        class_ids = sam_results[0].class_ids.cpu().numpy()        
+        confs = sam_results[0].confs.cpu().numpy()        
+        boxes = sam_results[0].boxes.xyxy.cpu().numpy()        
+        # Handle case from process_image (SAM results + YOLO data)
+        if sam_results and class_ids is not None and confs is not None and boxes is not None:
+            if sam_results[0].masks is not None:
+                # pdb.set_trace()
+                # masks = sam_results[0].masks # .data.cpu().numpy()  # SAM masks as NumPy array
+                # if len(masks) != len(class_ids):
+                #     raise ValueError("Number of masks must match number of detections")
+                
+                for i, mask in enumerate(sam_results[0].masks):
+                    # Convert data type
+                    # if mask.dtype == bool:
+                    #     mask = mask.astype(np.uint8)
+                    # elif mask.dtype == np.float32:
+                    #     mask = (mask * 255).astype(np.uint8)
+                    # else:
+                    #     print(f"Unexpected mask dtype: {mask.dtype}")
+                    #     continue
+
+                    cls = int(class_ids[i])  # Use the correct class ID for this detection
+                    # prob = confs[i]
+                    # box = boxes[i]
+                    
+                    # Store bounding box and confidence
+                    if cls not in self.boxes:
+                        self.boxes[cls] = []
+                    self.boxes[cls].append((confs[i], boxes[i]))
+                    
+                    # Resize mask to original image size
+
+                    # mask_resized = cv2.resize(
+                    #     mask, 
+                    #     (self.image_size[0], self.image_size[1]),  # (width, height)
+                    #     interpolation=cv2.INTER_NEAREST
+                    # )
+                    prob_array = (sam_results[0].confs[i] * mask.data).squeeze()
+                    # Store mask and probabilities
+                    if cls in self.masks:
+                        self.masks[cls] = self.masks[cls] + mask.data.squeeze()
+                        self.max_probs[cls] = max(self.max_probs[cls], confs[i])
+                        self.probs[cls] = torch.maximum(self.probs[cls], prob_array)
+                    else:
+                        self.masks[cls] = mask.data.squeeze()
+                        self.max_probs[cls] = confs[i]
+                        self.probs[cls] = prob_array
+            else:
+                print("No masks returned by SAM.")
+        else:
+            print("No valid data to set.")
+    
+>>>>>>> 31e9f23... updates
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('image',type=str,help='location of image to process')
@@ -280,6 +369,7 @@ if __name__ == '__main__':
         print("Error: Please provide at least one target prompt.")
         exit()
 
+<<<<<<< HEAD
     # Use omdet_seg, not clip_seg
     OS=omdet_seg(args.tgt_prompt)
 
@@ -317,3 +407,7 @@ if __name__ == '__main__':
         print("Press any key to exit...")
         cv2.waitKey(0)
         cv2.destroyAllWindows()
+=======
+    cv2.imshow("res",IM)
+    cv2.waitKey()
+>>>>>>> 31e9f23... updates
