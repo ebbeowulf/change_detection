@@ -17,19 +17,9 @@ from msg_and_srv.srv import DynamicCluster, DynamicClusterRequest, DynamicCluste
 from msg_and_srv.srv import SetString, SetStringResponse, SetStringRequest, SetFloat, SetFloatResponse, SetFloatRequest
 from geometry_msgs.msg import Point
 from visualization_msgs.msg import Marker, MarkerArray
-<<<<<<< HEAD
-<<<<<<< HEAD
-=======
-import torch
-import transformers
-from std_msgs.msg import String
-
->>>>>>> 31e9f23... updates
-=======
 import torch
 import transformers
 
->>>>>>> 773aa37985836ddc92484d34a04f5972cd9cf75e
 
 TRACK_COLOR=True
 
@@ -94,14 +84,7 @@ class multi_query_localize:
         self.clear_srv = rospy.Service('clear_clouds', Trigger, self.clear_clouds_service)
         self.top1_cluster_srv = rospy.Service('get_top1_cluster', DynamicCluster, self.top1_cluster_service)
         self.marker_pub=rospy.Publisher('cluster_markers',MarkerArray,queue_size=5)
-<<<<<<< HEAD
-<<<<<<< HEAD
-=======
         self.draw_clusters_srv = rospy.Service('draw_pclouds', Trigger, self.draw_pclouds)
-        self.debug_pub = rospy.Publisher('/debug_info', String, queue_size=10)
-=======
-        self.draw_clusters_srv = rospy.Service('draw_pclouds', Trigger, self.draw_pclouds)
->>>>>>> 773aa37985836ddc92484d34a04f5972cd9cf75e
 
     def draw_pclouds(self, msg):
 
@@ -145,13 +128,18 @@ class multi_query_localize:
         elif req.value=='combo-room': # combined main + room
             print("Setting new cluster metric as combo-room")
             self.cluster_metric='combo-room'
+        elif req.value=='hybrid-boost': # special hybrid metric
+            print("Setting new cluster metric as hybrid-boost")
+            self.cluster_metric='hybrid-boost'
+        elif req.value=='main-omdet': # OmDet only
+            print("Setting new cluster metric as main-omdet")
+            self.cluster_metric='main-omdet'
+        elif req.value=='main-clipseg': # CLIPSeg only
+            print("Setting new cluster metric as main-clipseg")
+            self.cluster_metric='main-clipseg'
         else:
-            print('Currently supported options include main-mean, combo-mean, main-room, combo-room')
+            print('Currently supported options include main-mean, combo-mean, main-room, combo-room, hybrid-boost, main-omdet, main-clipseg')
         return SetStringResponse()
-<<<<<<< HEAD
->>>>>>> 31e9f23... updates
-=======
->>>>>>> 773aa37985836ddc92484d34a04f5972cd9cf75e
 
     def set_cluster_size_service(self, req):
         self.cluster_min_points=req.value
@@ -254,15 +242,42 @@ class multi_query_localize:
 
     # create the clusters and match them, returning any that exceed the detection threshold
     def match_clusters(self, method, main_query, llm_query):
-        print(f"DEBUG: Using detection_threshold = {self.detection_threshold}")
-        if main_query in self.query_list:
-            objects_main=self.get_clusters_ros(self.pcloud[main_query])
+        # Handle model-specific methods
+        if '-omdet' in method or '-clipseg' in method:
+            model = method.split('-')[-1]  # Extract model name (omdet or clipseg)
+            base_method = method.replace(f"-{model}", "")  # Get base method name
+            
+            # Get the appropriate keys for model-specific point clouds
+            main_key = f"{main_query}_{model}"
+            llm_key = f"{llm_query}_{model}"
+            
+            # Check if keys exist in the point cloud dictionary
+            if main_key in self.pcloud:
+                objects_main = self.get_clusters_ros(self.pcloud[main_key])
+            else:
+                objects_main = []
+                
+            if llm_key in self.pcloud:
+                objects_llm = self.get_clusters_ros(self.pcloud[llm_key])
+            else:
+                objects_llm = []
+                
+            # Save original method and temporarily set to the base method
+            original_method = method
+            method = base_method  # Use the base method (without the model suffix)
         else:
-            objects_main=[]
-        if llm_query in self.query_list:
-            objects_llm=self.get_clusters_ros(self.pcloud[llm_query])
-        else:
-            objects_llm=[]
+            # Original code for standard methods
+            if main_query in self.query_list:
+                objects_main = self.get_clusters_ros(self.pcloud[main_query])
+            else:
+                objects_main = []
+                
+            if llm_query in self.query_list:
+                objects_llm = self.get_clusters_ros(self.pcloud[llm_query])
+            else:
+                objects_llm = []
+                
+            original_method = method  # No change for standard methods
 
         # Update current object list so that markers are published correctly
         self.known_objects=[]
@@ -283,7 +298,7 @@ class multi_query_localize:
             positive_cluster_likelihood=[ obj_.prob_stats['mean'] for obj_ in objects_llm ]
         else:
             for idx0 in range(len(objects_main)):                    
-                cl_stats=[idx0, objects_main[idx0].prob_stats['max'], objects_main[idx0].prob_stats['mean'], 0, 0]
+                cl_stats=[idx0, objects_main[idx0].prob_stats['max'], objects_main[idx0].prob_stats['mean'], -1, -1]
                 for idx1 in range(len(objects_llm)):
                     IOU=calculate_iou(objects_main[idx0].box[0],objects_main[idx0].box[1],objects_llm[idx1].box[0],objects_llm[idx1].box[1])
                     if IOU>self.cluster_iou:
@@ -291,7 +306,6 @@ class multi_query_localize:
                         cl_stats[4]=max(cl_stats[4],objects_llm[idx1].prob_stats['mean'])
 
                 lk=estimate_likelihood(cl_stats, method)
-                print(f"CLUSTER {idx0}: stats={cl_stats}, method={method}, likelihood={lk:.6f}, threshold={self.detection_threshold:.6f}")
                 if lk>self.detection_threshold:
                     positive_clusters.append(objects_main[idx0])
                     positive_cluster_likelihood.append(lk)
@@ -301,52 +315,19 @@ class multi_query_localize:
 
         # publish the markers
         self.publish_object_markers()
-        self.debug_pub.publish(f"FINAL RESULT: Found {len(positive_clusters)} clusters that passed threshold={self.detection_threshold}")
-        if len(positive_clusters) > 0:
-            self.debug_pub.publish(f"Best likelihood: {max(positive_cluster_likelihood):.6f}")
+
         return positive_clusters, positive_cluster_likelihood
 
     def top1_cluster_service(self, request:DynamicClusterRequest):
         resp=DynamicClusterResponse()
         resp.success=False
 
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-        positive_clusters, pos_likelihoods=self.match_clusters('combo-mean',request.main_query, request.llm_query)
-=======
-=======
->>>>>>> 31e9f23... updates
-        self.debug_pub.publish(f"Called top1_cluster_service with num_points={request.num_points}")
-
         positive_clusters, pos_likelihoods=self.match_clusters(self.cluster_metric, self.query_list[0], self.query_list[1])
->>>>>>> 31e9f23... updates
-=======
-        positive_clusters, pos_likelihoods=self.match_clusters(self.cluster_metric, self.query_list[0], self.query_list[1])
->>>>>>> 773aa37985836ddc92484d34a04f5972cd9cf75e
         if len(positive_clusters)==0:
             resp.message="No clusters found"
-            self.debug_pub.publish(f"No clusters found when using queries: {self.query_list[0]} and {self.query_list[1]}")
             return resp
 
         whichC=np.argmax(pos_likelihoods)
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-        for idx in range(request.num_points):
-            fPx=positive_clusters[whichC].farthestP[idx]
-            pt=Point()
-            pt.x=positive_clusters[whichC].pts[fPx][0]
-            pt.y=positive_clusters[whichC].pts[fPx][1]
-            pt.z=positive_clusters[whichC].pts[fPx][2]
-            resp.pts.append(pt)
-=======
-=======
->>>>>>> 31e9f23... updates
-        self.debug_pub.publish(f"Selected cluster {whichC} with likelihood {pos_likelihoods[whichC]:.4f}")
-    
-=======
->>>>>>> 773aa37985836ddc92484d34a04f5972cd9cf75e
         if whichC>=0:
             positive_clusters[whichC].sample_pcloud(request.num_points)
             for idx in range(request.num_points):
@@ -356,10 +337,6 @@ class multi_query_localize:
                 pt.y=positive_clusters[whichC].pts[fPx][1]
                 pt.z=positive_clusters[whichC].pts[fPx][2]
                 resp.pts.append(pt)
-<<<<<<< HEAD
->>>>>>> 31e9f23... updates
-=======
->>>>>>> 773aa37985836ddc92484d34a04f5972cd9cf75e
         resp.bbox3d=np.hstack((positive_clusters[whichC].box[0],positive_clusters[whichC].box[1])).tolist()
         return resp
     

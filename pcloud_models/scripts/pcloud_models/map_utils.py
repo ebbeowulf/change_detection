@@ -29,43 +29,9 @@ CLUSTER_TOUCHING_THRESH=0.05
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # DEVICE = torch.device("cpu")
 
-# Process all images with omdet - creating
+# Process all images with yolo - creating
 #   pickle files for the results and storing alongside the 
 #   original color images
-<<<<<<< HEAD
-
-def process_images_with_omdet(fList:rgbd_file_list, clip_targets:list):
-    print("process_images")
-    from change_detection.omdet_segmentation import omdet_seg
-    YS=omdet_seg(clip_targets)
-    for key in fList.keys():
-        print(fList.get_color_fileName(key))
-        for target in clip_targets:
-            pkl_fName=fList.get_omdet_fileName(key,target)
-            if not os.path.exists(pkl_fName):
-                img=YS.process_file(fList.get_color_fileName(key),save_fileName=pkl_fName)
-
-def process_images_with_yolo(fList:rgbd_file_list):
-    print("process_images")
-    from change_detection.yolo_segmentation import yolo_segmentation
-    YS=yolo_segmentation()
-    for key in fList.keys():
-        print(fList.get_color_fileName(key))
-        pkl_fName=fList.get_yolo_fileName(key)
-        if not os.path.exists(pkl_fName):
-            img=YS.process_file(fList.get_color_fileName(key),save_fileName=pkl_fName)
-
-def process_images_with_clip(fList:rgbd_file_list, clip_targets:list):
-    print("process_images")
-    from change_detection.clip_segmentation import clip_seg
-    YS=clip_seg(clip_targets)
-    for key in fList.keys():
-        print(fList.get_color_fileName(key))
-        for target in clip_targets:
-            pkl_fName=fList.get_clip_fileName(key,target)
-            if not os.path.exists(pkl_fName):
-                img=YS.process_file(fList.get_color_fileName(key),save_fileName=pkl_fName)
-=======
 # def process_images_with_yolo_world(fList:rgbd_file_list, targets:list):
 #     print("process_images")
 #     from change_detection.yolo_world_segmentation import yolo_segmentation
@@ -86,7 +52,6 @@ def process_images_with_clip(fList:rgbd_file_list, clip_targets:list):
 #             pkl_fName=fList.get_clip_fileName(key,target)
 #             if not os.path.exists(pkl_fName):
 #                 img=YS.process_file(fList.get_color_fileName(key),save_fileName=pkl_fName)
->>>>>>> 773aa37985836ddc92484d34a04f5972cd9cf75e
 
 # Create a list of all of the objects recognized by yolo
 #   across all files. Will only load existing pkl files, not 
@@ -111,27 +76,6 @@ def clip_threshold_evaluation(fList:rgbd_file_list, clip_targets:list, proposed_
         print("%s: Counted %d / %d images with detections > %f"%(target, count,len(maxP),proposed_threshold))
     return np.unique(image_list).tolist()
 
-<<<<<<< HEAD
-def omdet_threshold_evaluation(fList:rgbd_file_list, clip_targets:list, proposed_threshold:float):
-    from change_detection.omdet_segmentation import omdet_seg
-    #pdb.set_trace()
-    YS=omdet_seg(clip_targets)
-    image_list=[]
-    for target in clip_targets:
-        maxP=[]
-        for key in fList.keys():
-            # Use a high threshold here so that we are not creating DBScan boxes unnecessarily
-            if not YS.load_file(fList.get_clip_fileName(key,target)):
-                continue
-            P=YS.get_max_prob(target)
-            if P is not None:
-                maxP.append(P)
-                if P>proposed_threshold:
-                    image_list.append(key)
-        count=(np.array(maxP)>proposed_threshold).sum()
-        print("%s: Counted %d / %d images with detections > %f"%(target, count,len(maxP),proposed_threshold))
-    return np.unique(image_list).tolist()
-=======
 # def yolo_world_threshold_evaluation(fList:rgbd_file_list, yolo_targets:list, proposed_threshold:float):
 #     from change_detection.yolo_world_segmentation import yolo_segmentation
     
@@ -143,7 +87,6 @@ def omdet_threshold_evaluation(fList:rgbd_file_list, clip_targets:list, proposed
 #         for key in fList.keys():
 #             image_list.append(key)
 #     return np.unique(image_list).tolist()
->>>>>>> 773aa37985836ddc92484d34a04f5972cd9cf75e
 
 # Create a list of all of the objects recognized by yolo
 #   across all files. Will only load existing pkl files, not 
@@ -209,31 +152,19 @@ def visualize_combined_xyzrgb(fList:rgbd_file_list, params:camera_params, howman
     for key in range(max(fList.keys())):
         if not fList.is_key(key):
             continue
-        count += 1
-        if count <= skip:
+        count+=1
+        if count<=skip:
             continue
-        count = 0
-        # Load images
+        count=0
+        # Create the generic depth data
         print(fList.get_color_fileName(key))
-        colorI = cv2.imread(fList.get_color_fileName(key), -1)
-        depthI = cv2.imread(fList.get_depth_fileName(key), -1)
-        
-        # Check if images loaded successfully (optional but recommended)
-        if colorI is None or depthI is None:
-            print(f"Failed to load images for key {key}")
-            continue
-        
-        # Resize depth image to match the resolution defined in params
-        depthI_resized = cv2.resize(depthI, (params.width, params.height), interpolation=cv2.INTER_NEAREST)
-        
-        # Convert to tensor and scale depth (mm to meters)
-        depthT = torch.tensor(depthI_resized.astype('float') / 1000.0)
-        colorT = torch.tensor(colorI)
-        
-        # Compute 3D coordinates
-        x = cols * depthT / params.fx
-        y = rows * depthT / params.fy
-        depth_mask = (depthT > 1e-4) * (depthT < 10.0)
+        colorI=cv2.imread(fList.get_color_fileName(key), -1)
+        depthI=cv2.imread(fList.get_depth_fileName(key), -1)
+        depthT=torch.tensor(depthI.astype('float')/1000.0)
+        colorT=torch.tensor(colorI)
+        x = cols*depthT/params.fx
+        y = rows*depthT/params.fy
+        depth_mask=(depthT>1e-4)*(depthT<10.0)
 
         # Rotate the points into the right space
         M=torch.matmul(rot_matrixT,torch.tensor(fList.get_pose(key),device=DEVICE))
@@ -361,11 +292,7 @@ class pcloud_from_images():
         self.cols=torch.tensor(np.tile(np.arange(params.width),(params.height,1))-params.cx,device=DEVICE)
         self.rot_matrixT=torch.tensor(params.rot_matrix,device=DEVICE)        
         self.loaded_image=None
-<<<<<<< HEAD
-        print(f"pcloud_from_images initialized") # Added print
-=======
         self.classifier_type=None
->>>>>>> 773aa37985836ddc92484d34a04f5972cd9cf75e
 
     # Image loading to allow us to process more than one class in rapid succession
     def load_image_from_file(self, fList:rgbd_file_list, image_key, max_distance=10.0):
@@ -436,6 +363,82 @@ class pcloud_from_images():
         else:
             return None
 
+    def get_pts_per_class_by_source(self, tgt_class, source, use_connected_components=False, rotate90=False):
+        # Build the class associated mask for this image
+        masks = self.YS.get_mask(tgt_class, source)
+        if masks is None or len(masks) == 0:
+            return None
+        
+        pts = []
+        prob_arrays = self.YS.get_prob_array(tgt_class, source)
+        
+        # Process each mask for this source
+        for idx, cls_mask in enumerate(masks):
+            if type(cls_mask) == torch.Tensor:
+                if rotate90:
+                    cls_maskT = torch.rot90(cls_mask, dims=(0,1))
+                else:
+                    cls_maskT = cls_mask
+            else:
+                if rotate90:
+                    cls_maskT = torch.tensor(np.rot90(cls_mask, dims=(0,1)).copy(), device=DEVICE)
+                else:
+                    cls_maskT = torch.tensor(cls_mask, device=DEVICE)
+
+            # Apply connected components if requested       
+            if use_connected_components:
+                filtered_maskT = self.cluster_pcloud()
+            else:
+                filtered_maskT = cls_maskT * self.loaded_image['depth_mask']
+
+            # Return all points associated with the target class
+            pts_rot = get_rotated_points(
+                self.loaded_image['x'],
+                self.loaded_image['y'],
+                self.loaded_image['depthT'],
+                filtered_maskT,
+                self.loaded_image['M']
+            ) 
+            
+            filtered_maskT = filtered_maskT.bool()
+            
+            if rotate90:
+                if isinstance(prob_arrays, list) and len(prob_arrays) > idx:
+                    probs = torch.rot90(prob_arrays[idx], dims=(0,1))
+                    new_points = {
+                        'xyz': pts_rot, 
+                        'rgb': self.loaded_image['colorT'][filtered_maskT], 
+                        'probs': probs[filtered_maskT],
+                        'source': source
+                    }
+                    pts.append(new_points)
+            else:
+                if isinstance(prob_arrays, list) and len(prob_arrays) > idx:
+                    new_points = {
+                        'xyz': pts_rot, 
+                        'rgb': self.loaded_image['colorT'][filtered_maskT], 
+                        'probs': prob_arrays[idx][filtered_maskT],
+                        'source': source
+                    }
+                    pts.append(new_points)
+        
+        # Combine points from all masks for this source
+        if len(pts) == 0:
+            return None
+        
+        # Return combined points
+        if len(pts) == 1:
+            return pts[0]
+        else:
+            # Combine multiple masks
+            combined = {
+                'xyz': torch.cat([p['xyz'] for p in pts]),
+                'rgb': torch.cat([p['rgb'] for p in pts]),
+                'probs': torch.cat([p['probs'] for p in pts]),
+                'source': source
+            }
+            return combined
+    
     def setup_image_processing(self, tgt_class_list, classifier_type):
         # Check to see if the classifier already exists AND if it has 
         #   all of the necessary files in its class list
@@ -443,21 +446,6 @@ class pcloud_from_images():
         if self.YS is None or classifier_type!=self.classifier_type:
             is_update_required=True
         else:
-<<<<<<< HEAD
-<<<<<<< HEAD
-            return {'xyz': pts_rot.cpu().numpy(), 
-                    'rgb': self.loaded_image['colorT'][filtered_maskT].cpu().numpy(), 
-                    'probs': self.YS.get_prob_array(tgt_class)[filtered_maskT]}
-
-    # def process_image(self, image_key, tgt_class, conf_threshold, use_connected_components=False):
-    def process_image(self, tgt_class, detection_threshold, use_connected_components=False, segmentation_save_file=None):
-        # Create the image segmentation file
-        if self.YS is None or tgt_class not in self.YS.get_all_classes():
-            from change_detection.omdet_segmentation import omdet_seg
-            self.YS=omdet_seg([tgt_class])
-=======
-=======
->>>>>>> 773aa37985836ddc92484d34a04f5972cd9cf75e
             for tgt in tgt_class_list:
                 if tgt not in self.YS.get_all_classes():
                     is_update_required=True
@@ -479,20 +467,15 @@ class pcloud_from_images():
                 from change_detection.omdet_segmentation import omdet_segmentation
                 self.YS=omdet_segmentation(tgt_class_list)
                 self.classifier_type=classifier_type
-<<<<<<< HEAD
             elif classifier_type=='owl':
                 from change_detection.owl_segmentation import owl_segmentation
                 self.YS=owl_segmentation(tgt_class_list)
                 self.classifier_type=classifier_type
-            
->>>>>>> 31e9f23... updates
-=======
-            elif classifier_type=='dino':
-                from change_detection.dino_segmentation import dino_segmentation
-                self.YS=dino_segmentation(tgt_class_list)
+            elif classifier_type=='hybrid':
+                from change_detection.hybrid_segmentation import hybrid_segmentation
+                self.YS=hybrid_segmentation(tgt_class_list)
                 self.classifier_type=classifier_type
             
->>>>>>> 773aa37985836ddc92484d34a04f5972cd9cf75e
 
     def process_image(self, tgt_class, detection_threshold, segmentation_save_file=None):
         # Recover the segmentation file
@@ -505,17 +488,9 @@ class pcloud_from_images():
             #   may need to correct for live image stream processing
             self.YS.process_image(self.loaded_image['colorT'].cpu().numpy(), detection_threshold)  
         return self.get_pts_per_class(tgt_class)
-<<<<<<< HEAD
-
-    def multi_prompt_process(self, prompts:list, detection_threshold, rotate90:False):
-        if self.YS is None or prompts[0] not in self.YS.get_all_classes():
-            from change_detection.omdet_segmentation import omdet_seg
-            self.YS=omdet_seg(prompts)
-=======
       
     def multi_prompt_process(self, prompts:list, detection_threshold, rotate90:bool=False, classifier_type='clipseg'):
         self.setup_image_processing(prompts,classifier_type)
->>>>>>> 773aa37985836ddc92484d34a04f5972cd9cf75e
 
         if rotate90:
             rot_color=np.rot90(self.loaded_image['colorT'].cpu().numpy(), k=1, axes=(1,0))
@@ -528,6 +503,14 @@ class pcloud_from_images():
         # Build the class associated mask for this image
         for tgt_class in prompts:
             all_pts[tgt_class]=self.get_pts_per_class(tgt_class, rotate90=rotate90)
+            
+            # For hybrid detector, also create model-specific point clouds
+            if classifier_type == 'hybrid' and hasattr(self.YS, 'get_detection_sources_for_prompt'):
+                sources = self.YS.get_detection_sources_for_prompt(tgt_class)
+                
+                for source in sources:
+                    source_key = f"{tgt_class}_{source}"
+                    all_pts[source_key] = self.get_pts_per_class_by_source(tgt_class, source, rotate90=rotate90)
         return all_pts
     
     #Apply clustering - slow... probably in need of repair
@@ -564,17 +547,8 @@ class pcloud_from_images():
                 pickle.dump(filtered_maskT, handle, protocol=pickle.HIGHEST_PROTOCOL)
         return filtered_maskT
 
-<<<<<<< HEAD
-    # Process a sequence of images, combining the resulting point clouds together
-    #   The combined result will be saved to disk for faster retrieval
-    def process_fList(self, fList:rgbd_file_list, tgt_class, conf_threshold, use_connected_components=False):
-        save_fName=fList.get_combined_raw_fileName(tgt_class)
-        import pdb
-        #pdb.set_trace()
-=======
     def process_fList(self, fList:rgbd_file_list, tgt_class, conf_threshold, classifier_type='clipseg'):
         save_fName=fList.get_combined_raw_fileName(tgt_class,classifier_type)
->>>>>>> 773aa37985836ddc92484d34a04f5972cd9cf75e
         pcloud=None
         if os.path.exists(save_fName):
             try:
@@ -589,19 +563,6 @@ class pcloud_from_images():
             self.setup_image_processing([tgt_class], classifier_type)
 
             # Build the pcloud from individual images
-<<<<<<< HEAD
-            pcloud={'xyz': np.zeros((0,3),dtype=float),'rgb': np.zeros((0,3),dtype=np.uint8),'probs': np.array([], dtype=float)}
-            
-            image_key_list=omdet_threshold_evaluation(fList, [tgt_class], conf_threshold)
-            for key in image_key_list:
-                self.load_image_from_file(fList, key)
-                icloud=self.process_image(tgt_class, conf_threshold, use_connected_components=use_connected_components, segmentation_save_file=fList.get_segmentation_fileName(key, False, tgt_class))
-                if icloud is not None and icloud['xyz'].shape[0]>100:
-                    pcloud['xyz']=np.vstack((pcloud['xyz'],icloud['xyz']))
-                    pcloud['rgb']=np.vstack((pcloud['rgb'],icloud['rgb']))
-                    pcloud['probs']=np.hstack((pcloud['probs'],icloud['probs']))
-            
-=======
             # pcloud={'xyz': np.zeros((0,3),dtype=float),'rgb': np.zeros((0,3),dtype=np.uint8),'probs': []}
             pcloud={'xyz': torch.zeros((0,3),dtype=torch.float32,device=DEVICE),
                             'rgb': torch.zeros((0,3),dtype=torch.uint8,device=DEVICE),
@@ -653,17 +614,13 @@ class pcloud_from_images():
             pcloud['xyz']=pcloud['xyz'].cpu().numpy()
             pcloud['rgb']=pcloud['rgb'].cpu().numpy()
             pcloud['probs']=pcloud['probs'].cpu().numpy()
->>>>>>> 773aa37985836ddc92484d34a04f5972cd9cf75e
             # Now save the result so we don't have to keep processing this same cloud
             with open(save_fName,'wb') as handle:
                 pickle.dump(pcloud, handle, protocol=pickle.HIGHEST_PROTOCOL)
         
         # Finally - filter the cloud with the requested confidence threshold
-        if np.any(pcloud['probs']):
-            whichP=(pcloud['probs']>conf_threshold)
-            return {'xyz':pcloud['xyz'][whichP],'rgb':pcloud['rgb'][whichP],'probs':pcloud['probs'][whichP]}
-        else:
-            return {'xyz':pcloud['xyz'],'rgb':pcloud['rgb'],'probs':pcloud['probs']}
+        whichP=(pcloud['probs']>conf_threshold)
+        return {'xyz':pcloud['xyz'][whichP],'rgb':pcloud['rgb'][whichP],'probs':pcloud['probs'][whichP]}
 
     def process_fList_multi(self, fList:rgbd_file_list, tgt_class_list:list, conf_threshold, classifier_type='clipseg'):
         save_fName=dict()

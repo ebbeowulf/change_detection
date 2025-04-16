@@ -230,6 +230,24 @@ def estimate_likelihood(cluster_stats, category):
         return cluster_stats[4]*cluster_stats[6]
     elif category=='combo-room': # combined main + room
         return cluster_stats[2]*cluster_stats[4]*cluster_stats[6]
+    elif category=='hybrid-boost': # special metric for hybrid detector
+        # cl_stats format for hybrid: [idx, main_max, main_mean, llm_max, llm_mean, ...]
+        # Check if we have valid stats from both models
+        main_score = cluster_stats[2]  # main mean score
+        llm_score = cluster_stats[4] if cluster_stats[4] >= 0 else 0  # llm mean score, handle negative values
+        
+        # If detected by both models, apply boost; otherwise use the available score
+        if main_score > 0 and llm_score > 0:
+            # Both models detected it - boost confidence (up to 20% boost)
+            boost_factor = 1.0 + 0.2 * min(main_score, llm_score)
+            return min(1.0, main_score * boost_factor)  # Cap at 1.0
+        else:
+            # Only one model detected it
+            return main_score  # Just use main score
+    elif category=='main-omdet': # Use only OmDet detection confidence
+        return cluster_stats[2]  # main mean confidence
+    elif category=='main-clipseg': # Use only CLIPSeg detection confidence 
+        return cluster_stats[4] if cluster_stats[4] >= 0 else 0  # llm mean confidence
     else:
         raise(Exception(f"Category {category} not implemented yet"))
 
@@ -466,4 +484,3 @@ if __name__ == '__main__':
     # plt.show()
 
         
-
