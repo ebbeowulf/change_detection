@@ -1,4 +1,4 @@
-from change_detection.image_segmentation import image_segmentation
+from change_detection.segmentation import image_segmentation
 from change_detection.omdet_segmentation import omdet_segmentation
 from change_detection.clip_segmentation import clip_segmentation
 import torch
