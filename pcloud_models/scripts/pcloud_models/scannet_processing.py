@@ -149,11 +149,7 @@ if __name__ == '__main__':
             par_file=args.root_dir+"/%s.txt"%(s_root[-1])
     params=load_camera_info(par_file)
     
-<<<<<<< HEAD
-    map_utils.process_images_with_omdet(fList,args.targets)
-=======
     #map_utils.process_images_with_yolo(fList,args.targets)
->>>>>>> 773aa37985836ddc92484d34a04f5972cd9cf75e
     pcloud_init=map_utils.pcloud_from_images(params)
 
     for tgt_class in args.targets:

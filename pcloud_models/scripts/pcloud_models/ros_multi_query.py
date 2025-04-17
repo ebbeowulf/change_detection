@@ -479,7 +479,7 @@ if __name__ == '__main__':
         import sys
         sys.exit(-1)
 
-    model_id = "meta-llama/Meta-Llama-3.1-8B-Instruct"
+    '''model_id = "meta-llama/Meta-Llama-3.1-8B-Instruct"
 
     pipeline = transformers.pipeline(
         "text-generation",
@@ -503,9 +503,9 @@ if __name__ == '__main__':
     )
     
     target.append(outputs[0]["generated_text"][-1]["content"])
-    print(f"Target object: {target}")
+    print(f"Target object: {target}")'''
 
-    IT=multi_query_localize(target,
+    IT=multi_query_localize(args.queries,
                             args.classifier,
                           args.num_points,
                           args.detection_threshold,

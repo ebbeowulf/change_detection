@@ -19,10 +19,10 @@ from farthest_point_sampling.fps import farthest_point_sampling
 import torch.nn.functional as F
 import time
 
-DBSCAN_MIN_SAMPLES=20 
-DBSCAN_GRIDCELL_SIZE=0.01
-DBSCAN_EPS=0.018 # allows for connections in cells full range of surrounding cube DBSCAN_GRIDCELL_SIZE*2.5
-CLUSTER_MIN_COUNT=10000
+DBSCAN_MIN_SAMPLES=10 
+DBSCAN_GRIDCELL_SIZE=0.005
+DBSCAN_EPS=0.025 
+CLUSTER_MIN_COUNT=1000
 CLUSTER_PROXIMITY_THRESH=0.3
 CLUSTER_TOUCHING_THRESH=0.05
 
@@ -362,82 +362,6 @@ class pcloud_from_images():
         
         else:
             return None
-
-    def get_pts_per_class_by_source(self, tgt_class, source, use_connected_components=False, rotate90=False):
-        # Build the class associated mask for this image
-        masks = self.YS.get_mask(tgt_class, source)
-        if masks is None or len(masks) == 0:
-            return None
-        
-        pts = []
-        prob_arrays = self.YS.get_prob_array(tgt_class, source)
-        
-        # Process each mask for this source
-        for idx, cls_mask in enumerate(masks):
-            if type(cls_mask) == torch.Tensor:
-                if rotate90:
-                    cls_maskT = torch.rot90(cls_mask, dims=(0,1))
-                else:
-                    cls_maskT = cls_mask
-            else:
-                if rotate90:
-                    cls_maskT = torch.tensor(np.rot90(cls_mask, dims=(0,1)).copy(), device=DEVICE)
-                else:
-                    cls_maskT = torch.tensor(cls_mask, device=DEVICE)
-
-            # Apply connected components if requested       
-            if use_connected_components:
-                filtered_maskT = self.cluster_pcloud()
-            else:
-                filtered_maskT = cls_maskT * self.loaded_image['depth_mask']
-
-            # Return all points associated with the target class
-            pts_rot = get_rotated_points(
-                self.loaded_image['x'],
-                self.loaded_image['y'],
-                self.loaded_image['depthT'],
-                filtered_maskT,
-                self.loaded_image['M']
-            ) 
-            
-            filtered_maskT = filtered_maskT.bool()
-            
-            if rotate90:
-                if isinstance(prob_arrays, list) and len(prob_arrays) > idx:
-                    probs = torch.rot90(prob_arrays[idx], dims=(0,1))
-                    new_points = {
-                        'xyz': pts_rot, 
-                        'rgb': self.loaded_image['colorT'][filtered_maskT], 
-                        'probs': probs[filtered_maskT],
-                        'source': source
-                    }
-                    pts.append(new_points)
-            else:
-                if isinstance(prob_arrays, list) and len(prob_arrays) > idx:
-                    new_points = {
-                        'xyz': pts_rot, 
-                        'rgb': self.loaded_image['colorT'][filtered_maskT], 
-                        'probs': prob_arrays[idx][filtered_maskT],
-                        'source': source
-                    }
-                    pts.append(new_points)
-        
-        # Combine points from all masks for this source
-        if len(pts) == 0:
-            return None
-        
-        # Return combined points
-        if len(pts) == 1:
-            return pts[0]
-        else:
-            # Combine multiple masks
-            combined = {
-                'xyz': torch.cat([p['xyz'] for p in pts]),
-                'rgb': torch.cat([p['rgb'] for p in pts]),
-                'probs': torch.cat([p['probs'] for p in pts]),
-                'source': source
-            }
-            return combined
     
     def setup_image_processing(self, tgt_class_list, classifier_type):
         # Check to see if the classifier already exists AND if it has 
@@ -483,35 +407,56 @@ class pcloud_from_images():
             if not self.YS.load_file(segmentation_save_file,threshold=detection_threshold):
                 return None
         else:
-            # self.YS.process_image_numpy(self.loaded_image['colorT'].cpu().numpy(), detection_threshold)    
-            # This numpy bit was originally done to handle images coming from the robot ...
-            #   may need to correct for live image stream processing
-            self.YS.process_image(self.loaded_image['colorT'].cpu().numpy(), detection_threshold)  
+            # Make sure the image is a proper numpy array with the right format
+            try:
+                # Get image as numpy array with proper shape
+                cv_image = self.loaded_image['colorT'].cpu().numpy().astype(np.uint8)
+                # Check that we have a valid 3-channel image
+                if len(cv_image.shape) != 3 or cv_image.shape[2] != 3:
+                    print(f"Warning: Invalid image shape {cv_image.shape}, reshaping")
+                    if len(cv_image.shape) == 3 and cv_image.shape[0] == 3:
+                        # Might be channels-first, convert to channels-last
+                        cv_image = np.transpose(cv_image, (1, 2, 0))
+                
+                self.YS.process_image(cv_image, detection_threshold)
+            except Exception as e:
+                print(f"Error preparing image: {e}")
+                return None
         return self.get_pts_per_class(tgt_class)
       
     def multi_prompt_process(self, prompts:list, detection_threshold, rotate90:bool=False, classifier_type='clipseg'):
-        self.setup_image_processing(prompts,classifier_type)
-
-        if rotate90:
-            rot_color=np.rot90(self.loaded_image['colorT'].cpu().numpy(), k=1, axes=(1,0))
-            self.YS.process_image_numpy(rot_color, detection_threshold)    
-        else:
-            self.YS.process_image_numpy(self.loaded_image['colorT'].cpu().numpy(), detection_threshold)    
-            # self.YS.process_image(self.loaded_image['colorT'].cpu().numpy(), detection_threshold)    
+        self.setup_image_processing(prompts, classifier_type)
         
-        all_pts=dict()
-        # Build the class associated mask for this image
-        for tgt_class in prompts:
-            all_pts[tgt_class]=self.get_pts_per_class(tgt_class, rotate90=rotate90)
+        try:
+            # Ensure we have a proper numpy array
+            raw_image = self.loaded_image['colorT'].cpu().numpy().astype(np.uint8)
             
-            # For hybrid detector, also create model-specific point clouds
-            if classifier_type == 'hybrid' and hasattr(self.YS, 'get_detection_sources_for_prompt'):
-                sources = self.YS.get_detection_sources_for_prompt(tgt_class)
+            # Check that we have a valid 3-channel image
+            if len(raw_image.shape) != 3 or raw_image.shape[2] != 3:
+                print(f"Warning: Invalid image shape {raw_image.shape}, reshaping")
+                if len(raw_image.shape) == 3 and raw_image.shape[0] == 3:
+                    # Might be channels-first, convert to channels-last
+                    raw_image = np.transpose(raw_image, (1, 2, 0))
+            
+            # Get image data, potentially rotated
+            if rotate90:
+                image_data = np.rot90(raw_image, k=1, axes=(0, 1))
+                print(f"Image rotated, shape: {image_data.shape}")
+            else:
+                image_data = raw_image
                 
-                for source in sources:
-                    source_key = f"{tgt_class}_{source}"
-                    all_pts[source_key] = self.get_pts_per_class_by_source(tgt_class, source, rotate90=rotate90)
-        return all_pts
+            self.YS.process_image_numpy(image_data, detection_threshold)
+            
+            all_pts = dict()
+            # Build the class associated mask for this image
+            for tgt_class in prompts:
+                all_pts[tgt_class] = self.get_pts_per_class(tgt_class, rotate90=rotate90)
+    
+            return all_pts
+            
+        except Exception as e:
+            print(f"Error in multi_prompt_process: {e}")
+            return {}
     
     #Apply clustering - slow... probably in need of repair
     def cluster_pclouds(self, image_key, tgt_class, cls_mask, threshold):
@@ -650,7 +595,7 @@ class pcloud_from_images():
                 t_array.append(time.time())
                 for tgt in icloud.keys():
                     if icloud[tgt] is not None:
-                        if tgt in pcloud and icloud[tgt]['xyz'].shape[0]>100:
+                        if tgt in pcloud and icloud[tgt]['xyz'].shape[0]>10:  
                             pcloud[tgt]['xyz']=torch.vstack((pcloud[tgt]['xyz'],icloud[tgt]['xyz']))
                             pcloud[tgt]['rgb']=torch.vstack((pcloud[tgt]['rgb'],icloud[tgt]['rgb']))
                             pcloud[tgt]['probs']=torch.hstack((pcloud[tgt]['probs'],icloud[tgt]['probs']))
@@ -661,7 +606,7 @@ class pcloud_from_images():
                     # Save the intermediate files and clear the cache
                     for tgt in pcloud.keys():
                         # Is this file basically empty? Then don't bother saving
-                        if pcloud[tgt]['xyz'].shape[0]>100:
+                        if pcloud[tgt]['xyz'].shape[0]>10:  
                             fName_tmp=save_fName[tgt]+"."+str(count)
                             intermediate_files[tgt].append(fName_tmp)
                             with open(fName_tmp,'wb') as handle:
@@ -675,6 +620,9 @@ class pcloud_from_images():
                     print(f" -- Processing {deltaT2[1]}")
                     print(f" -- np.vstack  {deltaT2[2]}")
             except Exception as e:
+                import traceback
+                traceback.print_exc()   
+                import pdb; pdb.set_trace()
                 print("Image not loaded - " + str(e))
         
         # All files processed - now combine the intermediate results and generate a single cloud for each
