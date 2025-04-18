@@ -615,7 +615,6 @@ class pcloud_from_images():
         
         # Finally - filter the cloud with the requested confidence threshold
         whichP=(pcloud['probs']>conf_threshold)
-        print(pcloud)
         return {'xyz':pcloud['xyz'][whichP],'rgb':pcloud['rgb'][whichP],'probs':pcloud['probs'][whichP]}
 
     def process_fList_multi(self, fList:rgbd_file_list, tgt_class_list:list, conf_threshold, classifier_type='clipseg'):
@@ -696,51 +695,197 @@ class pcloud_from_images():
             # And clear the final point cloud
             pcloud[tgt]={'xyz': np.zeros((0,3),dtype=float),'rgb': np.zeros((0,3),dtype=np.uint8),'probs': []} 
 
+    def extract_point_clouds(self, prompts, threshold, classifier_type='clipseg', use_temporal_consistency=True):
+        """Extract point clouds for each class with NaN filtering and temporal consistency
+        
+        Args:
+            prompts: List of classes to detect
+            threshold: Detection confidence threshold
+            classifier_type: Type of classifier to use ('clipseg', 'omdet', or 'hybrid')
+            use_temporal_consistency: Whether to use temporal tracking across frames
+            
+        Returns:
+            Dictionary of point clouds per class
+        """
+        # Get raw points with dynamic weighting
+        all_pts = self.multi_prompt_process(prompts, threshold, classifier_type=classifier_type)
+        
+        # Process point clouds with NaN filtering and clustering
+        result_clouds = {}
+        
+        for tgt_class in prompts:
+            if tgt_class in all_pts and all_pts[tgt_class] is not None:
+                try:
+                    # Filter out any NaN points
+                    pts_data = all_pts[tgt_class]
+                    valid_mask = ~torch.isnan(pts_data['xyz']).any(dim=1)
+                    
+                    # Skip if all points are NaN
+                    if torch.sum(valid_mask) == 0:
+                        print(f"No valid points for {tgt_class}, skipping")
+                        continue
+                        
+                    # Extract valid points
+                    valid_xyz = pts_data['xyz'][valid_mask].detach().cpu().numpy()
+                    
+                    # Skip if too few points
+                    if len(valid_xyz) < 10:  # Using reduced threshold as per memory
+                        print(f"Too few points ({len(valid_xyz)}) for {tgt_class}, skipping")
+                        continue
+                    
+                    # Apply DBSCAN clustering with optimized parameters from memory
+                    clouds = get_distinct_clusters(
+                        valid_xyz, 
+                        obj_class=tgt_class,
+                        min_samples=10,           # Reduced from 20 to 10 as per memory
+                        gridcell_size=0.005,      # Refined from 0.01 to 0.005 as per memory
+                        eps=0.025,                # Increased from 0.018 to 0.025 as per memory
+                        cluster_min_count=1000,   # Reduced from 10000 to 1000 as per memory
+                        floor_threshold=0.02,
+                        use_temporal_consistency=use_temporal_consistency
+                    )
+                    
+                    if clouds:
+                        result_clouds[tgt_class] = clouds
+                    
+                except Exception as e:
+                    print(f"Error extracting point cloud for {tgt_class}: {e}")
+                    import traceback
+                    traceback.print_exc()
+        
+        return result_clouds
+
 TIME_STRUCT={'count': 0, 'times':np.zeros((3,),dtype=float)}
 
-def get_distinct_clusters(pcloud, gridcell_size=DBSCAN_GRIDCELL_SIZE, eps=DBSCAN_EPS, min_samples=DBSCAN_MIN_SAMPLES, cluster_min_count=CLUSTER_MIN_COUNT, floor_threshold=0.1):
+def get_distinct_clusters(pcloud_or_pts, color_imgs=None, obj_class=None, gridcell_size=DBSCAN_GRIDCELL_SIZE, eps=DBSCAN_EPS, min_samples=DBSCAN_MIN_SAMPLES, cluster_min_count=CLUSTER_MIN_COUNT, floor_threshold=0.1, use_temporal_consistency=True):
+    """Get distinct clusters of 3D points using DBSCAN.
+    
+    Args:
+        pcloud_or_pts: Either a point cloud object or numpy array of points
+        color_imgs: Optional color images
+        obj_class: Optional object class label
+        gridcell_size: Grid cell size for downsampling
+        eps: DBSCAN epsilon parameter
+        min_samples: Minimum number of samples for DBSCAN
+        cluster_min_count: Minimum number of points in a cluster
+        floor_threshold: Height threshold to exclude floor points
+        use_temporal_consistency: Whether to apply temporal tracking
+        
+    Returns:
+        List of object_pcloud objects
+    """
+    # Time tracking
     global TIME_STRUCT
-    t_array=[]
-    t_array.append(time.time())
-
-    clouds=[]
-    if pcloud is None or len(pcloud.points)<cluster_min_count:
-        return clouds
-    if gridcell_size>0:
-        pcd_small=pcloud.voxel_down_sample(gridcell_size)
-        t_array.append(time.time())
-        pts=np.array(pcd_small.points)
-        p2=DBSCAN(eps=eps, min_samples=min_samples,n_jobs=10).fit(pts)
-        t_array.append(time.time())
+    t_array=[time.time()]
+    
+    # Increment frame counter if using temporal consistency
+    if use_temporal_consistency:
+        object_pcloud.increment_frame()
+    
+    # Handle both legacy pcloud input and direct points array input
+    if hasattr(pcloud_or_pts, 'points'):
+        # Legacy mode: pcloud was passed (e.g., from open3d)
+        pcloud = pcloud_or_pts
+        if pcloud is None or len(pcloud.points) < cluster_min_count:
+            return []
+            
+        if gridcell_size > 0:
+            pcd_small = pcloud.voxel_down_sample(gridcell_size)
+            pts = np.array(pcd_small.points)
+        else:
+            pts = np.array(pcloud.points)
     else:
-        pts=np.array(pcloud.points)
-        p2=DBSCAN(eps=eps, min_samples=min_samples,n_jobs=10).fit(pts)
-
+        # New mode: direct points array
+        all_pts = pcloud_or_pts
+        pts, new_to_existing_idx, ids = unique_coordinates(all_pts[:,:3], gridcell_size=gridcell_size)
+    
+    # Debugging code for the downsampling (optional)
+    t_array.append(time.time())
+    
+    # Run DBSCAN on the downsampled points
+    p2 = DBSCAN(eps=eps, min_samples=min_samples, n_jobs=10).fit(pts)
+    t_array.append(time.time())
+    
+    # Final clusters/objects to return
+    clouds = []
+    
     # Need to get the cluster sizes... so we can focus on the largest clusters only
-    cl_cnt=np.array([ (p2.labels_==cnt).sum() for cnt in range(p2.labels_.max() + 1) ])
-    validID=np.where(cl_cnt>cluster_min_count)[0]
-    if validID.shape[0]>0:
-        sortedI=np.argsort(-cl_cnt[validID])
+    cl_cnt = np.array([(p2.labels_==cnt).sum() for cnt in range(p2.labels_.max() + 1)])
+    validID = np.where(cl_cnt > cluster_min_count)[0]
+    
+    if validID.shape[0] > 0:
+        sortedI = np.argsort(-cl_cnt[validID])
 
         for id in validID[sortedI][:10]:
-            whichP=(p2.labels_==id)
-            pts2=pts[whichP]
-            whichP2=(pts2[:,2]>floor_threshold)
-            if whichP2.sum()>cluster_min_count:
-                clouds.append(object_pcloud(pts2[whichP2], sample=False))
+            whichP = (p2.labels_ == id)
+            pts2 = pts[whichP]
+            whichP2 = (pts2[:,2] > floor_threshold)
+            
+            if whichP2.sum() > cluster_min_count:
+                # Create a new object point cloud
+                new_cloud = object_pcloud(pts2[whichP2], label=obj_class, sample=False)
+                
+                # Apply temporal consistency if enabled
+                if use_temporal_consistency and obj_class is not None:
+                    # Try to find a matching object from previous frames
+                    track_id = object_pcloud.find_matching_object(new_cloud)
+                    
+                    if track_id is not None:
+                        # Update existing object with new detection
+                        if obj_class not in object_pcloud.object_history:
+                            object_pcloud.object_history[obj_class] = {}
+                        
+                        existing_obj = object_pcloud.object_history[obj_class][track_id]
+                        existing_obj.update_from_detection(new_cloud)
+                        
+                        # Use the updated object instead of the new detection
+                        clouds.append(existing_obj)
+                    else:
+                        # This is a new object, assign it a track ID
+                        new_track_id = f"{obj_class}_{object_pcloud.current_frame}_{len(clouds)}"
+                        new_cloud.track_id = new_track_id
+                        
+                        # Store in history
+                        if obj_class not in object_pcloud.object_history:
+                            object_pcloud.object_history[obj_class] = {}
+                        
+                        object_pcloud.object_history[obj_class][new_track_id] = new_cloud
+                        clouds.append(new_cloud)
+                else:
+                    # Standard approach without temporal consistency
+                    clouds.append(new_cloud)
+    
+    # Apply decay to objects not seen in this frame
+    if use_temporal_consistency and obj_class is not None:
+        removed = object_pcloud.decay_missing_objects()
+        
+        # Add previously seen objects that weren't detected in this frame
+        # but still have sufficient confidence
+        if obj_class in object_pcloud.object_history:
+            for track_id, obj in object_pcloud.object_history[obj_class].items():
+                # Only include objects not already in the results
+                if obj.last_seen < object_pcloud.current_frame and obj.confidence > 0.3:
+                    # Object wasn't detected this frame but has sufficient confidence
+                    if obj not in clouds:
+                        clouds.append(obj)
+    
+    # Update timing metrics
     t_array.append(time.time())
-    TIME_STRUCT['times']=TIME_STRUCT['times']+np.diff(np.array(t_array))
-    TIME_STRUCT['count']+=1
-    if TIME_STRUCT['count']%100==0:
+    TIME_STRUCT['times'] = TIME_STRUCT['times'] + np.diff(np.array(t_array))
+    TIME_STRUCT['count'] += 1
+    if TIME_STRUCT['count'] % 100 == 0:
         print(f"******* TIME(get_distinct_clusters) - {TIME_STRUCT['count']} ****** ")
-        print(TIME_STRUCT['times']/500)
-        TIME_STRUCT['times']=np.zeros((3,),dtype=float)
-        # pdb.set_trace()
+        print(TIME_STRUCT['times'] / 500)
+        TIME_STRUCT['times'] = np.zeros((3,), dtype=float)
 
     return clouds
 
 class object_pcloud():
-    def __init__(self, pts, label:str=None, num_samples=1000, sample=True):
+    # Class-level tracking for temporal consistency
+    object_history = {}  # Dictionary to track objects across frames
+    current_frame = 0    # Current frame counter
+    
+    def __init__(self, pts, label:str=None, num_samples=1000, sample=True, track_id=None):
         self.box=np.vstack((pts.min(0),pts.max(0)))
         self.pts=pts
         self.pts_shape=self.pts.shape
@@ -750,40 +895,149 @@ class object_pcloud():
             self.sample_pcloud(num_samples)
         self.prob_stats=None
         self.centroid=self.pts.mean(0)
+        
+        # Temporal consistency attributes (optional)
+        self.track_id = track_id
+        self.first_seen = object_pcloud.current_frame if track_id is not None else None
+        self.last_seen = object_pcloud.current_frame if track_id is not None else None
+        self.confidence = 1.0  # Initial confidence
+        self.frame_count = 1   # Number of frames this object has been seen
 
     def sample_pcloud(self, num_samples):
             self.farthestP=farthest_point_sampling(self.pts, num_samples)
 
     def set_label(self, label):
-        self.label=label
+        self.label = label
     
     def is_box_overlap(self, input_cloud, dimensions=[0,1,2], threshold=0.3):
         for dim in dimensions:
-            if self.box[1,dim]<(input_cloud.box[0,dim]-threshold) or self.box[0,dim]>=(input_cloud.box[1,dim]+threshold):
+            if self.box[1,dim] < (input_cloud.box[0,dim]-threshold) or self.box[0,dim] >= (input_cloud.box[1,dim]+threshold):
                 return False
         return True
-
-    def compute_cloud_distance(self, input_cloud):
-        input_pt_matrix=input_cloud.pts[input_cloud.farthestP]
-        min_sq_dist=1e10
-        for pid in self.farthestP:
-            min_sq_dist=min(min_sq_dist, ((input_pt_matrix-self.pts[pid])**2).sum(1).min())
-        return np.sqrt(min_sq_dist)
     
-    def is_above(self, input_cloud):
-        # Should be overlapped in x + y directions
-        if self.centroid[0]>input_cloud.box[0,0] and self.centroid[0]<input_cloud.box[1,0] and self.centroid[1]>input_cloud.box[0,1] and self.centroid[1]<input_cloud.box[1,1]:
-            # Should also be "above" the other centroid
-            return self.centroid[2]>input_cloud.centroid[2]
-        return False
+    def update_from_detection(self, new_detection, blend_factor=0.3):
+        """Update this object with a new detection of the same object
+        
+        Args:
+            new_detection (object_pcloud): The new detection to merge with
+            blend_factor (float): How much to weight the new detection (0-1)
+        """
+        if self.track_id is None:
+            # Not using temporal tracking
+            return
+            
+        # Update tracking information
+        self.last_seen = object_pcloud.current_frame
+        self.frame_count += 1
+        self.confidence = min(0.99, self.confidence + 0.1)  # Increase confidence with repeated detections
+        
+        # Blend centroids for more stable tracking
+        self.centroid = (1-blend_factor) * self.centroid + blend_factor * new_detection.centroid
+        
+        # Update bounding box to encompass both old and new detections
+        self.box[0, :] = np.minimum(self.box[0, :], new_detection.box[0, :])
+        self.box[1, :] = np.maximum(self.box[1, :], new_detection.box[1, :])
+        
+        try:
+            # Merge point clouds, with option to subsample if getting too large
+            if self.pts.shape[0] + new_detection.pts.shape[0] > 100000:
+                # If combined point cloud would be very large, subsample both
+                sample_rate = 100000 / (self.pts.shape[0] + new_detection.pts.shape[0])
+                indices1 = np.random.choice(self.pts.shape[0], int(self.pts.shape[0] * sample_rate), replace=False)
+                indices2 = np.random.choice(new_detection.pts.shape[0], int(new_detection.pts.shape[0] * sample_rate), replace=False)
+                self.pts = np.vstack([self.pts[indices1], new_detection.pts[indices2]])
+            else:
+                # Otherwise merge the full point clouds
+                self.pts = np.vstack([self.pts, new_detection.pts])
+            
+            self.pts_shape = self.pts.shape
+        except Exception as e:
+            print(f"Error merging point clouds: {e}")
     
-    def estimate_probability(self, original_xyz, original_prob):
-        filt=(original_xyz[:,0]>=self.box[0][0])*(original_xyz[:,0]<=self.box[1][0])*(original_xyz[:,1]>=self.box[0][1])*(original_xyz[:,1]<=self.box[1][1])*(original_xyz[:,2]>=self.box[0][2])*(original_xyz[:,2]<=self.box[1][2])
-        self.prob_stats=dict()
-        self.prob_stats['max']=original_prob[filt].max()
-        self.prob_stats['mean']=original_prob[filt].mean()
-        self.prob_stats['stdev']=original_prob[filt].std()
-        self.prob_stats['pcount']=filt.shape[0]
+    @staticmethod
+    def find_matching_object(new_object, overlap_threshold=0.3, max_frames_missing=3):
+        """Find if this object matches any existing tracked object
+        
+        Args:
+            new_object (object_pcloud): The new detection to match
+            overlap_threshold (float): Threshold for box overlap
+            max_frames_missing (int): Maximum number of frames an object can be missing
+            
+        Returns:
+            track_id or None: ID of matching object or None if no match
+        """
+        if new_object.label is None:
+            return None
+            
+        best_match = None
+        best_overlap = 0
+        
+        # Look through existing objects with the same label
+        label_key = new_object.label
+        if label_key not in object_pcloud.object_history:
+            return None
+            
+        for track_id, obj in object_pcloud.object_history[label_key].items():
+            # Skip objects that haven't been seen in too many frames
+            frames_missing = object_pcloud.current_frame - obj.last_seen
+            if frames_missing > max_frames_missing:
+                continue
+                
+            # Check for box overlap
+            if obj.is_box_overlap(new_object, threshold=overlap_threshold):
+                # Calculate IoU or other similarity metric if needed
+                # For now just using a simple check
+                overlap = 1.0  # Simple overlap score
+                
+                if overlap > best_overlap:
+                    best_overlap = overlap
+                    best_match = track_id
+        
+        return best_match
+    
+    @staticmethod
+    def increment_frame():
+        """Increment the current frame counter"""
+        object_pcloud.current_frame += 1
+    
+    @staticmethod
+    def reset_tracking():
+        """Reset all object tracking"""
+        object_pcloud.object_history = {}
+        object_pcloud.current_frame = 0
+        
+    @staticmethod
+    def decay_missing_objects(decay_factor=0.8, remove_threshold=0.2):
+        """Decay confidence of objects not seen in current frame
+        
+        Args:
+            decay_factor (float): How quickly confidence decays (0-1)
+            remove_threshold (float): Threshold to remove an object
+            
+        Returns:
+            int: Number of objects removed
+        """
+        removed = 0
+        for label in list(object_pcloud.object_history.keys()):
+            for track_id in list(object_pcloud.object_history[label].keys()):
+                obj = object_pcloud.object_history[label][track_id]
+                
+                # If not seen in current frame, decay confidence
+                if obj.last_seen < object_pcloud.current_frame:
+                    frames_missing = object_pcloud.current_frame - obj.last_seen
+                    obj.confidence *= (decay_factor ** frames_missing)
+                    
+                    # Remove if confidence drops too low
+                    if obj.confidence < remove_threshold:
+                        del object_pcloud.object_history[label][track_id]
+                        removed += 1
+                        
+                        # Clean up empty label dictionaries
+                        if len(object_pcloud.object_history[label]) == 0:
+                            del object_pcloud.object_history[label]
+                            break
+        
+        return removed
     
     def size(self):
         return self.pts_shape[0]
