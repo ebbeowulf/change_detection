@@ -6,6 +6,7 @@ import numpy as np
 import argparse
 from change_detection.segmentation import image_segmentation
 from PIL import Image
+import sys
 import pdb
 import pickle
 
@@ -15,7 +16,7 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 class omdet_segmentation(image_segmentation):
     def __init__(self, prompts):
-        print("Reading model")
+        print("Reading omdet model")
         self.processor = AutoProcessor.from_pretrained("omlab/omdet-turbo-swin-tiny-hf")
         self.model = OmDetTurboForObjectDetection.from_pretrained("omlab/omdet-turbo-swin-tiny-hf")
         self.sam_model = SAM('sam2.1_l.pt')
@@ -97,7 +98,7 @@ class omdet_segmentation(image_segmentation):
             sam_results = self.sam_model(cv_image, bboxes=results['boxes'])
             sam_results[0].class_ids=results['labels']
             sam_results[0].confs=results['scores']
-            # Pass SAM results and YOLO data to set_data       
+            # Pass SAM results and YOLO data to set_data     
             self.set_data(sam_results)
             return sam_results
         else:

@@ -148,8 +148,8 @@ if __name__ == '__main__':
 
     # Define the messages for the task
     messages = [
-        {"role": "system", "content": "You are an expert at providing alternate queries to improve and cluster object detection models without using their names."},
-        {"role": "user", "content": f"Describe '{target[0]}' as concise and logically as possible without using '{target[0]}' in the description within 5 words or less."},
+        {"role": "system", "content": "You are an expert at providing alternate queries to improve zero shot object detection models without using their names."},
+        {"role": "user", "content": f"Define '{target[0]}' without using '{target[0]}' in 5 words or less."},
     ]
 
     # Generate the alternate query

@@ -14,7 +14,7 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 class clip_seg(image_segmentation):
     def __init__(self, prompts):
-        print("Reading model")
+        print("Reading clipseg model")
         self.processor = CLIPSegProcessor.from_pretrained("CIDAS/clipseg-rd64-refined")
         self.model = CLIPSegForImageSegmentation.from_pretrained("CIDAS/clipseg-rd64-refined")
         if DEVICE==torch.device("cuda"):
