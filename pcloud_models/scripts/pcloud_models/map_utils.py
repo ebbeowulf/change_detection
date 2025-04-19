@@ -427,9 +427,9 @@ class pcloud_from_images():
                 self.classifier_type=classifier_type
             elif classifier_type=='hybrid':
                 from change_detection.clip_segmentation import clip_seg
-                from change_detection.omdet_segmentation import omdet_segmentation
+                from change_detection.owl_segmentation import owl_segmentation
                 self.YS=clip_seg(tgt_class_list)
-                self.YS2=omdet_segmentation(tgt_class_list)
+                self.YS2=owl_segmentation(tgt_class_list)
                 self.classifier_type=classifier_type
 
 
@@ -445,7 +445,19 @@ class pcloud_from_images():
             self.YS.process_image(self.loaded_image['colorT'].cpu().numpy(), detection_threshold)    
         return self.get_pts_per_class(tgt_class)
       
-    def multi_prompt_process(self, prompts:list, detection_threshold, rotate90:bool=False, classifier_type='clipseg'):
+    def multi_prompt_process(self, prompts:list, detection_threshold, rotate90:bool=False, classifier_type='clipseg', hybrid_mode='intelligent'):
+        """Process multiple prompts with optional intelligent hybrid model fusion
+        
+        Args:
+            prompts: List of target classes
+            detection_threshold: Confidence threshold
+            rotate90: Whether to rotate image 90 degrees
+            classifier_type: 'clipseg', 'omdet', or 'hybrid'
+            hybrid_mode: For hybrid classifier, 'blend', 'selective', or 'intelligent'
+            
+        Returns:
+            Dictionary of point clouds per class
+        """
         self.setup_image_processing(prompts, classifier_type)
 
         # Process images with both models
@@ -461,84 +473,235 @@ class pcloud_from_images():
     
         all_pts = dict()
         
-        # Build the class associated mask for this image and combine results
-        for tgt_class in prompts:
-            try:
-                pts1 = self.get_pts_per_class(tgt_class, rotate90=rotate90)
-                
-                if classifier_type=='hybrid' and pts1 is not None:
-                    pts2 = self.get_pts_per_class2(tgt_class, rotate90=rotate90)
+        # If using hybrid mode with intelligent fusion
+        if classifier_type=='hybrid' and hybrid_mode=='intelligent':
+            # Process points from each model separately first
+            clipseg_results = {}
+            omdet_results = {}
+            
+            # Get individual point clouds from each model
+            for tgt_class in prompts:
+                try:
+                    # Get points from CLIPSeg
+                    pts1 = self.get_pts_per_class(tgt_class, rotate90=rotate90)
+                    if pts1 is not None:
+                        # Filter NaNs
+                        valid_mask1 = ~torch.isnan(pts1['xyz']).any(dim=1)
+                        if torch.sum(valid_mask1) > 0:
+                            clipseg_results[tgt_class] = {
+                                'xyz': pts1['xyz'][valid_mask1],
+                                'rgb': pts1['rgb'][valid_mask1],
+                                'probs': pts1['probs'][valid_mask1],
+                                'valid_count': torch.sum(valid_mask1).item(),
+                                'max_prob': torch.max(pts1['probs'][valid_mask1]).item() if torch.sum(valid_mask1) > 0 else 0
+                            }
                     
+                    # Get points from OmDet
+                    pts2 = self.get_pts_per_class2(tgt_class, rotate90=rotate90)
                     if pts2 is not None:
-                        # Get maximum confidence scores from each model
-                        max_conf1 = torch.max(pts1['probs']).item() if pts1['probs'].numel() > 0 else 0.0
-                        max_conf2 = torch.max(pts2['probs']).item() if pts2['probs'].numel() > 0 else 0.0
+                        # Filter NaNs
+                        valid_mask2 = ~torch.isnan(pts2['xyz']).any(dim=1)
+                        if torch.sum(valid_mask2) > 0:
+                            omdet_results[tgt_class] = {
+                                'xyz': pts2['xyz'][valid_mask2],
+                                'rgb': pts2['rgb'][valid_mask2],
+                                'probs': pts2['probs'][valid_mask2],
+                                'valid_count': torch.sum(valid_mask2).item(),
+                                'max_prob': torch.max(pts2['probs'][valid_mask2]).item() if torch.sum(valid_mask2) > 0 else 0
+                            }
+                except Exception as e:
+                    print(f"Error getting individual model results for {tgt_class}: {e}")
+            
+            # Intelligently combine results
+            for tgt_class in prompts:
+                has_clipseg = tgt_class in clipseg_results
+                has_omdet = tgt_class in omdet_results
+                
+                if not has_clipseg and not has_omdet:
+                    all_pts[tgt_class] = None
+                    continue
+                
+                # Both models detected the object
+                if has_clipseg and has_omdet:
+                    # Get metrics to decide best combination strategy
+                    clip_count = clipseg_results[tgt_class]['valid_count']
+                    omdet_count = omdet_results[tgt_class]['valid_count']
+                    clip_max_prob = clipseg_results[tgt_class]['max_prob']
+                    omdet_max_prob = omdet_results[tgt_class]['max_prob']
+                    
+                    # OmDet has strong detection - prioritize it
+                    if omdet_count > 1000 and omdet_max_prob > 0.7:
+                        print(f"Using OmDet as primary for {tgt_class} (high quality detection)")
                         
-                        # Calculate dynamic weights based on relative confidence
-                        total_conf = max_conf1 + max_conf2
-                        if total_conf > 0:
-                            # Fully dynamic weights based on confidence
-                            weight1 = max_conf1 / total_conf
-                            weight2 = max_conf2 / total_conf
-                        else:
-                            # Default to equal weights if no confidence
-                            weight1 = 0.5
-                            weight2 = 0.5
+                        # Use primarily OmDet with some CLIPSeg points for completeness
+                        clip_selection = min(clip_count, int(omdet_count*0.25))
                         
-                        # Apply weights to probabilities
-                        pts1_probs = pts1['probs'] * weight1
-                        pts2_probs = pts2['probs'] * weight2
+                        try:
+                            all_pts[tgt_class] = {
+                                'xyz': torch.vstack([
+                                    omdet_results[tgt_class]['xyz'],
+                                    clipseg_results[tgt_class]['xyz'][:clip_selection]
+                                ]),
+                                'rgb': torch.vstack([
+                                    omdet_results[tgt_class]['rgb'],
+                                    clipseg_results[tgt_class]['rgb'][:clip_selection]
+                                ]),
+                                'probs': torch.hstack([
+                                    omdet_results[tgt_class]['probs'] * 0.8,
+                                    clipseg_results[tgt_class]['probs'][:clip_selection] * 0.2
+                                ])
+                            }
+                        except Exception as e:
+                            print(f"Error combining models (OmDet primary): {e}")
+                            all_pts[tgt_class] = omdet_results[tgt_class]
+                    
+                    # CLIPSeg detected much more - it might see something OmDet missed
+                    elif clip_count > omdet_count * 3:
+                        print(f"Using filtered CLIPSeg for {tgt_class} (more complete detection)")
                         
-                        # Combine points from both models - with explicit garbage collection
-                        # Filter out NaN values before combining
-                        pts1_valid_mask = ~torch.isnan(pts1['xyz']).any(dim=1)
-                        pts2_valid_mask = ~torch.isnan(pts2['xyz']).any(dim=1)
+                        # Use CLIPSeg with additional filtering + OmDet
+                        try:
+                            # Apply stricter filtering to CLIPSeg detections
+                            clip_probs = clipseg_results[tgt_class]['probs']
+                            prob_threshold = detection_threshold + (torch.mean(clip_probs) - detection_threshold) * 0.5
+                            prob_mask = clip_probs > prob_threshold
+                            
+                            # Only combine if we have points after filtering
+                            if torch.sum(prob_mask) > 0:
+                                all_pts[tgt_class] = {
+                                    'xyz': torch.vstack([
+                                        clipseg_results[tgt_class]['xyz'][prob_mask],
+                                        omdet_results[tgt_class]['xyz']
+                                    ]),
+                                    'rgb': torch.vstack([
+                                        clipseg_results[tgt_class]['rgb'][prob_mask],
+                                        omdet_results[tgt_class]['rgb']
+                                    ]),
+                                    'probs': torch.hstack([
+                                        clipseg_results[tgt_class]['probs'][prob_mask] * 0.6,
+                                        omdet_results[tgt_class]['probs'] * 0.4
+                                    ])
+                                }
+                            else:
+                                # If filtering removed all CLIPSeg points, just use OmDet
+                                all_pts[tgt_class] = omdet_results[tgt_class]
+                        except Exception as e:
+                            print(f"Error combining models (CLIPSeg filtered): {e}")
+                            # Fallback to CLIPSeg if combination fails
+                            all_pts[tgt_class] = clipseg_results[tgt_class]
+                    
+                    # Balanced detection - use simple weighted combination
+                    else:
+                        print(f"Using balanced approach for {tgt_class}")
+                        try:
+                            all_pts[tgt_class] = {
+                                'xyz': torch.vstack([
+                                    clipseg_results[tgt_class]['xyz'],
+                                    omdet_results[tgt_class]['xyz']
+                                ]),
+                                'rgb': torch.vstack([
+                                    clipseg_results[tgt_class]['rgb'],
+                                    omdet_results[tgt_class]['rgb']
+                                ]),
+                                'probs': torch.hstack([
+                                    clipseg_results[tgt_class]['probs'] * 0.4,
+                                    omdet_results[tgt_class]['probs'] * 0.6
+                                ])
+                            }
+                        except Exception as e:
+                            print(f"Error in balanced combination: {e}")
+                            # Use the model with more points as fallback
+                            if clip_count > omdet_count:
+                                all_pts[tgt_class] = clipseg_results[tgt_class]
+                            else:
+                                all_pts[tgt_class] = omdet_results[tgt_class]
+                
+                # Only one model detected the object
+                elif has_omdet:
+                    all_pts[tgt_class] = {
+                        'xyz': omdet_results[tgt_class]['xyz'],
+                        'rgb': omdet_results[tgt_class]['rgb'],
+                        'probs': omdet_results[tgt_class]['probs']
+                    }
+                elif has_clipseg:
+                    all_pts[tgt_class] = {
+                        'xyz': clipseg_results[tgt_class]['xyz'],
+                        'rgb': clipseg_results[tgt_class]['rgb'],
+                        'probs': clipseg_results[tgt_class]['probs']
+                    }
+            
+        # Otherwise, use the standard hybrid implementation
+        else:
+            # Build the class associated mask for this image and combine results
+            for tgt_class in prompts:
+                try:
+                    pts1 = self.get_pts_per_class(tgt_class, rotate90=rotate90)
+                    
+                    if classifier_type=='hybrid':
+                        pts2 = self.get_pts_per_class2(tgt_class, rotate90=rotate90)
                         
-                        if torch.sum(pts1_valid_mask) == 0 and torch.sum(pts2_valid_mask) == 0:
-                            print(f"Warning: No valid points found for {tgt_class}, skipping")
-                            all_pts[tgt_class] = None
-                            continue
+                        if pts1 is not None:
+                            if pts2 is not None:
+                                # Default to equal weights
+                                weight1 = 0.4
+                                weight2 = 0.6
                                 
-                        # Filter points to remove NaNs
-                        pts1_xyz_filtered = pts1['xyz'][pts1_valid_mask]
-                        pts1_rgb_filtered = pts1['rgb'][pts1_valid_mask]
-                        pts1_probs_filtered = pts1_probs[pts1_valid_mask]
-                        
-                        pts2_xyz_filtered = pts2['xyz'][pts2_valid_mask]
-                        pts2_rgb_filtered = pts2['rgb'][pts2_valid_mask]
-                        pts2_probs_filtered = pts2_probs[pts2_valid_mask]
-                        
-                        # Check if we have valid points after filtering
-                        if pts1_xyz_filtered.shape[0] == 0 and pts2_xyz_filtered.shape[0] == 0:
-                            print(f"Warning: All points for {tgt_class} were NaN, skipping")
-                            all_pts[tgt_class] = None
-                            continue
-                        elif pts1_xyz_filtered.shape[0] == 0:
-                            all_pts[tgt_class] = {
-                                'xyz': pts2_xyz_filtered, 
-                                'rgb': pts2_rgb_filtered,
-                                'probs': pts2_probs_filtered
-                            }
-                        elif pts2_xyz_filtered.shape[0] == 0:
-                            all_pts[tgt_class] = {
-                                'xyz': pts1_xyz_filtered, 
-                                'rgb': pts1_rgb_filtered,
-                                'probs': pts1_probs_filtered
-                            }
+                                # Apply weights to probabilities
+                                pts1_probs = pts1['probs'] * weight1
+                                pts2_probs = pts2['probs'] * weight2
+                                
+                                # Combine points from both models - with explicit garbage collection
+                                # Filter out NaN values before combining
+                                pts1_valid_mask = ~torch.isnan(pts1['xyz']).any(dim=1)
+                                pts2_valid_mask = ~torch.isnan(pts2['xyz']).any(dim=1)
+                                
+                                if torch.sum(pts1_valid_mask) == 0 and torch.sum(pts2_valid_mask) == 0:
+                                    print(f"Warning: No valid points found for {tgt_class}, skipping")
+                                    all_pts[tgt_class] = None
+                                    continue
+                                        
+                                # Filter points to remove NaNs
+                                pts1_xyz_filtered = pts1['xyz'][pts1_valid_mask]
+                                pts1_rgb_filtered = pts1['rgb'][pts1_valid_mask]
+                                pts1_probs_filtered = pts1_probs[pts1_valid_mask]
+                                
+                                pts2_xyz_filtered = pts2['xyz'][pts2_valid_mask]
+                                pts2_rgb_filtered = pts2['rgb'][pts2_valid_mask]
+                                pts2_probs_filtered = pts2_probs[pts2_valid_mask]
+                                
+                                # Check if we have valid points after filtering
+                                if pts1_xyz_filtered.shape[0] == 0 and pts2_xyz_filtered.shape[0] == 0:
+                                    print(f"Warning: All points for {tgt_class} were NaN, skipping")
+                                    all_pts[tgt_class] = None
+                                    continue
+                                elif pts1_xyz_filtered.shape[0] == 0:
+                                    all_pts[tgt_class] = {
+                                        'xyz': pts2_xyz_filtered, 
+                                        'rgb': pts2_rgb_filtered,
+                                        'probs': pts2_probs_filtered
+                                    }
+                                elif pts2_xyz_filtered.shape[0] == 0:
+                                    all_pts[tgt_class] = {
+                                        'xyz': pts1_xyz_filtered, 
+                                        'rgb': pts1_rgb_filtered,
+                                        'probs': pts1_probs_filtered
+                                    }
+                                else:
+                                    # Both models have valid points, combine them
+                                    all_pts[tgt_class] = {
+                                        'xyz': torch.vstack([pts1_xyz_filtered, pts2_xyz_filtered]),
+                                        'rgb': torch.vstack([pts1_rgb_filtered, pts2_rgb_filtered]),
+                                        'probs': torch.hstack([pts1_probs_filtered, pts2_probs_filtered])
+                                    }
+                            else:
+                                all_pts[tgt_class] = pts1
                         else:
-                            # Both models have valid points, combine them
-                            all_pts[tgt_class] = {
-                                'xyz': torch.vstack([pts1_xyz_filtered, pts2_xyz_filtered]),
-                                'rgb': torch.vstack([pts1_rgb_filtered, pts2_rgb_filtered]),
-                                'probs': torch.hstack([pts1_probs_filtered, pts2_probs_filtered])
-                            }
+                            all_pts[tgt_class] = pts2
                     else:
                         all_pts[tgt_class] = pts1
-                else:
-                    all_pts[tgt_class] = pts1
-            except Exception as e:
-                print(f"Error processing class {tgt_class}: {e}")
-                all_pts[tgt_class] = None
+                except Exception as e:
+                    print(f"Error processing class {tgt_class}: {e}")
+                    all_pts[tgt_class] = None
         
         return all_pts
 
@@ -695,28 +858,199 @@ class pcloud_from_images():
             # And clear the final point cloud
             pcloud[tgt]={'xyz': np.zeros((0,3),dtype=float),'rgb': np.zeros((0,3),dtype=np.uint8),'probs': []} 
 
-    def extract_point_clouds(self, prompts, threshold, classifier_type='clipseg', use_temporal_consistency=True):
-        """Extract point clouds for each class with NaN filtering and temporal consistency
+    def extract_point_clouds(self, prompts, threshold, classifier_type='clipseg', use_temporal_consistency=True, noise_filter_strength=0.7, hybrid_mode='intelligent'):
+        """Extract point clouds for each class with intelligent model fusion
         
         Args:
             prompts: List of classes to detect
             threshold: Detection confidence threshold
             classifier_type: Type of classifier to use ('clipseg', 'omdet', or 'hybrid')
             use_temporal_consistency: Whether to use temporal tracking across frames
+            noise_filter_strength: Strength of noise filtering (0-1), higher values filter more noise
+            hybrid_mode: Hybrid combination mode ('blend', 'selective', or 'intelligent')
             
         Returns:
             Dictionary of point clouds per class
         """
-        # Get raw points with dynamic weighting
-        all_pts = self.multi_prompt_process(prompts, threshold, classifier_type=classifier_type)
+        # Get raw points from each model
+        if classifier_type == 'hybrid':
+            # Process with both models separately first
+            self.setup_image_processing(prompts, classifier_type)
+            
+            # Process the current image with both models
+            if rotate90:
+                rot_color = np.rot90(self.loaded_image['colorT'].cpu().numpy(), k=1, axes=(1,0))
+                self.YS.process_image_numpy(rot_color, threshold)
+                self.YS2.process_image_numpy(rot_color, threshold)
+            else:
+                self.YS.process_image_numpy(self.loaded_image['colorT'].cpu().numpy(), threshold)
+                self.YS2.process_image_numpy(self.loaded_image['colorT'].cpu().numpy(), threshold)
+            
+            # Get individual model results first
+            clipseg_results = {}
+            omdet_results = {}
+            
+            for tgt_class in prompts:
+                try:
+                    # Get points from CLIPSeg
+                    pts1 = self.get_pts_per_class(tgt_class, rotate90=False)
+                    if pts1 is not None:
+                        # Filter NaNs
+                        valid_mask1 = ~torch.isnan(pts1['xyz']).any(dim=1)
+                        if torch.sum(valid_mask1) > 0:
+                            clipseg_results[tgt_class] = {
+                                'xyz': pts1['xyz'][valid_mask1],
+                                'rgb': pts1['rgb'][valid_mask1],
+                                'probs': pts1['probs'][valid_mask1],
+                                'valid_count': torch.sum(valid_mask1).item()
+                            }
+                    
+                    # Get points from OmDet
+                    pts2 = self.get_pts_per_class2(tgt_class, rotate90=False)
+                    if pts2 is not None:
+                        # Filter NaNs
+                        valid_mask2 = ~torch.isnan(pts2['xyz']).any(dim=1)
+                        if torch.sum(valid_mask2) > 0:
+                            omdet_results[tgt_class] = {
+                                'xyz': pts2['xyz'][valid_mask2],
+                                'rgb': pts2['rgb'][valid_mask2],
+                                'probs': pts2['probs'][valid_mask2],
+                                'valid_count': torch.sum(valid_mask2).item(),
+                                'max_prob': torch.max(pts2['probs'][valid_mask2]).item() if torch.sum(valid_mask2) > 0 else 0
+                            }
+                except Exception as e:
+                    print(f"Error getting individual model results for {tgt_class}: {e}")
+            
+            # Now intelligently combine them based on selected hybrid mode
+            combined_results = {}
+            
+            for tgt_class in prompts:
+                has_clipseg = tgt_class in clipseg_results
+                has_omdet = tgt_class in omdet_results
+                
+                if not has_clipseg and not has_omdet:
+                    continue
+                
+                if hybrid_mode == 'intelligent':
+                    # Intelligent combination based on detection quality
+                    if has_clipseg and has_omdet:
+                        # Both models detected something - check quality
+                        clip_count = clipseg_results[tgt_class]['valid_count']
+                        omdet_count = omdet_results[tgt_class]['valid_count']
+                        omdet_max_prob = omdet_results[tgt_class]['max_prob'] if has_omdet else 0
+                        
+                        if omdet_count > 1000 and omdet_max_prob > 0.7:
+                            # OmDet has good detection, use it as primary (80%)
+                            print(f"Using OmDet as primary for {tgt_class} (good quality detection)")
+                            combined_results[tgt_class] = {
+                                'xyz': torch.vstack([
+                                    omdet_results[tgt_class]['xyz'],
+                                    clipseg_results[tgt_class]['xyz'][:min(clip_count, int(omdet_count*0.25))]
+                                ]),
+                                'rgb': torch.vstack([
+                                    omdet_results[tgt_class]['rgb'],
+                                    clipseg_results[tgt_class]['rgb'][:min(clip_count, int(omdet_count*0.25))]
+                                ]),
+                                'probs': torch.hstack([
+                                    omdet_results[tgt_class]['probs'] * 0.8,
+                                    clipseg_results[tgt_class]['probs'][:min(clip_count, int(omdet_count*0.25))] * 0.2
+                                ])
+                            }
+                        elif clip_count > omdet_count * 3:
+                            # CLIPSeg detected much more, use it with noise filtering
+                            print(f"Using filtered CLIPSeg for {tgt_class} (more complete detection)")
+                            # Apply additional filtering
+                            clip_probs = clipseg_results[tgt_class]['probs']
+                            prob_threshold = threshold + (torch.mean(clip_probs) - threshold) * 0.5
+                            prob_mask = clip_probs > prob_threshold
+                            
+                            combined_results[tgt_class] = {
+                                'xyz': torch.vstack([
+                                    clipseg_results[tgt_class]['xyz'][prob_mask],
+                                    omdet_results[tgt_class]['xyz']
+                                ]),
+                                'rgb': torch.vstack([
+                                    clipseg_results[tgt_class]['rgb'][prob_mask],
+                                    omdet_results[tgt_class]['rgb']
+                                ]),
+                                'probs': torch.hstack([
+                                    clipseg_results[tgt_class]['probs'][prob_mask] * 0.6,
+                                    omdet_results[tgt_class]['probs'] * 0.4
+                                ])
+                            }
+                        else:
+                            # Balanced approach
+                            print(f"Using balanced approach for {tgt_class}")
+                            combined_results[tgt_class] = {
+                                'xyz': torch.vstack([
+                                    clipseg_results[tgt_class]['xyz'],
+                                    omdet_results[tgt_class]['xyz']
+                                ]),
+                                'rgb': torch.vstack([
+                                    clipseg_results[tgt_class]['rgb'],
+                                    omdet_results[tgt_class]['rgb']
+                                ]),
+                                'probs': torch.hstack([
+                                    clipseg_results[tgt_class]['probs'] * 0.4,
+                                    omdet_results[tgt_class]['probs'] * 0.6
+                                ])
+                            }
+                    elif has_omdet:
+                        # Only OmDet detected it
+                        combined_results[tgt_class] = omdet_results[tgt_class]
+                    else:
+                        # Only CLIPSeg detected it
+                        combined_results[tgt_class] = clipseg_results[tgt_class]
+                
+                elif hybrid_mode == 'selective':
+                    # Use OmDet when available, fall back to CLIPSeg
+                    if has_omdet and omdet_results[tgt_class]['valid_count'] > 500:
+                        combined_results[tgt_class] = omdet_results[tgt_class]
+                    elif has_clipseg:
+                        combined_results[tgt_class] = clipseg_results[tgt_class]
+                    elif has_omdet:
+                        combined_results[tgt_class] = omdet_results[tgt_class]
+                
+                else:  # 'blend' mode - simple combination
+                    if has_clipseg and has_omdet:
+                        combined_results[tgt_class] = {
+                            'xyz': torch.vstack([
+                                clipseg_results[tgt_class]['xyz'],
+                                omdet_results[tgt_class]['xyz']
+                            ]),
+                            'rgb': torch.vstack([
+                                clipseg_results[tgt_class]['rgb'],
+                                omdet_results[tgt_class]['rgb']
+                            ]),
+                            'probs': torch.hstack([
+                                clipseg_results[tgt_class]['probs'] * 0.4,
+                                omdet_results[tgt_class]['probs'] * 0.6
+                            ])
+                        }
+                    elif has_omdet:
+                        combined_results[tgt_class] = omdet_results[tgt_class]
+                    else:
+                        combined_results[tgt_class] = clipseg_results[tgt_class]
+            
+            # Use the combined results as our all_pts
+            all_pts = {}
+            for tgt_class, data in combined_results.items():
+                all_pts[tgt_class] = {
+                    'xyz': data['xyz'],
+                    'rgb': data['rgb'],
+                    'probs': data['probs']
+                }
+        else:
+            # Standard single-model approach
+            all_pts = self.multi_prompt_process(prompts, threshold, classifier_type=classifier_type)
         
-        # Process point clouds with NaN filtering and clustering
+        # Process point clouds with clustering and filtering
         result_clouds = {}
         
         for tgt_class in prompts:
             if tgt_class in all_pts and all_pts[tgt_class] is not None:
                 try:
-                    # Filter out any NaN points
+                    # Extract valid points
                     pts_data = all_pts[tgt_class]
                     valid_mask = ~torch.isnan(pts_data['xyz']).any(dim=1)
                     
@@ -724,23 +1058,28 @@ class pcloud_from_images():
                     if torch.sum(valid_mask) == 0:
                         print(f"No valid points for {tgt_class}, skipping")
                         continue
-                        
-                    # Extract valid points
-                    valid_xyz = pts_data['xyz'][valid_mask].detach().cpu().numpy()
+                    
+                    # Apply noise filtering
+                    valid_xyz = self._apply_noise_filtering(
+                        pts_data['xyz'][valid_mask].detach().cpu().numpy(),
+                        pts_data['probs'][valid_mask].detach().cpu().numpy(),
+                        threshold,
+                        noise_filter_strength
+                    )
                     
                     # Skip if too few points
-                    if len(valid_xyz) < 10:  # Using reduced threshold as per memory
+                    if len(valid_xyz) < 10:
                         print(f"Too few points ({len(valid_xyz)}) for {tgt_class}, skipping")
                         continue
                     
-                    # Apply DBSCAN clustering with optimized parameters from memory
+                    # Apply DBSCAN clustering with optimized parameters
                     clouds = get_distinct_clusters(
                         valid_xyz, 
                         obj_class=tgt_class,
-                        min_samples=10,           # Reduced from 20 to 10 as per memory
-                        gridcell_size=0.005,      # Refined from 0.01 to 0.005 as per memory
-                        eps=0.025,                # Increased from 0.018 to 0.025 as per memory
-                        cluster_min_count=1000,   # Reduced from 10000 to 1000 as per memory
+                        min_samples=10,          
+                        gridcell_size=0.005,     
+                        eps=0.025,               
+                        cluster_min_count=1000,  
                         floor_threshold=0.02,
                         use_temporal_consistency=use_temporal_consistency
                     )
@@ -754,10 +1093,57 @@ class pcloud_from_images():
                     traceback.print_exc()
         
         return result_clouds
+        
+    def _apply_noise_filtering(self, xyz_points, prob_values, base_threshold, filter_strength):
+        """Apply adaptive noise filtering to point cloud
+        
+        Args:
+            xyz_points: Array of point coordinates
+            prob_values: Array of point probabilities
+            base_threshold: Base confidence threshold
+            filter_strength: Strength of noise filtering (0-1)
+            
+        Returns:
+            Filtered point cloud
+        """
+        if len(xyz_points) == 0:
+            return xyz_points
+            
+        # Apply adaptive threshold for noise filtering
+        if len(prob_values) > 0:
+            # Determine adaptive threshold based on confidence distribution
+            prob_mean = np.mean(prob_values)
+            prob_std = np.std(prob_values)
+            
+            # Adaptive threshold calculation
+            adaptive_threshold = base_threshold + (prob_mean - base_threshold) * filter_strength
+            adaptive_threshold = min(adaptive_threshold, prob_mean - 0.5 * prob_std)
+            
+            # Apply threshold
+            prob_mask = prob_values > adaptive_threshold
+            xyz_points = xyz_points[prob_mask]
+        
+        # Apply density-based filtering for larger point clouds
+        if len(xyz_points) > 100:
+            try:
+                # Calculate point density
+                from sklearn.neighbors import NearestNeighbors
+                nn = NearestNeighbors(n_neighbors=5).fit(xyz_points)
+                distances, _ = nn.kneighbors(xyz_points)
+                avg_distances = np.mean(distances, axis=1)
+                
+                # Filter out isolated points
+                density_threshold = np.mean(avg_distances) + filter_strength * np.std(avg_distances)
+                density_mask = avg_distances < density_threshold
+                xyz_points = xyz_points[density_mask]
+            except Exception as e:
+                print(f"Error in density filtering: {e}")
+        
+        return xyz_points
 
 TIME_STRUCT={'count': 0, 'times':np.zeros((3,),dtype=float)}
 
-def get_distinct_clusters(pcloud_or_pts, color_imgs=None, obj_class=None, gridcell_size=DBSCAN_GRIDCELL_SIZE, eps=DBSCAN_EPS, min_samples=DBSCAN_MIN_SAMPLES, cluster_min_count=CLUSTER_MIN_COUNT, floor_threshold=0.1, use_temporal_consistency=True):
+def get_distinct_clusters(pcloud_or_pts, color_imgs=None, obj_class=None, gridcell_size=0.005, eps=0.025, min_samples=10, cluster_min_count=1000, floor_threshold=-1.0, use_temporal_consistency=True):
     """Get distinct clusters of 3D points using DBSCAN.
     
     Args:
@@ -910,11 +1296,68 @@ class object_pcloud():
         self.label = label
     
     def is_box_overlap(self, input_cloud, dimensions=[0,1,2], threshold=0.3):
+        """Check if this object's bounding box overlaps with another.
+        
+        Args:
+            input_cloud: Another object_pcloud to compare with
+            dimensions: Which dimensions to check for overlap
+            threshold: Overlap threshold distance
+            
+        Returns:
+            Boolean indicating if boxes overlap
+        """
+        # Simple box overlap check
         for dim in dimensions:
             if self.box[1,dim] < (input_cloud.box[0,dim]-threshold) or self.box[0,dim] >= (input_cloud.box[1,dim]+threshold):
                 return False
         return True
-    
+        
+    def match_with_movement(self, input_cloud, movement_threshold=2.0, centroid_weight=0.4, size_weight=0.6, feature_weight=0.0):
+        """Match objects accounting for robot movement during exploration.
+        
+        Args:
+            input_cloud: Another object_pcloud to compare with
+            movement_threshold: Maximum movement distance for matching (larger for exploration)
+            centroid_weight: Weight given to centroid distance (0-1)
+            size_weight: Weight given to size similarity (0-1)
+            feature_weight: Weight given to feature similarity (0-1) - reserved for future use
+            
+        Returns:
+            Match score (0-1) or 0 if no match
+        """
+        # Calculate distance between centroids - with larger threshold for exploration
+        centroid_dist = np.linalg.norm(self.centroid - input_cloud.centroid)
+        
+        # Get box sizes for each object
+        self_size = self.box[1] - self.box[0]
+        input_size = input_cloud.box[1] - input_cloud.box[0]
+        
+        # Calculate volume similarity (more robust for viewpoint changes)
+        self_volume = np.prod(self_size)
+        input_volume = np.prod(input_size)
+        volume_ratio = min(self_volume, input_volume) / max(self_volume, input_volume) if max(self_volume, input_volume) > 0 else 0
+        
+        # Calculate size similarity (ratio of smaller to larger in each dimension)
+        size_similarity = 0
+        for dim in range(3):
+            min_size = min(self_size[dim], input_size[dim])
+            max_size = max(self_size[dim], input_size[dim])
+            if max_size > 0:
+                size_similarity += min_size / max_size
+        size_similarity = 0.5 * size_similarity/3 + 0.5 * volume_ratio  # Blend dimensional and volume similarity
+        
+        # If centroid distance is extremely large, objects probably can't match
+        # Use much larger threshold for exploration
+        if centroid_dist > movement_threshold:
+            return 0
+            
+        # Calculate match score based on weighted combination
+        # For exploration, rely more on size similarity than position
+        centroid_score = 1.0 - (centroid_dist / movement_threshold)
+        match_score = centroid_weight * centroid_score + size_weight * size_similarity
+        
+        return match_score
+
     def update_from_detection(self, new_detection, blend_factor=0.3):
         """Update this object with a new detection of the same object
         
@@ -955,13 +1398,15 @@ class object_pcloud():
             print(f"Error merging point clouds: {e}")
     
     @staticmethod
-    def find_matching_object(new_object, overlap_threshold=0.3, max_frames_missing=3):
+    def find_matching_object(new_object, overlap_threshold=0.3, max_frames_missing=10, movement_aware=True, movement_threshold=2.0):
         """Find if this object matches any existing tracked object
         
         Args:
             new_object (object_pcloud): The new detection to match
             overlap_threshold (float): Threshold for box overlap
             max_frames_missing (int): Maximum number of frames an object can be missing
+            movement_aware (bool): Whether to use movement-aware matching
+            movement_threshold (float): Maximum movement distance for matching
             
         Returns:
             track_id or None: ID of matching object or None if no match
@@ -970,7 +1415,7 @@ class object_pcloud():
             return None
             
         best_match = None
-        best_overlap = 0
+        best_score = 0
         
         # Look through existing objects with the same label
         label_key = new_object.label
@@ -982,17 +1427,32 @@ class object_pcloud():
             frames_missing = object_pcloud.current_frame - obj.last_seen
             if frames_missing > max_frames_missing:
                 continue
+            
+            if movement_aware:
+                # Use movement-aware matching that considers exploration scenarios
+                match_score = obj.match_with_movement(
+                    new_object, 
+                    movement_threshold=movement_threshold,
+                    centroid_weight=0.4,  # Less weight on position
+                    size_weight=0.6       # More weight on object size/shape
+                )
                 
-            # Check for box overlap
-            if obj.is_box_overlap(new_object, threshold=overlap_threshold):
-                # Calculate IoU or other similarity metric if needed
-                # For now just using a simple check
-                overlap = 1.0  # Simple overlap score
-                
-                if overlap > best_overlap:
-                    best_overlap = overlap
+                # If score exceeds threshold, consider it a match
+                if match_score > best_score:
+                    best_score = match_score
                     best_match = track_id
+            else:
+                # Use simple box overlap (original method)
+                if obj.is_box_overlap(new_object, threshold=overlap_threshold):
+                    # Simple match if boxes overlap
+                    best_match = track_id
+                    break
         
+        # For movement-aware mode, require minimum score threshold
+        # Lower threshold for exploration (0.3 vs 0.4)
+        if movement_aware and best_score < 0.3:
+            return None
+            
         return best_match
     
     @staticmethod
@@ -1007,7 +1467,7 @@ class object_pcloud():
         object_pcloud.current_frame = 0
         
     @staticmethod
-    def decay_missing_objects(decay_factor=0.8, remove_threshold=0.2):
+    def decay_missing_objects(decay_factor=0.8, remove_threshold=0.6):
         """Decay confidence of objects not seen in current frame
         
         Args:
@@ -1045,3 +1505,59 @@ class object_pcloud():
     def compress_object(self):
         self.pts=None
         self.farthestP=None
+
+    def estimate_probability(self, original_xyz, original_prob):
+        """Calculate probability statistics for points within this object's bounding box
+        
+        Args:
+            original_xyz: Original point cloud coordinates
+            original_prob: Original point cloud probabilities
+            
+        Returns:
+            None (updates self.prob_stats)
+        """
+        filt = (original_xyz[:,0] >= self.box[0][0]) * \
+               (original_xyz[:,0] <= self.box[1][0]) * \
+               (original_xyz[:,1] >= self.box[0][1]) * \
+               (original_xyz[:,1] <= self.box[1][1]) * \
+               (original_xyz[:,2] >= self.box[0][2]) * \
+               (original_xyz[:,2] <= self.box[1][2])
+               
+        self.prob_stats = dict()
+        self.prob_stats['max'] = original_prob[filt].max()
+        self.prob_stats['mean'] = original_prob[filt].mean()
+        self.prob_stats['stdev'] = original_prob[filt].std()
+        self.prob_stats['pcount'] = filt.shape[0]
+        
+    def compute_cloud_distance(self, input_cloud):
+        """Compute distance between this cloud and another
+        
+        Args:
+            input_cloud: Another object_pcloud to compare with
+            
+        Returns:
+            Minimum distance between points in the clouds
+        """
+        input_pt_matrix = input_cloud.pts[input_cloud.farthestP]
+        min_sq_dist = 1e10
+        for pid in self.farthestP:
+            min_sq_dist = min(min_sq_dist, ((input_pt_matrix-self.pts[pid])**2).sum(1).min())
+        return np.sqrt(min_sq_dist)
+    
+    def is_above(self, input_cloud):
+        """Check if this cloud is above another cloud
+        
+        Args:
+            input_cloud: Another object_pcloud to compare with
+            
+        Returns:
+            Boolean indicating if this cloud is above input_cloud
+        """
+        # Should be overlapped in x + y directions
+        if self.centroid[0] > input_cloud.box[0,0] and \
+           self.centroid[0] < input_cloud.box[1,0] and \
+           self.centroid[1] > input_cloud.box[0,1] and \
+           self.centroid[1] < input_cloud.box[1,1]:
+            # Should also be "above" the other centroid
+            return self.centroid[2] > input_cloud.centroid[2]
+        return False
