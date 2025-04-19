@@ -425,11 +425,15 @@ class pcloud_from_images():
                 from change_detection.omdet_segmentation import omdet_segmentation
                 self.YS=omdet_segmentation(tgt_class_list)
                 self.classifier_type=classifier_type
+            elif classifier_type=='owl':
+                from change_detection.owl_segmentation import owl_segmentation
+                self.YS=owl_segmentation(tgt_class_list)
+                self.classifier_type=classifier_type
             elif classifier_type=='hybrid':
                 from change_detection.clip_segmentation import clip_seg
-                from change_detection.owl_segmentation import owl_segmentation
+                from change_detection.omdet_segmentation import omdet_segmentation
                 self.YS=clip_seg(tgt_class_list)
-                self.YS2=owl_segmentation(tgt_class_list)
+                self.YS2=omdet_segmentation(tgt_class_list)
                 self.classifier_type=classifier_type
 
 
