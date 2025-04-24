@@ -1,3 +1,5 @@
 *.pt
 */__pycache__
 *.pyc
+pcloud_models/scripts/pcloud_models/draw_clusters.*.ply
+pcloud_models/scripts/pcloud_models/draw_clusters.*.png
