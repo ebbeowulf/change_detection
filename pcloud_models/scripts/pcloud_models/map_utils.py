@@ -402,6 +402,8 @@ class pcloud_from_images():
         is_update_required=False
         if self.YS is None or classifier_type!=self.classifier_type:
             is_update_required=True
+        elif self.YS is None or self.classifier_type=='hybrid':
+            is_update_required=True
         else:
             for tgt in tgt_class_list:
                 if tgt not in self.YS.get_all_classes():

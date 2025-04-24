@@ -593,7 +593,6 @@ if __name__ == '__main__':
     parser.add_argument('--min_travel_dist',type=float,default=0.01,help='Minimum distance the robot must travel before adding a new image to the point cloud (default = 0.1m)')
     parser.add_argument('--min_travel_angle',type=float,default=0.05,help='Minimum angle the camera must have moved before adding a new image to the point cloud (default = 0.1 rad)')
     parser.add_argument('--storage_dir',type=str,default=None,help='A place to store intermediate files - but only if specified (default = None)')
-    parser.add_argument('--use_model_hybrid',type=bool,default=False,help='Whether to use both CLIPSeg and OmDet models')
     args = parser.parse_args()
 
     if args.queries is None:
@@ -605,7 +604,7 @@ if __name__ == '__main__':
     target = args.queries
     
     # Use model-based hybrid approach if requested
-    if args.use_model_hybrid:
+    if args.classifier == 'hybrid':
         print("Using hybrid model approach (CLIPSeg + OmDet as separate prompts)")
         # For each query in the target list, add a model-specific version
         model_queries = []
