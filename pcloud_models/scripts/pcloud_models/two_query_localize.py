@@ -230,20 +230,6 @@ def estimate_likelihood(cluster_stats, category):
         return cluster_stats[4]*cluster_stats[6]
     elif category=='combo-room': # combined main + room
         return cluster_stats[2]*cluster_stats[4]*cluster_stats[6]
-    elif category=='hybrid-boost': # dynamic weighting based on confidence
-        # Extract confidence values
-        main_conf = cluster_stats[2]  # main model mean confidence
-        llm_conf = cluster_stats[4]   # llm model mean confidence
-        
-        # Boost factor - gives more weight to the stronger signal
-        if main_conf > llm_conf:
-            boost_ratio = main_conf / (llm_conf + 0.001)  # Prevent division by zero
-            # Stronger weighting for the more confident model
-            return main_conf * (1.0 + 0.2 * min(boost_ratio, 3.0)) * llm_conf
-        else:
-            boost_ratio = llm_conf / (main_conf + 0.001)  # Prevent division by zero
-            # Stronger weighting for the more confident model
-            return llm_conf * (1.0 + 0.2 * min(boost_ratio, 3.0)) * main_conf
     else:
         raise(Exception(f"Category {category} not implemented yet"))
 

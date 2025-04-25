@@ -17,9 +17,8 @@ from msg_and_srv.srv import DynamicCluster, DynamicClusterRequest, DynamicCluste
 from msg_and_srv.srv import SetString, SetStringResponse, SetStringRequest, SetFloat, SetFloatResponse, SetFloatRequest
 from geometry_msgs.msg import Point
 from visualization_msgs.msg import Marker, MarkerArray
-import torch
 import transformers
-
+import torch
 
 TRACK_COLOR=True
 
@@ -33,7 +32,7 @@ def normalizeAngle(angle):
     return angle
 
 class multi_query_localize:
-    def __init__(self, query_list, classifier, cluster_min_points, detection_threshold, travel_params, storage_dir=None):
+    def __init__(self, query_list, cluster_min_points, detection_threshold, travel_params, storage_dir=None):
         # Initization of the node, name_sub
         rospy.init_node('multi_query_localize', anonymous=True)
         self.listener = tf.TransformListener()
@@ -57,20 +56,10 @@ class multi_query_localize:
         # Create Pcloud Data Structures
         self.pcloud_creator=None
         self.query_list=query_list
-        self.classifier=classifier
         self.pcloud=dict()
         for query in self.query_list:
+            # self.pcloud[query]={'xyz': np.zeros((0,3),dtype=float), 'probs': np.zeros((0),dtype=float), 'rgb': np.zeros((0,3),dtype=float)}
             self.pcloud[query]={'xyz': torch.zeros((0,3),dtype=float,device=DEVICE), 'probs': torch.zeros((0),dtype=float,device=DEVICE), 'rgb': torch.zeros((0,3),dtype=float,device=DEVICE)}
-            
-        # Add model-specific point clouds (for multi-model clustering)
-        if classifier == 'hybrid':
-            for query in self.query_list:
-                for model in ['clipseg', 'omdet']:
-                    model_key = f"{query}_{model}"
-                    self.pcloud[model_key] = {'xyz': torch.zeros((0,3),dtype=float,device=DEVICE), 
-                                            'probs': torch.zeros((0),dtype=float,device=DEVICE), 
-                                            'rgb': torch.zeros((0,3),dtype=float,device=DEVICE)}
-                    
         self.cluster_min_points=cluster_min_points
         self.cluster_iou=0.1
         self.detection_threshold=detection_threshold
@@ -94,6 +83,7 @@ class multi_query_localize:
         self.top1_cluster_srv = rospy.Service('get_top1_cluster', DynamicCluster, self.top1_cluster_service)
         self.marker_pub=rospy.Publisher('cluster_markers',MarkerArray,queue_size=5)
         self.draw_clusters_srv = rospy.Service('draw_pclouds', Trigger, self.draw_pclouds)
+
     def draw_pclouds(self, msg):
 
         # positive_clusters, pos_likelihoods = self.match_clusters('combo-mean')
@@ -111,12 +101,11 @@ class multi_query_localize:
                 dI=drawn_image(pcd_main)
                 boxes = [ obj_.box for obj_ in positive_clusters ]
                 dI.add_boxes_to_fg(boxes)
+
                 fName=f"draw_clusters.{query.replace(' ','_')}.{self.pcloud[query]['xyz'].shape[0]}.png"
-                pName=f"draw_clusters.{query.replace(' ','_')}.{self.pcloud[query]['xyz'].shape[0]}.ply"
                 if self.storage_dir is not None:
                     fName=self.storage_dir+"/"+fName
                 dI.save_fg(fName)
-                o3d.io.write_point_cloud(pName, pcd_main)
 
         resp=TriggerResponse()
         resp.success=True
@@ -136,20 +125,8 @@ class multi_query_localize:
         elif req.value=='combo-room': # combined main + room
             print("Setting new cluster metric as combo-room")
             self.cluster_metric='combo-room'
-        elif req.value=='hybrid-boost': # special hybrid metric
-            print("Setting new cluster metric as hybrid-boost")
-            self.cluster_metric='hybrid-boost'
-        elif req.value=='model-hybrid': # cross-model hybrid clustering (clipseg vs omdet)
-            print("Setting new cluster metric as model-hybrid")
-            self.cluster_metric='model-hybrid'
-        elif req.value=='main-omdet': # OmDet only
-            print("Setting new cluster metric as main-omdet")
-            self.cluster_metric='main-omdet'
-        elif req.value=='main-clipseg': # CLIPSeg only
-            print("Setting new cluster metric as main-clipseg")
-            self.cluster_metric='main-clipseg'
         else:
-            print('Currently supported options include main-mean, combo-mean, main-room, combo-room, hybrid-boost, model-hybrid, main-omdet, main-clipseg')
+            print('Currently supported options include main-mean, combo-mean, main-room, combo-room')
         return SetStringResponse()
 
     def set_cluster_size_service(self, req):
@@ -170,7 +147,7 @@ class multi_query_localize:
     def clear_clouds_service(self, msg):
         resp=TriggerResponse()
         resp.success=True
-        for query in self.query_list:
+        for query in query_list:
             # self.pcloud[query]={'xyz': np.zeros((0,3),dtype=float), 'probs': np.zeros((0),dtype=float), 'rgb': np.zeros((0,3),dtype=float)}
             self.pcloud[query]={'xyz': torch.zeros((0,3),dtype=float,device=DEVICE), 'probs': torch.zeros((0),dtype=float,device=DEVICE), 'rgb': torch.zeros((0,3),dtype=float,device=DEVICE)}
         self.last_image=None
@@ -253,103 +230,14 @@ class multi_query_localize:
 
     # create the clusters and match them, returning any that exceed the detection threshold
     def match_clusters(self, method, main_query, llm_query):
-        # Special handling for model-hybrid method (cross-model clustering)
-        if method == 'model-hybrid':
-            # Extract base query name (remove model suffix if present)
-            if "_clipseg" in main_query:
-                base_query = main_query.replace("_clipseg", "")
-            elif "_omdet" in main_query:
-                base_query = main_query.replace("_omdet", "")
-            else:
-                base_query = main_query
-                
-            # Look for model-specific versions of the query
-            clipseg_query = f"{base_query}_clipseg"
-            omdet_query = f"{base_query}_omdet"
-            
-            if clipseg_query in self.pcloud and omdet_query in self.pcloud:
-                # Both model-specific point clouds exist
-                objects_clipseg = self.get_clusters_ros(self.pcloud[clipseg_query])
-                objects_omdet = self.get_clusters_ros(self.pcloud[omdet_query])
-                
-                # Update object markers for visualization
-                self.known_objects = []
-                for obj_ in objects_clipseg:
-                    self.known_objects.append(['clipseg', obj_.box])
-                for obj_ in objects_omdet:
-                    self.known_objects.append(['omdet', obj_.box])
-                
-                print(f"Model Clustering.... CLIPSeg {len(objects_clipseg)}, OmDet {len(objects_omdet)}")
-                positive_clusters = []
-                positive_cluster_likelihood = []
-                
-                # Find matches between CLIPSeg and OmDet clusters
-                for idx0 in range(len(objects_clipseg)):
-                    # Format: [idx, clip_max, clip_mean, omdet_max, omdet_mean]
-                    cl_stats = [idx0, objects_clipseg[idx0].prob_stats['max'], objects_clipseg[idx0].prob_stats['mean'], -1, -1]
-                    
-                    for idx1 in range(len(objects_omdet)):
-                        IOU = calculate_iou(objects_clipseg[idx0].box[0], objects_clipseg[idx0].box[1], 
-                                          objects_omdet[idx1].box[0], objects_omdet[idx1].box[1])
-                        if IOU > self.cluster_iou:
-                            cl_stats[3] = max(cl_stats[3], objects_omdet[idx1].prob_stats['max'])
-                            cl_stats[4] = max(cl_stats[4], objects_omdet[idx1].prob_stats['mean'])
-                    
-                    # Use hybrid-boost method to fuse confidences across models
-                    lk = estimate_likelihood(cl_stats, 'hybrid-boost')
-                    if lk > self.detection_threshold:
-                        positive_clusters.append(objects_clipseg[idx0])
-                        positive_cluster_likelihood.append(lk)
-                
-                # Add combined clusters to visualization
-                for obj_ in positive_clusters:
-                    self.known_objects.append(['model-hybrid', obj_.box])
-                
-                self.publish_object_markers()
-                return positive_clusters, positive_cluster_likelihood
-            else:
-                # Fall back to standard method
-                print(f"Model-specific point clouds not found for {base_query}, falling back to default method")
-                method = 'combo-mean'
-                main_query = base_query
-                llm_query = base_query
-        
-        # Handle model-specific methods
-        if '-omdet' in method or '-clipseg' in method:
-            model = method.split('-')[-1]  # Extract model name (omdet or clipseg)
-            base_method = method.replace(f"-{model}", "")  # Get base method name
-            
-            # Get the appropriate keys for model-specific point clouds
-            main_key = f"{main_query}_{model}"
-            llm_key = f"{llm_query}_{model}"
-            
-            # Check if keys exist in the point cloud dictionary
-            if main_key in self.pcloud:
-                objects_main = self.get_clusters_ros(self.pcloud[main_key])
-            else:
-                objects_main = []
-                
-            if llm_key in self.pcloud:
-                objects_llm = self.get_clusters_ros(self.pcloud[llm_key])
-            else:
-                objects_llm = []
-                
-            # Save original method and temporarily set to the base method
-            original_method = method
-            method = base_method  # Use the base method (without the model suffix)
+        if main_query in self.query_list:
+            objects_main=self.get_clusters_ros(self.pcloud[main_query])
         else:
-            # Original code for standard methods
-            if main_query in self.query_list:
-                objects_main = self.get_clusters_ros(self.pcloud[main_query])
-            else:
-                objects_main = []
-                
-            if llm_query in self.query_list:
-                objects_llm = self.get_clusters_ros(self.pcloud[llm_query])
-            else:
-                objects_llm = []
-                
-            original_method = method  # No change for standard methods
+            objects_main=[]
+        if llm_query in self.query_list:
+            objects_llm=self.get_clusters_ros(self.pcloud[llm_query])
+        else:
+            objects_llm=[]
 
         # Update current object list so that markers are published correctly
         self.known_objects=[]
@@ -394,7 +282,7 @@ class multi_query_localize:
         resp=DynamicClusterResponse()
         resp.success=False
 
-        positive_clusters, pos_likelihoods=self.match_clusters(self.cluster_metric, self.query_list[0], self.query_list[1])
+        positive_clusters, pos_likelihoods=self.match_clusters(self.cluster_metric, request.main_query, request.llm_query)
         if len(positive_clusters)==0:
             resp.message="No clusters found"
             return resp
@@ -520,74 +408,24 @@ class multi_query_localize:
         if self.storage_dir is not None:
             cv2.imwrite(self.storage_dir+"/rgb"+uid_key+".png",rgb)
             cv2.imwrite(self.storage_dir+"/depth"+uid_key+".png",rgb)
-            
-        # Process queries, handling model-specific query strings
-        # Group queries by base name and model type
-        base_queries = {}
-        model_specific_queries = {}
-        
+        results=self.pcloud_creator.multi_prompt_process(self.query_list, self.detection_threshold, rotate90=True)
         for query in self.query_list:
-            if "_clipseg" in query:
-                base_name = query.replace("_clipseg", "")
-                if base_name not in model_specific_queries:
-                    model_specific_queries[base_name] = {"clipseg": query}
-                else:
-                    model_specific_queries[base_name]["clipseg"] = query
-            elif "_omdet" in query:
-                base_name = query.replace("_omdet", "")
-                if base_name not in model_specific_queries:
-                    model_specific_queries[base_name] = {"omdet": query}
-                else:
-                    model_specific_queries[base_name]["omdet"] = query
-            else:
-                base_queries[query] = True
-        
-        # Process model-specific queries
-        if model_specific_queries:
-            for base_name, model_queries in model_specific_queries.items():
-                if "clipseg" in model_queries:
-                    # Process with CLIPSeg
-                    clipseg_query = model_queries["clipseg"]
-                    results = self.pcloud_creator.multi_prompt_process([base_name], self.detection_threshold, 
-                                                                     rotate90=True, classifier_type='clipseg')
-                    if results is not None and results[base_name] is not None and results[base_name]['xyz'].shape[0]>0:
-                        self.pcloud[clipseg_query]['xyz']=torch.vstack((self.pcloud[clipseg_query]['xyz'],results[base_name]['xyz']))
-                        self.pcloud[clipseg_query]['probs']=torch.hstack((self.pcloud[clipseg_query]['probs'],results[base_name]['probs']))
-                        if TRACK_COLOR:
-                            self.pcloud[clipseg_query]['rgb']=torch.vstack((self.pcloud[clipseg_query]['rgb'],results[base_name]['rgb']))
-                        print(f"Adding {clipseg_query}:{results[base_name]['xyz'].shape[0]}.... Total:{self.pcloud[clipseg_query]['xyz'].shape[0]}")
-                
-                if "omdet" in model_queries:
-                    # Process with OmDet
-                    omdet_query = model_queries["omdet"]
-                    results = self.pcloud_creator.multi_prompt_process([base_name], self.detection_threshold, 
-                                                                     rotate90=True, classifier_type='omdet')
-                    if results is not None and results[base_name] is not None and results[base_name]['xyz'].shape[0]>0:
-                        self.pcloud[omdet_query]['xyz']=torch.vstack((self.pcloud[omdet_query]['xyz'],results[base_name]['xyz']))
-                        self.pcloud[omdet_query]['probs']=torch.hstack((self.pcloud[omdet_query]['probs'],results[base_name]['probs']))
-                        if TRACK_COLOR:
-                            self.pcloud[omdet_query]['rgb']=torch.vstack((self.pcloud[omdet_query]['rgb'],results[base_name]['rgb']))
-                        print(f"Adding {omdet_query}:{results[base_name]['xyz'].shape[0]}.... Total:{self.pcloud[omdet_query]['xyz'].shape[0]}")
-        
-        # Process standard queries
-        if base_queries:
-            standard_queries = list(base_queries.keys())
-            results = self.pcloud_creator.multi_prompt_process(standard_queries, self.detection_threshold, 
-                                                             rotate90=True, classifier_type=self.classifier)
-            for query in standard_queries:
-                if results is not None and results[query] is not None and results[query]['xyz'].shape[0]>0:
-                    self.pcloud[query]['xyz']=torch.vstack((self.pcloud[query]['xyz'],results[query]['xyz']))
-                    self.pcloud[query]['probs']=torch.hstack((self.pcloud[query]['probs'],results[query]['probs']))
-                    if TRACK_COLOR:
-                        self.pcloud[query]['rgb']=torch.vstack((self.pcloud[query]['rgb'],results[query]['rgb']))
-                    print(f"Adding {query}:{results[query]['xyz'].shape[0]}.... Total:{self.pcloud[query]['xyz'].shape[0]}")
-                          
+            if results[query]['xyz'].shape[0]>0:
+                # self.pcloud[query]['xyz']=np.vstack((self.pcloud[query]['xyz'],results[query]['xyz']))
+                # self.pcloud[query]['probs']=np.hstack((self.pcloud[query]['probs'],results[query]['probs']))
+                # if TRACK_COLOR:
+                #     self.pcloud[query]['rgb']=np.vstack((self.pcloud[query]['rgb'],results[query]['rgb']))
+                self.pcloud[query]['xyz']=torch.vstack((self.pcloud[query]['xyz'],results[query]['xyz']))
+                self.pcloud[query]['probs']=torch.hstack((self.pcloud[query]['probs'],results[query]['probs']))
+                if TRACK_COLOR:
+                    self.pcloud[query]['rgb']=torch.vstack((self.pcloud[query]['rgb'],results[query]['rgb']))
+            print(f"Adding {query}:{results[query]['xyz'].shape[0]}.... Total:{self.pcloud[query]['xyz'].shape[0]}")
+
 if __name__ == '__main__': 
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument('queries', type=str, nargs='*', default=None,
                     help='Set of target queries to build point clouds for - must include at least one')
-    parser.add_argument('--classifier',type=str,default='clipseg', help='select from available detection algorithms {clipseg, omdet, yolo_world, hybrid}')
     parser.add_argument('--num_points',type=int,default=200, help='number of points per cluster')
     parser.add_argument('--detection_threshold',type=float,default=0.2, help='fixed detection threshold')
     parser.add_argument('--min_travel_dist',type=float,default=0.01,help='Minimum distance the robot must travel before adding a new image to the point cloud (default = 0.1m)')
@@ -600,58 +438,39 @@ if __name__ == '__main__':
         import sys
         sys.exit(-1)
 
-    # Get the target object from command-line arguments
     target = args.queries
     
-    # Use model-based hybrid approach if requested
-    if args.classifier == 'hybrid':
-        print("Using hybrid model approach (CLIPSeg + OmDet as separate prompts)")
-        # For each query in the target list, add a model-specific version
-        model_queries = []
-        for query in target:
-            model_queries.append(f"{query}_clipseg")
-            model_queries.append(f"{query}_omdet")
+
+    if len(target) == 1:
+        model_id = "meta-llama/Meta-Llama-3.1-8B-Instruct"
+
+        pipeline = transformers.pipeline(
+            "text-generation",
+            model=model_id,
+            model_kwargs={"torch_dtype": torch.bfloat16},
+            device_map="auto"
+        )
+
+        # Define the messages for the task
+        messages = [
+            {"role": "system", "content": "You are good at describing objects."},
+            {"role": "user", "content": f"Define {target[0]}' without using the word '{target[0]}' in 5 words or less."},
+        ]
+
+        # Generate the alternate query
+        outputs = pipeline(
+            messages,
+            max_new_tokens=256,
+        )
         
-        # Set to clipseg as the base classifier since we'll use model-specific processing
-        IT = multi_query_localize(model_queries,
-                            'clipseg',  # Base classifier doesn't matter as we'll specify in the processing
-                            args.num_points,
-                            args.detection_threshold,
-                            [args.min_travel_dist,args.min_travel_angle],
-                            args.storage_dir)
-    else:
-        # Standard approach - Use LLM for alt query generation if only one query provided
-        if len(target) == 1:
-            model_id = "meta-llama/Meta-Llama-3.1-8B-Instruct"
-
-            pipeline = transformers.pipeline(
-                "text-generation",
-                model=model_id,
-                model_kwargs={"torch_dtype": torch.bfloat16},
-                device_map="auto"
-            )
-
-            # Define the messages for the task
-            messages = [
-                {"role": "system", "content": "You are an expert at providing alternate queries to improve zero shot object detection models without using their names."},
-                {"role": "user", "content": f"Describe how '{target[0]}' looks without using the word '{target[0]}' in 5 words or less."},
-            ]
-
-            # Generate the alternate query
-            outputs = pipeline(
-                messages,
-                max_new_tokens=256,
-            )
-            
-            target.append(outputs[0]["generated_text"][-1]["content"])
-            print(f"Target object: {target}")
-            
-        # Create the multi-query localize instance with the standard approach
-        IT = multi_query_localize(target,
-                            args.classifier,
-                            args.num_points,
-                            args.detection_threshold,
-                            [args.min_travel_dist,args.min_travel_angle],
-                            args.storage_dir)
-                          
+        target.append(outputs[0]["generated_text"][-1]["content"])
+        print(f"Target object: {target}")
+        
+    # Create the multi-query localize instance with the standard approach
+    IT = multi_query_localize(target,
+                        args.classifier,
+                        args.num_points,
+                        args.detection_threshold,
+                        [args.min_travel_dist,args.min_travel_angle],
+                        args.storage_dir)
     rospy.spin()
