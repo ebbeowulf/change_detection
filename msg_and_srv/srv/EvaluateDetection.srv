@@ -1,0 +1,4 @@
+string ground_truth_file  # Optional path to ground truth file
+---
+bool success
+string message

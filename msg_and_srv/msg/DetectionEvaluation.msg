@@ -1,0 +1,6 @@
+Header header
+bool using_dynamic_navigation
+int32 num_frames_processed
+float32 detection_threshold
+float32 temporal_weight
+DetectionMetrics[] metrics

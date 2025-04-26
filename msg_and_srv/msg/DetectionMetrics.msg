@@ -1,0 +1,12 @@
+string query
+float32 precision
+float32 recall
+float32 f1_score
+int32 true_positives
+int32 false_positives
+int32 false_negatives
+int32 total_detections
+int32 total_ground_truth
+int32 total_points
+float32 average_points_per_cluster
+float32 point_cloud_density

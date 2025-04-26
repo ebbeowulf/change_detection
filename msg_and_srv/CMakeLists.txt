@@ -53,6 +53,8 @@ add_message_files(
   FILES
   Cluster.msg
   ClusterArray.msg
+  DetectionMetrics.msg
+  DetectionEvaluation.msg
 )
 
 ## Generate services in the 'srv' folder
@@ -63,6 +65,7 @@ add_service_files(
   SetFloat.srv
   SetInt.srv
   SetString.srv
+  EvaluateDetection.srv
 )
 
 ## Generate actions in the 'action' folder
