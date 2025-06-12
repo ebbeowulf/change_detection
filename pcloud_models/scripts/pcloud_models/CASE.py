@@ -50,7 +50,13 @@ def build_pcloud(object_raw, initial_threshold=0.5, draw=False):
 import time
 TIME_STRUCT={'count': 0, 'times':np.zeros((2,),dtype=float)}
 
-def create_object_clusters(pts_xyz, pts_prob, floor_threshold=-0.1, detection_threshold=0.5, min_cluster_points=ABSOLUTE_MIN_CLUSTER_SIZE, compress_clusters=True):
+def create_object_clusters(pts_xyz, 
+                            pts_prob, 
+                            floor_threshold=-0.1, 
+                            detection_threshold=0.5, 
+                            min_cluster_points=ABSOLUTE_MIN_CLUSTER_SIZE, 
+                            gridcell_size=0.01,
+                            compress_clusters=True):
     if pts_xyz.shape[0]==0 or pts_xyz.shape[0]!=pts_prob.shape[0]:
         return []
     global TIME_STRUCT
@@ -62,7 +68,12 @@ def create_object_clusters(pts_xyz, pts_prob, floor_threshold=-0.1, detection_th
     F2=np.where(np.isnan(xyzF).sum(1)==0)
     xyzF2=xyzF[F2]        
     pcd.points=o3d.utility.Vector3dVector(xyzF2)
-    object_clusters=get_distinct_clusters(pcd, floor_threshold=floor_threshold, cluster_min_count=min_cluster_points)
+    dbscan_eps=2.4*gridcell_size
+    object_clusters=get_distinct_clusters(pcd, 
+                                            floor_threshold=floor_threshold, 
+                                            cluster_min_count=min_cluster_points,
+                                            gridcell_size=gridcell_size,
+                                            eps=dbscan_eps)
     t_array.append(time.time())
 
     probF=pts_prob[whichP]
@@ -102,13 +113,17 @@ def get_clusters(save_file, raw_pts, detection_threshold, min_cluster_points):
 def combine_matches(test_file_dict, detection_threshold=0.5, min_cluster_points=10000):
     try:
         if detection_threshold<MIN_DETECTION_THRESHOLD:
-            save_main=test_file_dict['cluster_main_base']+".%0.2f.cl.pkl"%(MIN_DETECTION_THRESHOLD)
-            save_llm=test_file_dict['cluster_llm_base']+".%0.2f.cl.pkl"%(MIN_DETECTION_THRESHOLD)
+            # save_main=test_file_dict['cluster_main_base']+".%0.2f.cl.pkl"%(MIN_DETECTION_THRESHOLD)
+            # save_llm=test_file_dict['cluster_llm_base']+".%0.2f.cl.pkl"%(MIN_DETECTION_THRESHOLD)
+            save_main=test_file_dict['cluster_main_base']+".%0.2f.cl24.pkl"%(MIN_DETECTION_THRESHOLD)
+            save_llm=test_file_dict['cluster_llm_base']+".%0.2f.cl24.pkl"%(MIN_DETECTION_THRESHOLD)
             objects_main=get_clusters(save_main, test_file_dict['raw_main'], MIN_DETECTION_THRESHOLD, min_cluster_points)
             objects_llm=get_clusters(save_llm, test_file_dict['raw_llm'], MIN_DETECTION_THRESHOLD, min_cluster_points)
         else:
-            save_main=test_file_dict['cluster_main_base']+".%0.2f.cl.pkl"%(detection_threshold)
-            save_llm=test_file_dict['cluster_llm_base']+".%0.2f.cl.pkl"%(detection_threshold)
+            # save_main=test_file_dict['cluster_main_base']+".%0.2f.cl.pkl"%(detection_threshold)
+            # save_llm=test_file_dict['cluster_llm_base']+".%0.2f.cl.pkl"%(detection_threshold)
+            save_main=test_file_dict['cluster_main_base']+".%0.2f.cl24.pkl"%(detection_threshold)
+            save_llm=test_file_dict['cluster_llm_base']+".%0.2f.cl24.pkl"%(detection_threshold)
             objects_main=get_clusters(save_main, test_file_dict['raw_main'], detection_threshold, min_cluster_points)
             objects_llm=get_clusters(save_llm, test_file_dict['raw_llm'], detection_threshold, min_cluster_points)
     except Exception as e:
