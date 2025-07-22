@@ -11,7 +11,7 @@ import pdb
 import cv2
 import matplotlib.pyplot as plt
 
-fileName="/data2/datasets/living_room/specAI2/6_24_v1/save_results/general_clutter.0.3.pcloud.pkl"
+# fileName="/data2/datasets/living_room/specAI2/6_24_v1/save_results/general_clutter.0.3.pcloud.pkl"
 
 def draw_target_circle(image, target_xyz, cam_pose, cam_info:camera_params):
     M=np.matmul(cam_info.rot_matrix,cam_pose)
@@ -22,15 +22,16 @@ def draw_target_circle(image, target_xyz, cam_pose, cam_info:camera_params):
     radius=int(image.shape[0]/100)
     return cv2.circle(image, (int(col),int(row)), radius=radius, color=(0,0,255), thickness=-1)
 
-def build_change_cluster_images(exp_params, fileName):
-    fileName=exp_params['fList_new']
+def build_change_cluster_images(exp_params, pcloud_fileName, prompt):
+    # fileName=exp_params['fList_new']
     try:
-        with open(fileName, 'rb') as handle:
+        with open(pcloud_fileName, 'rb') as handle:
             pcloud=pickle.load(handle)
     except Exception as e:
-        print("pcloud file not found")
-        os.exit()
+        print(f"pcloud file {pcloud_fileName} not found")
+        os._exit(-1)
 
+    file_prefix=prompt.replace(' ','_')
     # Rescale everything ... 
     export=dict()
     if pcloud['xyz'].shape[0]>ABSOLUTE_MIN_CLUSTER_SIZE:
@@ -67,17 +68,17 @@ def build_change_cluster_images(exp_params, fileName):
                         continue
                     color_rect=cv2.rectangle(colorI, (start_RC[1],start_RC[0]), (end_RC[1],end_RC[0]), (0,0,255), 5)
 
-                    fName_out=exp_params['fList_new'].intermediate_save_dir+f"/cluster{cluster_idx}_{key}.png"
+                    fName_out=exp_params['fList_new'].intermediate_save_dir+f"/{file_prefix}_{cluster_idx}_{key}.png"
                     cv2.imwrite(fName_out,color_rect)
 
 if __name__ == '__main__':
     exp_params=setup_change_experiment()    
 
-    for key in exp_params['params'].queries:
+    for key in exp_params['prompts']:
         P1=key.replace(' ','_')
         save_directory=exp_params['fList_new'].intermediate_save_dir
         suffix=f"{exp_params['detection_threshold']}.pcloud"
         pcloud_fileName=f"{save_directory}/{P1}.{suffix}.pkl"
 
-        image_list=build_change_cluster_images(exp_params, fileName)
+        image_list=build_change_cluster_images(exp_params, pcloud_fileName, key)
 

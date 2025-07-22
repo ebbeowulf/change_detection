@@ -12,6 +12,9 @@ import argparse
 from nerfstudio.utils.eval_utils import eval_setup
 import cv2
 
+import torch._dynamo
+torch._dynamo.config.suppress_errors = True
+
 def _get_fname(filepath: Path, data_dir: Path) -> Path:
     """Get the filename of the image file.
     filepath: the base file name of the transformations.
@@ -161,8 +164,15 @@ def synthesize_images(config_path:str, output_path:str, cam_dataset:build_camera
     output_dir=Path(output_path)
     cameras, image_filenames=cam_dataset.get_cameras(name_filter)
     for camera_idx in range(cameras.shape[0]):
+        # Looks like there must be a squeeze function in the Cameras definition function
+        #   Need to undo
+        c2=cameras[camera_idx]
+        if len(cameras[camera_idx].camera_to_worlds.shape)<3:
+            c2.camera_to_worlds=torch.unsqueeze(cameras[camera_idx].camera_to_worlds,dim=0)
+
         with torch.no_grad():
-            outputs = pipeline.model.get_outputs_for_camera(cameras[camera_idx])
+            outputs = pipeline.model.get_outputs_for_camera(c2)
+            # outputs = pipeline.model.get_outputs_for_camera(cameras[camera_idx])
 
         # Figure out the filename
         file=Path(image_filenames[camera_idx])
@@ -182,12 +192,21 @@ def synthesize_images(config_path:str, output_path:str, cam_dataset:build_camera
             )
             media.write_image(outFile, output_image, fmt="png")
         if image_type=='depth' or image_type=='all':
-            fName="depth_" + file.stem.split('_')[-1] + ".png"
-            print(fName)
-            outFile=output_dir / fName
-            output_image=((outputs['expected_depth'].cpu().numpy())*1000.0).astype(np.uint16)
-            # have to use opencv to save 16 bit
-            cv2.imwrite(str(outFile), output_image)
+            if 'depth' in outputs:
+                fName="depth_" + file.stem.split('_')[-1] + ".png"
+                print(fName)
+                outFile=output_dir / fName
+                output_image=((outputs['depth'].cpu().numpy()/cam_dataset.scale_factor)*1000.0).astype(np.uint16)
+                # have to use opencv to save 16 bit
+                cv2.imwrite(str(outFile), output_image)
+        if image_type=='expected_depth' or image_type=='all':
+            if 'expected_depth' in outputs:
+                fName="depthE_" + file.stem.split('_')[-1] + ".png"
+                print(fName)
+                outFile=output_dir / fName
+                output_image=((outputs['expected_depth'].cpu().numpy())*1000.0).astype(np.uint16)
+                # have to use opencv to save 16 bit
+                cv2.imwrite(str(outFile), output_image)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()

@@ -16,13 +16,14 @@ if __name__ == '__main__':
 
     prompts=[args.prompt]
     CSmodel=clip_seg(prompts)
-    image1 = CSmodel.process_file(args.image1)
-    prob1 = CSmodel.get_prob_array(0)
-    image2 = CSmodel.process_file(args.image2)
-    prob2 = CSmodel.get_prob_array(0)
+    image1 = CSmodel.process_file(args.image1)[:,:,[2,1,0]]
+    prob1 = CSmodel.get_prob_array(0).to('cpu').numpy()
+    image2 = CSmodel.process_file(args.image2)[:,:,[2,1,0]]
+    prob2 = CSmodel.get_prob_array(0).to('cpu').numpy()
 
     delta=(prob2-prob1)
-
+    print(f"MAX DELTA={delta.max()}")
+    
     if args.threshold is not None:     
         mask=(delta>args.threshold).astype(np.uint8)
     elif args.pct_threshold is not None:

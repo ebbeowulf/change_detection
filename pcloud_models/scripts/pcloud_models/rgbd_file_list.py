@@ -2,7 +2,11 @@ import copy
 import numpy as np
 
 class rgbd_file_list():
-    def __init__(self, color_image_dir:str, depth_image_dir:str, intermediate_save_dir:str, is_pose_filtered:bool=False):
+    def __init__(self, 
+                 color_image_dir:str, 
+                 depth_image_dir:str, 
+                 intermediate_save_dir:str, 
+                 is_pose_filtered:bool=False):
         self.all_files=dict()
         self.color_image_dir=color_image_dir + "/"
         self.depth_image_dir=depth_image_dir + "/"
@@ -77,5 +81,4 @@ class rgbd_file_list():
         return self.intermediate_save_dir+"%s.labeled.ply"%(cls)
 
     def get_json_summary_fileName(self, cls:str):
-        return self.intermediate_save_dir+"%s.summary.json"%(cls)
-    
+        return self.intermediate_save_dir+"%s.summary.json"%(cls)  

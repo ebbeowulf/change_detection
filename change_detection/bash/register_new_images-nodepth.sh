@@ -9,10 +9,11 @@ NEW_DIR_ROOT=$2
 
 COLMAP_DIR=${NEW_DIR_ROOT}/colmap_combined
 IMAGE_DIR=${NEW_DIR_ROOT}/images_combined
-VOCAB_TREE="/data2/datasets/office/vocab_tree_flickr100K_words256K.bin"
+#VOCAB_TREE="/data2/datasets/office/vocab_tree_flickr100K_words256K.bin"
+VOCAB_TREE="/data2/datasets/office/vocab_tree_flickr100K_words1M.bin"
 
 echo "Step 1 - Preparing directory"
-echo "./prepare_dir.sh $INITIAL_DIR $NEW_DIR_ROOT"
+echo "./prepare_dir-nodepth.sh $INITIAL_DIR $NEW_DIR_ROOT"
 ./prepare_dir-nodepth.sh $INITIAL_DIR $NEW_DIR_ROOT
 
 echo "Step 2 - Extract features"

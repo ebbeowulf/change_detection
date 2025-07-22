@@ -26,31 +26,6 @@ CLUSTER_PROXIMITY_THRESH=0.3
 CLUSTER_TOUCHING_THRESH=0.05
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-# DEVICE = torch.device("cpu")
-
-# Process all images with yolo - creating
-#   pickle files for the results and storing alongside the 
-#   original color images
-# def process_images_with_yolo_world(fList:rgbd_file_list, targets:list):
-#     print("process_images")
-#     from change_detection.yolo_world_segmentation import yolo_segmentation
-#     YS=yolo_segmentation(targets ,'yolov8x-worldv2.pt')
-#     for key in fList.keys():
-#         for target in targets:
-#             pkl_fName=fList.get_yolo_fileName(key,target)
-#             if not os.path.exists(pkl_fName):
-#                 img=YS.process_file(fList.get_color_fileName(key),save_fileName=pkl_fName)
-
-# def process_images_with_clip(fList:rgbd_file_list, clip_targets:list):
-#     print("process_images")
-#     from change_detection.clip_segmentation import clip_seg
-#     YS=clip_seg(clip_targets)
-#     for key in fList.keys():
-#         print(fList.get_color_fileName(key))
-#         for target in clip_targets:
-#             pkl_fName=fList.get_clip_fileName(key,target)
-#             if not os.path.exists(pkl_fName):
-#                 img=YS.process_file(fList.get_color_fileName(key),save_fileName=pkl_fName)
 
 # Create a list of all of the objects recognized by yolo
 #   across all files. Will only load existing pkl files, not 
@@ -74,18 +49,6 @@ def clip_threshold_evaluation(fList:rgbd_file_list, clip_targets:list, proposed_
         count=(np.array(maxP)>proposed_threshold).sum()
         print("%s: Counted %d / %d images with detections > %f"%(target, count,len(maxP),proposed_threshold))
     return np.unique(image_list).tolist()
-
-# def yolo_world_threshold_evaluation(fList:rgbd_file_list, yolo_targets:list, proposed_threshold:float):
-#     from change_detection.yolo_world_segmentation import yolo_segmentation
-    
-#     YS=yolo_segmentation(yolo_targets)
-#     image_list=[]
-#     #pdb.set_trace()
-#     for target in yolo_targets:
-#         maxP=[]
-#         for key in fList.keys():
-#             image_list.append(key)
-#     return np.unique(image_list).tolist()
 
 # Create a list of all of the objects recognized by yolo
 #   across all files. Will only load existing pkl files, not 
@@ -119,7 +82,10 @@ def get_high_confidence_objects(obj_list, confidence_threshold=0.5):
 
 # Create an open3d pointcloud object - will randomly sample the cloud
 #   to reduce the number of points as necessary
-def pointcloud_open3d(xyz_points,rgb_points=None,max_num_points=2000000):
+def pointcloud_open3d(xyz_points,
+                      rgb_points=None,
+                      max_num_points=2000000
+                      ):
     import open3d as o3d
     pcd=o3d.geometry.PointCloud()
     if xyz_points.shape[0]<max_num_points:
@@ -137,9 +103,9 @@ def pointcloud_open3d(xyz_points,rgb_points=None,max_num_points=2000000):
 
 # Combine together multiple point clouds into a single
 #   cloud and display the result using open3d
-def visualize_combined_xyzrgb(fList:rgbd_file_list, params:camera_params, howmany_files=100, skip=0, max_num_points=2000000):
-    rows=torch.tensor(np.tile(np.arange(params.height).reshape(params.height,1),(1,params.width))-params.cy)
-    cols=torch.tensor(np.tile(np.arange(params.width),(params.height,1))-params.cx)
+def visualize_combined_xyzrgb(fList:rgbd_file_list, params:camera_params, howmany_files=100, skip=0, max_num_points=2000000, max_depth=10.0):
+    rows=torch.tensor(np.tile(np.arange(params.height).reshape(params.height,1),(1,params.width))-params.cy,device=DEVICE)
+    cols=torch.tensor(np.tile(np.arange(params.width),(params.height,1))-params.cx,device=DEVICE)
 
     combined_xyz=np.zeros((0,3),dtype=float)
     combined_rgb=np.zeros((0,3),dtype=np.uint8)
@@ -159,15 +125,15 @@ def visualize_combined_xyzrgb(fList:rgbd_file_list, params:camera_params, howman
         print(fList.get_color_fileName(key))
         colorI=cv2.imread(fList.get_color_fileName(key), -1)
         depthI=cv2.imread(fList.get_depth_fileName(key), -1)
-        depthT=torch.tensor(depthI.astype('float')/1000.0)
-        colorT=torch.tensor(colorI)
+        depthT=torch.tensor(depthI.astype('float')/1000.0,device=DEVICE)
+        colorT=torch.tensor(colorI,device=DEVICE)
         x = cols*depthT/params.fx
         y = rows*depthT/params.fy
-        depth_mask=(depthT>1e-4)*(depthT<10.0)
+        depth_mask=(depthT>1e-4)*(depthT<max_depth)
 
         # Rotate the points into the right space
         M=torch.matmul(rot_matrixT,torch.tensor(fList.get_pose(key),device=DEVICE))
-        pts=torch.stack([x[depth_mask],y[depth_mask],depthT[depth_mask],torch.ones(((depth_mask>0).sum()))],dim=1)
+        pts=torch.stack([x[depth_mask],y[depth_mask],depthT[depth_mask],torch.ones(((depth_mask>0).sum()),device=DEVICE)],dim=1)
         pts_rot=torch.matmul(M,pts.transpose(0,1))
         pts_rot=pts_rot[:3,:].transpose(0,1)
 
@@ -388,35 +354,6 @@ class pcloud_from_images():
                 self.YS=yolo_segmentation(tgt_class_list)
                 self.classifier_type=classifier_type
 
-    def process_image(self, tgt_class, detection_threshold, segmentation_save_file=None):
-        # Recover the segmentation file
-        if segmentation_save_file is not None and os.path.exists(segmentation_save_file):
-            if not self.YS.load_file(segmentation_save_file,threshold=detection_threshold):
-                return None
-        else:
-            # self.YS.process_image_numpy(self.loaded_image['colorT'].cpu().numpy(), detection_threshold)    
-            # This numpy bit was originally done to handle images coming from the robot ...
-            #   may need to correct for live image stream processing
-            self.YS.process_image(self.loaded_image['colorT'].cpu().numpy(), detection_threshold)    
-        return self.get_pts_per_class(tgt_class)
-      
-    def multi_prompt_process(self, prompts:list, detection_threshold, rotate90:bool=False, classifier_type='clipseg'):
-        self.setup_image_processing(prompts,classifier_type)
-
-        if rotate90:
-            rot_color=np.rot90(self.loaded_image['colorT'].cpu().numpy(), k=1, axes=(1,0))
-            self.YS.process_image_numpy(rot_color, detection_threshold)    
-        else:
-            self.YS.process_image_numpy(self.loaded_image['colorT'].cpu().numpy(), detection_threshold)    
-            # self.YS.process_image(self.loaded_image['colorT'].cpu().numpy(), detection_threshold)    
-
-        all_pts=dict()
-        # Build the class associated mask for this image
-        for tgt_class in prompts:
-            all_pts[tgt_class]=self.get_pts_per_class(tgt_class, rotate90=rotate90)
-
-        return all_pts
-    
     #Apply clustering - slow... probably in need of repair
     def cluster_pclouds(self, image_key, tgt_class, cls_mask, threshold):
         save_fName=self.fList.get_class_pcloud_fileName(image_key,tgt_class)
@@ -450,7 +387,39 @@ class pcloud_from_images():
             with open(save_fName,'wb') as handle:
                 pickle.dump(filtered_maskT, handle, protocol=pickle.HIGHEST_PROTOCOL)
         return filtered_maskT
+    
+    # Process an image with a single prompt, saving the resulting points
+    def process_image(self, tgt_class, detection_threshold, segmentation_save_file=None):
+        # Recover the segmentation file
+        if segmentation_save_file is not None and os.path.exists(segmentation_save_file):
+            if not self.YS.load_file(segmentation_save_file,threshold=detection_threshold):
+                return None
+        else:
+            # self.YS.process_image_numpy(self.loaded_image['colorT'].cpu().numpy(), detection_threshold)    
+            # This numpy bit was originally done to handle images coming from the robot ...
+            #   may need to correct for live image stream processing
+            self.YS.process_image(self.loaded_image['colorT'].cpu().numpy(), detection_threshold)    
+        return self.get_pts_per_class(tgt_class)
+      
+    # Process an image with multiple prompts, saving the resulting points
+    def multi_prompt_process(self, prompts:list, detection_threshold, rotate90:bool=False, classifier_type='clipseg'):
+        self.setup_image_processing(prompts,classifier_type)
 
+        if rotate90:
+            rot_color=np.rot90(self.loaded_image['colorT'].cpu().numpy(), k=1, axes=(1,0))
+            self.YS.process_image_numpy(rot_color, detection_threshold)    
+        else:
+            self.YS.process_image_numpy(self.loaded_image['colorT'].cpu().numpy(), detection_threshold)    
+            # self.YS.process_image(self.loaded_image['colorT'].cpu().numpy(), detection_threshold)    
+
+        all_pts=dict()
+        # Build the class associated mask for this image
+        for tgt_class in prompts:
+            all_pts[tgt_class]=self.get_pts_per_class(tgt_class, rotate90=rotate90)
+
+        return all_pts
+    
+    # Process all images in the fList with a single prompt
     def process_fList(self, fList:rgbd_file_list, tgt_class, conf_threshold, classifier_type='clipseg'):
         save_fName=fList.get_combined_raw_fileName(tgt_class,classifier_type)
         pcloud=None
@@ -526,6 +495,7 @@ class pcloud_from_images():
         whichP=(pcloud['probs']>conf_threshold)
         return {'xyz':pcloud['xyz'][whichP],'rgb':pcloud['rgb'][whichP],'probs':pcloud['probs'][whichP]}
 
+    # Process all images in the fList with multiple prompts
     def process_fList_multi(self, fList:rgbd_file_list, tgt_class_list:list, conf_threshold, classifier_type='clipseg'):
         save_fName=dict()
         pcloud=dict()
@@ -605,7 +575,12 @@ class pcloud_from_images():
 
 TIME_STRUCT={'count': 0, 'times':np.zeros((3,),dtype=float)}
 
-def get_distinct_clusters(pcloud, gridcell_size=DBSCAN_GRIDCELL_SIZE, eps=DBSCAN_EPS, min_samples=DBSCAN_MIN_SAMPLES, cluster_min_count=CLUSTER_MIN_COUNT, floor_threshold=0.1):
+def get_distinct_clusters(pcloud, 
+                          gridcell_size=DBSCAN_GRIDCELL_SIZE, 
+                          eps=DBSCAN_EPS, 
+                          min_samples=DBSCAN_MIN_SAMPLES, 
+                          cluster_min_count=CLUSTER_MIN_COUNT, 
+                          floor_threshold=0.1):
     global TIME_STRUCT
     t_array=[]
     t_array.append(time.time())
@@ -698,3 +673,58 @@ class object_pcloud():
     def compress_object(self):
         self.pts=None
         self.farthestP=None
+
+# Based on angles alone, identify a list of images that point at the same bbox
+#   This example uses a known image + bbox combination as a starting point
+#   Available thresholds are:
+#       dist_threshold = distance from object to centroid (requires loading depth image)
+#       angular_dist   = maximum offset angle from image center
+def identify_related_images_from_bbox(cam_info:camera_params, 
+                            fList:rgbd_file_list, 
+                            primary_image_key:int, 
+                            xy_bbox:np.array, #[xmin, ymin, xmax, ymax]
+                            dist_threshold:float,
+                            angular_dist:float):
+
+    depth_fName=fList.get_depth_fileName(primary_image_key)
+    depthI=cv2.imread(depth_fName,-1)
+    #Calculuate median depth over area
+    roi=depthI[xy_bbox[1]:xy_bbox[3],xy_bbox[0]:xy_bbox[2]]
+    meanDepth=np.median(roi)/1000.0
+    ctrV=np.array([((xy_bbox[0]+xy_bbox[2])/2-cam_info.cx)*meanDepth/cam_info.fx,
+                   (cam_info.cy-(xy_bbox[1]+xy_bbox[3])/2)*meanDepth/cam_info.fy,
+                   meanDepth,1])
+    import pdb
+    M=np.matmul(cam_info.rot_matrix,fList.get_pose(primary_image_key))
+    object_pose=np.matmul(M,ctrV)
+    return identify_related_images_global_pose(cam_info, fList, object_pose, dist_threshold, angular_dist)     
+
+# Based on angles alone, identify a list of images that point at the same bbox
+#   This example uses a known object pose in global coordinates as a starting point
+#   Available thresholds are:
+#       dist_threshold = distance from object to centroid (requires loading depth image)
+#       angular_dist   = maximum offset angle from image center
+def identify_related_images_global_pose(cam_info:camera_params, 
+                            fList:rgbd_file_list, 
+                            object_pose:np.array,
+                            dist_threshold:float=None,
+                            angular_dist:float=None):
+
+    # Need to load depth image
+    stats=[]
+    for key in fList.keys():
+        M=np.matmul(cam_info.rot_matrix,fList.get_pose(key))
+        V1=np.matmul(M[:3,:3],[0,0,1])
+        V2=object_pose[:3]-M[:3,3]
+        V2_dist=np.sqrt((V2**2).sum())
+        angle=np.arccos((V1*V2/V2_dist).sum())
+        stats.append([np.abs(angle),V2_dist, key])
+    stats=np.array(stats)
+    validF=stats[:,1]>0
+    if angular_dist is not None:
+        validF=validF*(stats[:,0]<angular_dist)
+    if dist_threshold is not None:
+        validF=validF*(stats[:,1]<dist_threshold)
+    if validF.sum()>0:
+        return stats[np.where(validF)[0],2]
+    return []
