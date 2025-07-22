@@ -5,7 +5,7 @@ import os
 import sys
 scripts_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..', 'change_detection', 'scripts', 'change_detection'))
 sys.path.append(scripts_path)
-from pcloud_creation_utils import pcloud_change
+from pcloud_creation_utils import pcloud_change, pcloud_openVocab
 from camera_params import camera_params
 from rgbd_file_list import rgbd_file_list
 import pdb
@@ -42,6 +42,36 @@ def build_change_clouds(params:camera_params,
         
         pcloud_creator.load_image(colorI_new, depthI, M, str(key))
         results=pcloud_creator.multi_prompt_change_process(colorI_rendered, prompts, det_threshold)
+        for query in prompts:
+            if query in results and results[query]['xyz'].shape[0]>0:
+                pcloud[query]['xyz']=torch.vstack((pcloud[query]['xyz'],results[query]['xyz']))
+                pcloud[query]['probs']=torch.hstack((pcloud[query]['probs'],results[query]['probs']))
+                pcloud[query]['rgb']=torch.vstack((pcloud[query]['rgb'],results[query]['rgb']))
+        
+    return pcloud
+
+def build_openVocab_clouds(params:camera_params, 
+                     fList_new:rgbd_file_list,
+                     prompts:list,
+                     det_threshold:float):
+    pcloud=dict()
+    for query in prompts:
+        pcloud[query]={'xyz': torch.zeros((0,3),dtype=float,device=DEVICE), 
+                       'probs': torch.zeros((0),dtype=float,device=DEVICE), 
+                       'rgb': torch.zeros((0,3),dtype=float,device=DEVICE)}
+
+    pcloud_creator=pcloud_openVocab(params)
+    for key in fList_new.keys():
+        try:
+            colorI_new=Image.open(fList_new.get_color_fileName(key))
+            depthI=cv2.imread(fList_new.get_depth_fileName(key),-1)
+            M=fList_new.get_pose(key)
+        except Exception as e:
+            print(f"Could not load files associated with key={key}")
+            continue
+        
+        pcloud_creator.load_image(colorI_new, depthI, M, str(key))
+        results=pcloud_creator.multi_prompt_process(prompts, det_threshold)
         for query in prompts:
             if query in results and results[query]['xyz'].shape[0]>0:
                 pcloud[query]['xyz']=torch.vstack((pcloud[query]['xyz'],results[query]['xyz']))
@@ -89,7 +119,7 @@ def merge_clusters(cluster_list:list, merge_dist:float):
     return merged_clusters
      
 
-def get_change_clusters(pcloud_xyz:np.ndarray, 
+def create_and_merge_clusters(pcloud_xyz:np.ndarray, 
                         gridcell_size:float):
     pcd=o3d.geometry.PointCloud()    
     F2=np.where(np.isnan(pcloud_xyz).sum(1)==0)
@@ -126,6 +156,8 @@ def setup_change_experiment():
                 help='Set of target queries to build point clouds for - default is [General clutter, Small items on surfaces, Floor-level objects, Decorative and functional items, Trash items]')
     parser.add_argument('--threshold',type=float, default=0.3, help="fixed threshold to apply for change detection (default=0.1)")
     parser.add_argument('--max_route_dist',type=float,default=5.2,help='assuming a fixed route, determine a rough scale for the resulting cloud using a known distance between end points (default = 5.2)')
+    parser.add_argument('--no_change', dest='use_change', action='store_false')
+    parser.set_defaults(use_change=True)
     args = parser.parse_args()
 
     save_dir=f"{args.root_dir}/{args.save_dir}/"
@@ -134,7 +166,10 @@ def setup_change_experiment():
     colmap_dir=f"{args.root_dir}/{args.colmap_dir}/"
     params=get_camera_params(colmap_dir,args.nerfacto_dir)
     fList_new=build_file_list(color_image_dir,rendered_image_dir,save_dir,colmap_dir,args.frame_keyword)
-    fList_renders=build_rendered_file_list(fList_new, rendered_image_dir,save_dir)
+    if args.use_change:
+        fList_renders=build_rendered_file_list(fList_new, rendered_image_dir,save_dir)
+    else:
+        fList_renders=None
     allP=np.array([ fList_new.get_pose(key)[:3,3] for key in fList_new.keys()])
     first_pose=np.median(allP[:5,:],0)
     last_pose=np.median(allP[-5:,:],0)
@@ -152,15 +187,27 @@ def setup_change_experiment():
 if __name__ == '__main__':
     exp_params=setup_change_experiment()
 
-    pcloud=build_change_clouds(exp_params['params'], 
-                               exp_params['fList_new'], 
-                               exp_params['fList_renders'], 
-                               exp_params['prompts'], 
-                               exp_params['detection_threshold'])
+    if exp_params['fList_renders'] is not None:
+        # Do the original change detection experiment
+        pcloud=build_change_clouds(exp_params['params'], 
+                                exp_params['fList_new'], 
+                                exp_params['fList_renders'], 
+                                exp_params['prompts'], 
+                                exp_params['detection_threshold'])
 
-    save_pcloud_dict(pcloud,
-                     pcloud['fList_new'].intermediate_save_dir,
-                     f"{exp_params['detection_threshold']}.pcloud")
+        save_pcloud_dict(pcloud,
+                        exp_params['fList_new'].intermediate_save_dir,
+                        f"{exp_params['detection_threshold']}.pcloud")
+    else:
+        # Use open vocabulary models only - no change applied
+        pcloud=build_openVocab_clouds(exp_params['params'], 
+                                exp_params['fList_new'], 
+                                exp_params['prompts'], 
+                                exp_params['detection_threshold'])
+
+        save_pcloud_dict(pcloud,
+                        exp_params['fList_new'].intermediate_save_dir,
+                        f"{exp_params['detection_threshold']}.OV.pcloud")
 
     # Build the o3d cloud to visualize
     # pcd_all=dict()
