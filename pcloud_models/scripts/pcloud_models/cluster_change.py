@@ -3,7 +3,7 @@ import open3d as o3d
 from pcloud_creation_utils import pcloud_change
 from camera_params import camera_params
 from rgbd_file_list import rgbd_file_list
-from find_changes import setup_change_experiment, ABSOLUTE_MIN_CLUSTER_SIZE, get_change_clusters
+from build_clouds_from_phone import setup_change_experiment, ABSOLUTE_MIN_CLUSTER_SIZE, create_and_merge_clusters
 from map_utils import identify_related_images_global_pose
 import pickle
 import os
@@ -35,7 +35,7 @@ def build_change_cluster_images(exp_params, pcloud_fileName, prompt):
     # Rescale everything ... 
     export=dict()
     if pcloud['xyz'].shape[0]>ABSOLUTE_MIN_CLUSTER_SIZE:
-        clusters=get_change_clusters(pcloud['xyz'].cpu().numpy(), 0.01/exp_params['scale'])
+        clusters=create_and_merge_clusters(pcloud['xyz'].cpu().numpy(), 0.01/exp_params['scale'])
         for cluster_idx, cluster in enumerate(clusters):
             rel_imgs=identify_related_images_global_pose(exp_params['params'],exp_params['fList_new'],cluster.centroid,None,0.5)
             for key in rel_imgs:
@@ -68,7 +68,11 @@ def build_change_cluster_images(exp_params, pcloud_fileName, prompt):
                         continue
                     color_rect=cv2.rectangle(colorI, (start_RC[1],start_RC[0]), (end_RC[1],end_RC[0]), (0,0,255), 5)
 
-                    fName_out=exp_params['fList_new'].intermediate_save_dir+f"/{file_prefix}_{cluster_idx}_{key}.png"
+                    if exp_params['fList_renders'] is not None:
+                        fName_out=exp_params['fList_new'].intermediate_save_dir+f"/{file_prefix}_{cluster_idx}_{key}.png"
+                    else:
+                        fName_out=exp_params['fList_new'].intermediate_save_dir+f"/{file_prefix}_{cluster_idx}_{key}.OV.png"
+
                     cv2.imwrite(fName_out,color_rect)
 
 if __name__ == '__main__':
@@ -77,7 +81,10 @@ if __name__ == '__main__':
     for key in exp_params['prompts']:
         P1=key.replace(' ','_')
         save_directory=exp_params['fList_new'].intermediate_save_dir
-        suffix=f"{exp_params['detection_threshold']}.pcloud"
+        if exp_params['fList_renders'] is not None:
+            suffix=f"{exp_params['detection_threshold']}.pcloud"
+        else:
+            suffix=f"{exp_params['detection_threshold']}.OV.pcloud"
         pcloud_fileName=f"{save_directory}/{P1}.{suffix}.pkl"
 
         image_list=build_change_cluster_images(exp_params, pcloud_fileName, key)

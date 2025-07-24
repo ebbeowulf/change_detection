@@ -53,6 +53,8 @@ def main():
     parser.add_argument('cluster_image_dir',type=str,help='location of cluster images to be processed')
     parser.add_argument('prefix',type=str,help='images should of form <prefix>_<cluster_id>_<image_id>.png. What is the prefix?')
     parser.add_argument('--model-name',type=str,default='llama4:scout',help='type of ollama model to run. Default = llama4:scout')
+    parser.add_argument('--no_change', dest='use_change', action='store_false')
+    parser.set_defaults(use_change=True)
     args=parser.parse_args()
 
     valid_models = ["llava:13b", "llava-llama3", "llama4:scout", "moondream"]
@@ -63,7 +65,10 @@ def main():
     all_results=[]
     for cluster_idx in range(20):
         capture_results=dict()
-        all_image_files=glob.glob(f"{args.cluster_image_dir}/{args.prefix}_{cluster_idx}*.png")
+        if args.use_change:
+            all_image_files=glob.glob(f"{args.cluster_image_dir}/{args.prefix}_{cluster_idx}*.png")
+        else:
+            all_image_files=glob.glob(f"{args.cluster_image_dir}/{args.prefix}_{cluster_idx}*.OV.png")
         print(f"Found {len(all_image_files)} in cluster {cluster_idx}")
         if len(all_image_files)>0:
             for image_name in all_image_files:
@@ -71,7 +76,10 @@ def main():
         all_results.append(capture_results)
         
     import pickle
-    save_file=args.cluster_image_dir+"/"+args.prefix+".llm.pkl"
+    if args.use_change:
+        save_file=args.cluster_image_dir+"/"+args.prefix+".llm.pkl"
+    else:
+        save_file=args.cluster_image_dir+"/"+args.prefix+".OV.llm.pkl"
     with open(save_file,'wb') as fout:
         pickle.dump(all_results,fout)
 

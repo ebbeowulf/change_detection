@@ -15,6 +15,8 @@ import matplotlib.pyplot as plt
 import torch
 import numpy as np
 import open3d as o3d
+from map_utils import identify_related_images_global_pose
+import pickle
 
 ABSOLUTE_MIN_CLUSTER_SIZE=500
 DEPTH_BLUR_THRESHOLD=50 #Applied to Depth images
@@ -29,7 +31,8 @@ def build_change_clouds(params:camera_params,
     for query in prompts:
         pcloud[query]={'xyz': torch.zeros((0,3),dtype=float,device=DEVICE), 
                        'probs': torch.zeros((0),dtype=float,device=DEVICE), 
-                       'rgb': torch.zeros((0,3),dtype=float,device=DEVICE)}
+                       'rgb': torch.zeros((0,3),dtype=float,device=DEVICE),
+                       'bboxes': dict()}
 
     pcloud_creator=pcloud_change(params)
     for key in fList_new.keys():
@@ -42,53 +45,19 @@ def build_change_clouds(params:camera_params,
             print(f"Could not load files associated with key={key}")
             continue
         
+        print(fList_new.get_color_fileName(key))
         pcloud_creator.load_image(colorI_new, depthI, M, str(key),color_blur_threshold=COLOR_BLUR_THRESHOLD, depth_blur_threshold=DEPTH_BLUR_THRESHOLD)
-        results=pcloud_creator.multi_prompt_change_process(colorI_rendered, prompts, det_threshold)
+        results, bboxes=pcloud_creator.multi_prompt_change_process(colorI_rendered, prompts, det_threshold,est_bboxes=True)
+        # Instead of merging cloud here, keep it attached to the original image - so that we can draw boxes later
         for query in prompts:
             if query in results and results[query]['xyz'].shape[0]>0:
                 pcloud[query]['xyz']=torch.vstack((pcloud[query]['xyz'],results[query]['xyz']))
                 pcloud[query]['probs']=torch.hstack((pcloud[query]['probs'],results[query]['probs']))
                 pcloud[query]['rgb']=torch.vstack((pcloud[query]['rgb'],results[query]['rgb']))
+            if query in bboxes:
+                pcloud[query]['bboxes'][fList_new.get_color_fileName(key)]=bboxes[query]
         
     return pcloud
-
-def build_openVocab_clouds(params:camera_params, 
-                     fList_new:rgbd_file_list,
-                     prompts:list,
-                     det_threshold:float):
-    pcloud=dict()
-    for query in prompts:
-        pcloud[query]={'xyz': torch.zeros((0,3),dtype=float,device=DEVICE), 
-                       'probs': torch.zeros((0),dtype=float,device=DEVICE), 
-                       'rgb': torch.zeros((0,3),dtype=float,device=DEVICE)}
-
-    pcloud_creator=pcloud_openVocab(params)
-    for key in fList_new.keys():
-        try:
-            colorI_new=Image.open(fList_new.get_color_fileName(key))
-            depthI=cv2.imread(fList_new.get_depth_fileName(key),-1)
-            M=fList_new.get_pose(key)
-        except Exception as e:
-            print(f"Could not load files associated with key={key}")
-            continue
-        
-        pcloud_creator.load_image(colorI_new, depthI, M, str(key),color_blur_threshold=COLOR_BLUR_THRESHOLD, depth_blur_threshold=DEPTH_BLUR_THRESHOLD)
-        results=pcloud_creator.multi_prompt_process(prompts, det_threshold)
-        for query in prompts:
-            if query in results and results[query]['xyz'].shape[0]>0:
-                pcloud[query]['xyz']=torch.vstack((pcloud[query]['xyz'],results[query]['xyz']))
-                pcloud[query]['probs']=torch.hstack((pcloud[query]['probs'],results[query]['probs']))
-                pcloud[query]['rgb']=torch.vstack((pcloud[query]['rgb'],results[query]['rgb']))
-        
-    return pcloud
-
-def save_pcloud_dict(pcloud_dict:str, save_directory:str, suffix:str):
-    import pickle
-    for key in pcloud_dict:
-        P1=key.replace(' ','_')
-        save_fName=f"{save_directory}/{P1}.{suffix}.pkl"
-        with open(save_fName,'wb') as handle:
-            pickle.dump(pcloud_dict[key], handle, protocol=pickle.HIGHEST_PROTOCOL)    
 
 # Performs a single pass on merging clusters
 #   will probably want to run more than once, or until the list size stops changing
@@ -158,8 +127,10 @@ def setup_change_experiment():
                 help='Set of target queries to build point clouds for - default is [General clutter, Small items on surfaces, Floor-level objects, Decorative and functional items, Trash items]')
     parser.add_argument('--threshold',type=float, default=0.3, help="fixed threshold to apply for change detection (default=0.1)")
     parser.add_argument('--max_route_dist',type=float,default=5.2,help='assuming a fixed route, determine a rough scale for the resulting cloud using a known distance between end points (default = 5.2)')
-    parser.add_argument('--no_change', dest='use_change', action='store_false')
+    parser.add_argument('--no-change', dest='use_change', action='store_false')
     parser.set_defaults(use_change=True)
+    parser.add_argument('--rebuild-pcloud', dest='new_pcloud', action='store_true')
+    parser.set_defaults(new_pcloud=False)
     args = parser.parse_args()
 
     save_dir=f"{args.root_dir}/{args.save_dir}/"
@@ -184,63 +155,131 @@ def setup_change_experiment():
             'fList_renders': fList_renders,
             'detection_threshold': args.threshold,
             'prompts': prompts,
-            'scale': scale}
+            'scale': scale,
+            'rebuild_pcloud': args.new_pcloud}
+
+def count_points_in_box(rc_points,bbox):
+    #bbox is [x_min, y_min, x_max, y_max] - so need to reverse to handle row/col
+    mask=(rc_points[:,0]>bbox[1])*(rc_points[:,0]<bbox[3])*(rc_points[:,1]>bbox[0])*(rc_points[:,1]<bbox[2])
+    return mask.sum()
+
+def truncate_point(pointXY, maxX, maxY):
+    return np.array([int(max(0,min(maxX,pointXY[0]))),int(max(0,min(maxY,pointXY[1])))])
+
+def expand_bbox(bbox,multiplier,maxX,maxY):
+    center=(bbox[2:]+bbox[:2])/2.0
+    half_dims=multiplier*(bbox[2:]-bbox[:2])/2.0
+    start_XY=center-half_dims
+    end_XY=center+half_dims
+    return np.hstack((truncate_point(start_XY,maxX,maxY),truncate_point(end_XY,maxX,maxY))) 
+
+def build_change_cluster_images(exp_params, pcloud_fileName, prompt):
+    try:
+        with open(pcloud_fileName, 'rb') as handle:
+            pcloud=pickle.load(handle)
+    except Exception as e:
+        print(f"pcloud file {pcloud_fileName} not found")
+        os._exit(-1)
+
+    file_prefix=prompt.replace(' ','_')
+    # Rescale everything ... 
+    export=dict()
+    from ultralytics import SAM
+    sam_model = SAM('sam2.1_l.pt')  # load an official model      
+    if pcloud['xyz'].shape[0]>ABSOLUTE_MIN_CLUSTER_SIZE:
+        clusters=create_and_merge_clusters(pcloud['xyz'].cpu().numpy(), 0.01/exp_params['scale'])
+        for cluster_idx, cluster in enumerate(clusters):
+            rel_imgs=identify_related_images_global_pose(exp_params['params'],exp_params['fList_new'],cluster.centroid,None,0.5)
+            for key in rel_imgs:
+                iKey=int(key)
+                fName=exp_params['fList_new'].get_color_fileName(iKey)
+
+                # We only want images that had significant change identified
+                #   so that we can build tight bounding boxes around the object of interest
+                if fName not in pcloud['bboxes'] or len(pcloud['bboxes'][fName])==0:
+                    continue
+
+                boxes=pcloud['bboxes'][fName]            
+                M=exp_params['fList_new'].get_pose(iKey)
+                sampled_points = np.array(cluster.find_pts_in_image(exp_params['params'],M,num_points=100))
+                box_count=[ count_points_in_box(sampled_points, box[1]) for box in boxes]
+                if max(box_count)>0:
+                    whichBox=np.argmax(box_count)
+                    tgt_box=np.array(boxes[whichBox][1])
+                    colorI=cv2.imread(fName)
+                    # Expand bbox dimensions by 1.5
+                    expand_bbox(tgt_box, 1.5, exp_params['params'].width, exp_params['params'].height)
+                    color_rect=cv2.rectangle(colorI, tgt_box[:2], tgt_box[2:], (0,0,255), 5)
+                    pdb.set_trace()
+                    sam_results = sam_model(colorI, bboxes=tgt_box)
+                    cv2.imshow("image",color_rect)
+                    cv2.waitKey(0)
+                #     rc_list=np.array(rc_list)
+                #     # Expand bbox dimensions by 1.5
+                #     dims=(1.5*(rc_list.max(0)-rc_list.min(0)))
+                #     start_RC=(rc_list.mean(0)-dims/2).astype(int)
+                #     end_RC=start_RC+dims.astype(int)
+                #     # Do not export image if box extends beyond edge -
+                #     #   likely incomprehensible to LLM
+                #     if start_RC.min()<0:
+                #         continue
+                #     if end_RC[0]>exp_params['params'].height or end_RC[1]>exp_params['params'].width:
+                #         continue
+                #     color_rect=cv2.rectangle(colorI, (start_RC[1],start_RC[0]), (end_RC[1],end_RC[0]), (0,0,255), 5)
+
+                #     if exp_params['fList_renders'] is not None:
+                #         fName_out=exp_params['fList_new'].intermediate_save_dir+f"/{file_prefix}_{cluster_idx}_{key}.png"
+                #     else:
+                #         fName_out=exp_params['fList_new'].intermediate_save_dir+f"/{file_prefix}_{cluster_idx}_{key}.OV.png"
+
+                #     cv2.imwrite(fName_out,color_rect)
+
+def build_pclouds(exp_params):
+    # build clouds if necessary - return list of filenames for saved pclouds
+    pcloud_fNames=dict()
+    all_files_exist=True
+    for key in exp_params['prompts']:
+        P1=key.replace(' ','_')
+        if exp_params['fList_renders'] is not None:
+            pcloud_fNames[key]=f"{exp_params['fList_new'].intermediate_save_dir}/{P1}.{exp_params['detection_threshold']}.pcloud.pkl"
+        else:
+            pcloud_fNames[key]=f"{exp_params['fList_new'].intermediate_save_dir}/{P1}.{exp_params['detection_threshold']}.OV.pcloud.pkl"
+        
+        # Does the file exist already?
+        if not os.path.exists(pcloud_fNames[key]):
+            all_files_exist=False
+
+    # Rebuild pclouds if requested 
+    if not all_files_exist or exp_params['rebuild_pcloud']:
+        if exp_params['fList_renders'] is not None:
+            # Do the original change detection experiment
+            pcloud=build_change_clouds(exp_params['params'], 
+                                    exp_params['fList_new'], 
+                                    exp_params['fList_renders'], 
+                                    exp_params['prompts'], 
+                                    exp_params['detection_threshold'])            
+        else:
+            # Use open vocabulary models only - no change applied
+            pcloud=build_openVocab_clouds(exp_params['params'], 
+                                    exp_params['fList_new'], 
+                                    exp_params['prompts'], 
+                                    exp_params['detection_threshold'])
+        # Save the result
+        for key in pcloud:
+            with open(pcloud_fNames[key],'wb') as handle:
+                pickle.dump(pcloud[key], handle, protocol=pickle.HIGHEST_PROTOCOL)    
+    
+    # Return the list of files to be loaded
+    return pcloud_fNames
 
 if __name__ == '__main__':
     exp_params=setup_change_experiment()
 
-    if exp_params['fList_renders'] is not None:
-        # Do the original change detection experiment
-        pcloud=build_change_clouds(exp_params['params'], 
-                                exp_params['fList_new'], 
-                                exp_params['fList_renders'], 
-                                exp_params['prompts'], 
-                                exp_params['detection_threshold'])
+    # We build the point clouds, but save to disk in order to 
+    #   save memory for clustering
+    pcloud_fNames=build_pclouds(exp_params)
 
-        save_pcloud_dict(pcloud,
-                        exp_params['fList_new'].intermediate_save_dir,
-                        f"{exp_params['detection_threshold']}.pcloud")
-    else:
-        # Use open vocabulary models only - no change applied
-        pcloud=build_openVocab_clouds(exp_params['params'], 
-                                exp_params['fList_new'], 
-                                exp_params['prompts'], 
-                                exp_params['detection_threshold'])
-
-        save_pcloud_dict(pcloud,
-                        exp_params['fList_new'].intermediate_save_dir,
-                        f"{exp_params['detection_threshold']}.OV.pcloud")
-
-    # Build the o3d cloud to visualize
-    # pcd_all=dict()
-    # for query in prompts:
-    #     if pcloud[query]['xyz'].shape[0]>1000:
-    #         # pcd_all[query]=pointcloud_open3d(pcloud[query]['xyz'].cpu().numpy())
-          
-
-    # import open3d as o3d
-    # combo_pcd=visualize_combined_xyzrgb(fList_new, params, skip=5)
-    # save_pcloud_dict(pcloud,save_dir,f"{args.threshold}.pcloud")
-    # save_pcloud_dict(pcd_all,save_dir,"0.5.pcd")
-    # save_pcloud_dict({'combined':combo_pcd},save_dir,"pcd")
-
-    # mat1 = o3d.visualization.rendering.MaterialRecord()
-    # mat1.shader = 'defaultLitTransparency'
-    # mat1.base_color = [1.0, 0.0, 0.0, 0.5]  # RGBA, adjust A for transparency
-    # mat1.point_size = 20.0
-
-    # o3d.visualization.draw([{'name': 'combined', 'geometry': combo_pcd, 'material': mat1},
-    #                         {'name': 'trash', 'geometry':pcd_all['trash items']}],bg_color=(0.1, 0.1, 0.1, 1.0))
-    # mat1 = o3d.visualization.rendering.MaterialRecord()
-    # mat1.shader = 'defaultLitTransparency'
-    # mat1.base_color = [1.0, 0.0, 0.0, 0.5]  # RGBA, adjust A for transparency
-    # mat1.point_size = 20.0
-
-    # mat1 = o3d.visualization.rendering.MaterialRecord()
-    # mat1.shader = 'defaultLitTransparency'
-    # mat1.base_color = [1.0, 0.0, 0.0, 0.5]  # RGBA, adjust A for transparency
-    # mat1.point_size = 20.0
-    #Build the combined pcloud for comparison
-
+    for key in pcloud_fNames.keys():
+        image_list=build_change_cluster_images(exp_params, pcloud_fNames[key], key)
 
 

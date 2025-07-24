@@ -28,30 +28,38 @@ class pcloud_base():
         self.classifier_type=None
 
     # Image loading to allow us to process more than one class in rapid succession
-    def load_image_from_file(self, fList:rgbd_file_list, image_key, max_distance=10.0):
-        colorI=cv2.imread(fList.get_color_fileName(image_key), -1)
-        colorI=Image.open(fList.get_color_fileName(image_key))
-        depthI=cv2.imread(fList.get_depth_fileName(image_key), -1)
-        poseM=fList.get_pose(image_key)
-        self.load_image(colorI, depthI, poseM, image_key, max_distance=max_distance)
+    # def load_image_from_file(self, fList:rgbd_file_list, image_key, max_distance=10.0):
+    #     colorI=cv2.imread(fList.get_color_fileName(image_key), -1)
+    #     colorI=Image.open(fList.get_color_fileName(image_key))
+    #     depthI=cv2.imread(fList.get_depth_fileName(image_key), -1)
+    #     poseM=fList.get_pose(image_key)
+    #     self.load_image(colorI, depthI, poseM, image_key, max_distance=max_distance)
 
     # Load an image into the internal memory structure for further processing
     def load_image(self, 
-                   colorI:Image, 
-                   depthI:np.ndarray, 
+                   colorI_PIL:Image, #assumes PIL format
+                   depthI_np:np.ndarray, 
                    poseM:np.ndarray, 
                    uid_key:str, 
-                   max_distance=10.0):
+                   max_distance=10.0,
+                   color_blur_threshold=None,
+                   depth_blur_threshold=None):
         if self.loaded_image is None or self.loaded_image['key']!=uid_key:
             try:
                 if self.loaded_image is None:
                     self.loaded_image=dict()
-                self.loaded_image['color']=colorI
-                self.loaded_image['depthT']=torch.tensor(depthI.astype('float')/1000.0,device=DEVICE)
-                self.loaded_image['colorT']=torch.tensor(np.array(colorI),device=DEVICE)
+                self.loaded_image['color']=colorI_PIL
+                self.loaded_image['depthT']=torch.tensor(depthI_np.astype('float')/1000.0,device=DEVICE)
+                self.loaded_image['colorT']=torch.tensor(np.array(colorI_PIL),device=DEVICE)
                 self.loaded_image['x'] = self.cols*self.loaded_image['depthT']/self.params.fx
                 self.loaded_image['y'] = self.rows*self.loaded_image['depthT']/self.params.fy
                 self.loaded_image['depth_mask']=(self.loaded_image['depthT']>1e-4)*(self.loaded_image['depthT']<max_distance)
+                if depth_blur_threshold is not None:
+                    blur=torch.tensor(estimate_blur(depthI_np),device=DEVICE)
+                    self.loaded_image['depth_mask']*=(blur>depth_blur_threshold)
+                if color_blur_threshold is not None:
+                    blur=torch.tensor(estimate_blur(np.array(colorI_PIL)),device=DEVICE)
+                    self.loaded_image['depth_mask']*=(blur>color_blur_threshold)                    
 
                 # Build the rotation matrix
                 self.loaded_image['M']=torch.matmul(self.rot_matrixT,torch.tensor(poseM,device=DEVICE))
@@ -277,7 +285,8 @@ class pcloud_openVocab(pcloud_base):
             rot_color=np.rot90(self.loaded_image['colorT'].cpu().numpy(), k=1, axes=(1,0))
             self.YS.process_image_numpy(rot_color, detection_threshold)    
         else:
-            self.YS.process_image_numpy(self.loaded_image['color'], detection_threshold)    
+            # self.YS.process_image_numpy(self.loaded_image['color'], detection_threshold)    
+            self.YS.process_image(self.loaded_image['color'], detection_threshold)    
 
         all_pts=dict()
         # Build the class associated mask for this image
@@ -377,19 +386,18 @@ class pcloud_change(pcloud_base):
 
     def openvocab_segmentation(self, 
                       prompts,
-                      PIL_image1,
-                      PIL_image2): 
+                      baseline_image): 
         latest_result=dict()
         for query in prompts:
-            latest_result[query]={'prob1': None, 'prob2': None}
+            latest_result[query]={'new_prob': None, 'baseline_prob': None}
         
-        self.YS.process_image(PIL_image1)
+        self.YS.process_image(self.loaded_image['color'])
         for query in prompts:
-            latest_result[query]['prob1'] = self.YS.get_prob_array(query)
+            latest_result[query]['new_prob'] = self.YS.get_prob_array(query)
 
-        self.YS.process_image(PIL_image2)
+        self.YS.process_image(baseline_image)
         for query in prompts:
-            latest_result[query]['prob2'] = self.YS.get_prob_array(query)
+            latest_result[query]['baseline_prob'] = self.YS.get_prob_array(query)
         
         return latest_result
 
@@ -399,26 +407,74 @@ class pcloud_change(pcloud_base):
                              detection_threshold:float, 
                              classifier_type:str='clipseg',
                              is_positive_change=True,
-                             rotate90:bool=False):
+                             est_bboxes=False):
         self.setup_image_processing(prompts,classifier_type)
-        latest_result = self.openvocab_segmentation(prompts, self.loaded_image['color'], baseline_image)
+        latest_result = self.openvocab_segmentation(prompts, baseline_image)
 
         all_pts=dict()
+        all_bboxes=dict()
         # Build the class associated mask for this image - discard any images where the counts are too high as likely 
         #       localization or generative errors. If "change" > 10%, then probably couldn't localize the image very well anyways
         max_point_count=self.loaded_image['colorT'].shape[0]*self.loaded_image['colorT'].shape[1]/10
         for tgt_class in prompts:
-            if tgt_class in latest_result and latest_result[tgt_class]['prob1'] is not None and latest_result[tgt_class]['prob2'] is not None:
+            if tgt_class in latest_result and latest_result[tgt_class]['new_prob'] is not None and latest_result[tgt_class]['baseline_prob'] is not None:
                 # Get the change image by subtracting clipseg results
                 if is_positive_change:
-                    deltaT=latest_result[tgt_class]['prob2']-latest_result[tgt_class]['prob1']
+                    deltaT=latest_result[tgt_class]['new_prob']-latest_result[tgt_class]['baseline_prob']
                 else:
-                    deltaT=latest_result[tgt_class]['prob1']-latest_result[tgt_class]['prob2']
+                    deltaT=latest_result[tgt_class]['baseline_prob']-latest_result[tgt_class]['new_prob']
 
                 maskT=(deltaT>detection_threshold)
                 num_change_points=maskT.sum()
+                print(f"num change points = {num_change_points}")
                 if num_change_points>0 and num_change_points<max_point_count:
                     filtered_maskT=self.loaded_image['depth_mask']*maskT
                     all_pts[tgt_class]=self.get_pts(deltaT, filtered_maskT)
-                
+                    if est_bboxes:
+                        all_bboxes[tgt_class]=build_dbscan_boxes(deltaT.cpu().numpy(),filtered_maskT.cpu().numpy())                        
+                        # mask=np.tile(filtered_maskT.cpu().numpy()[:,:,np.newaxis],(1,1,3))
+                        # im_out=255*np.ones(self.loaded_image['colorT'].shape,dtype=np.uint8)*mask
+                        # for bbox in all_bboxes[tgt_class]:
+                        #     im_out=cv2.rectangle(im_out, bbox[1][:2], bbox[1][2:], (0,0,255), 2)
+                        # cv2.imshow("mask",im_out)
+                        # cv2.waitKey(1)
+        
+        if est_bboxes:
+            return all_pts, all_bboxes
         return all_pts
+
+def build_dbscan_boxes(prob_image, mask, eps=10, min_samples=20, MAX_CLUSTERING_SAMPLES=50000):
+    from sklearn.cluster import DBSCAN
+
+    rows,cols=np.nonzero(mask)
+    xy_grid_pts=np.vstack((cols,rows)).transpose()
+    scores=prob_image[rows,cols]
+    if xy_grid_pts is None or xy_grid_pts.shape[0]<min_samples:
+        return []
+
+    # Need to constrain the maximum number of points - else dbscan will be extremely slow
+    if xy_grid_pts.shape[0]>MAX_CLUSTERING_SAMPLES:        
+        rr=np.random.choice(np.arange(xy_grid_pts.shape[0]),size=MAX_CLUSTERING_SAMPLES)
+        xy_grid_pts=xy_grid_pts[rr]
+        scores=scores[rr]
+
+    CL2=DBSCAN(eps=eps, min_samples=min_samples).fit(xy_grid_pts,sample_weight=scores)
+    boxes=[]
+    for idx in range(10):
+        whichP=np.where(CL2.labels_== idx)            
+        if len(whichP[0])<1:
+            break
+        box=np.hstack((xy_grid_pts[whichP].min(0),xy_grid_pts[whichP].max(0)))
+        boxes.append((scores[whichP].max(),box))
+    return boxes
+
+def estimate_blur(gray_np,step=5,filter_size=50):
+    laplacian=cv2.Laplacian(gray_np, cv2.CV_64F)
+    max_row=laplacian.shape[0]-filter_size
+    max_col=laplacian.shape[1]-filter_size
+    Lpl_var=np.zeros((int(np.floor(max_row/step)),int(np.floor(max_col/step))),dtype=float)
+    for var_row,row in enumerate(range(0,laplacian.shape[0]-50,5)):
+        for var_col, col in enumerate(range(0,laplacian.shape[1]-50,5)):
+            Lpl_var[var_row,var_col]=laplacian[row:(row+filter_size),col:(col+filter_size)].var()
+    blur=cv2.resize(Lpl_var,(gray_np.shape[1],gray_np.shape[0]))
+    return blur

@@ -673,6 +673,18 @@ class object_pcloud():
     def compress_object(self):
         self.pts=None
         self.farthestP=None
+    
+    def find_pts_in_image(self, cam_params, camera_poseM, num_points=20):
+        # Build a list of row/col points from a randomly sampled selection from the pointcloud
+        rc_list=[]
+        rr = np.arange(self.pts.shape[0])
+        np.random.shuffle(rr)
+        for i in range(min(num_points,self.size())):
+            M2=np.matmul(cam_params.rot_matrix,camera_poseM)
+            row,col=cam_params.globalXYZ_to_imageRC(self.pts[rr[i],0],self.pts[rr[i],1],self.pts[rr[i],2],M2)
+            if (row>=0) and (row<cam_params.height) and (col>=0) and (col<cam_params.width):
+                rc_list.append([row,col])
+        return rc_list
 
 # Based on angles alone, identify a list of images that point at the same bbox
 #   This example uses a known image + bbox combination as a starting point
