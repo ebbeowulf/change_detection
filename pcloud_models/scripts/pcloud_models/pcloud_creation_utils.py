@@ -12,6 +12,7 @@ from change_detection.segmentation import image_segmentation
 import pickle
 import time
 from PIL import Image
+import pdb
 
 #Parent class containing common utilities for creating point clouds
 #   load_image / load_image_from_file - stores images internally for futher processing
@@ -89,6 +90,20 @@ class pcloud_base():
                     'rgb': self.loaded_image['colorT'][filtered_maskT_bool], 
                     'probs': prob_array[filtered_maskT_bool]}
 
+    def sam_segmentation(self, xy_points:list):
+        from transformers import SamModel, SamProcessor
+        if not hasattr(self, 'sam_model'):
+            self.sam_model=SamModel.from_pretrained("facebook/sam-vit-huge").to(DEVICE)
+        if not hasattr(self, 'sam_processor'):
+            self.sam_processor=SamProcessor.from_pretrained("facebook/sam-vit-huge")
+        inputs = self.sam_processor(self.loaded_image['color'], input_points=[xy_points], return_tensors="pt").to(DEVICE)
+        with torch.no_grad():
+            outputs = self.sam_model(**inputs)
+        masks=self.sam_processor.image_processor.post_process_masks(
+            outputs.pred_masks.cpu(), inputs["original_sizes"].cpu(), inputs["reshaped_input_sizes"].cpu()
+        )
+        return masks[0].data[0][0].cpu().numpy()
+
     def setup_image_processing(self, tgt_class_list, classifier_type):
         # Check to see if the classifier already exists AND if it has 
         #   all of the necessary files in its class list
@@ -114,7 +129,74 @@ class pcloud_base():
                 from change_detection.yolo_segmentation import yolo_segmentation
                 self.YS=yolo_segmentation(tgt_class_list)
                 self.classifier_type=classifier_type
+    
+    def generate_boxes_with_sam(self,delta_np,filtered_mask_np,generate_mask=False,merge_overlap=False):
+        # First step ... need some seed boxes. Going to use dbscan for this
+        dbscan_boxes=build_dbscan_boxes(delta_np,filtered_mask_np)
 
+        if len(dbscan_boxes)==0:
+            return []
+
+        # Second step... refinement with SAM
+        #    for each dbscan box, generate a SAM mask.
+        #    Only keep those that have significant overlap - using a fixed iou threshold for now        
+        mask_combo=None
+        sam_boxes=[]
+        for box in dbscan_boxes:
+            # Sample points from the box - but move in 10% from the margins
+            #   to avoid sampling outside the object of interest
+            box_dim=np.array(box[1][2:])-np.array(box[1][:2])
+            deltaDim=(box_dim/20).astype(int)
+            new_box=np.hstack((np.array(box[1][:2])+deltaDim,np.array(box[1][2:])-deltaDim))
+            subR=filtered_mask_np[new_box[1]:new_box[3],new_box[0]:new_box[2]]
+            rowD,colD=np.nonzero(subR)
+            whichP=np.random.choice(np.arange(rowD.shape[0]),10)
+            xy_points=np.vstack((colD[whichP]+box[1][0],rowD[whichP]+box[1][1])).transpose().tolist()
+
+            # Now run the segmentation step
+            sam_mask=self.sam_segmentation(xy_points)
+
+            if generate_mask: #for now, all masks are merged into a single mask
+                if mask_combo is None:
+                    mask_combo=sam_mask
+                else:
+                    mask_combo*=sam_mask
+            
+            # Identify the boundaries of the segmented zone
+            rowS,colS=np.nonzero(sam_mask)
+            sbox=[colS.min(),rowS.min(),colS.max(),rowS.max()]
+            if box_iou(box[1],sbox)>0.3:
+                max_prob=0
+                for cbox in dbscan_boxes:
+                    if is_box_overlap(sbox,cbox[1]):
+                        max_prob=max((max_prob,cbox[0]))
+                sam_boxes.append((max_prob,sbox))
+
+        # Do we merge overlapping boxes?
+        if merge_overlap:
+            count_boxes=len(sam_boxes)+1
+            while len(sam_boxes)>1 and count_boxes>len(sam_boxes):
+                count_boxes=len(sam_boxes)
+                old_boxes=sam_boxes
+                sam_boxes=[]
+                is_available=np.ones((len(old_boxes)),dtype=bool)
+                for box_idx, box in enumerate(old_boxes):
+                    if not is_available[box_idx]:
+                        continue
+                    is_available[box_idx]=False
+                    tgt_box=box
+                    for box_idx2 in range(box_idx+1,len(old_boxes)):
+                        if is_box_overlap(tgt_box[1],old_boxes[box_idx2][1]):
+                            is_available[box_idx2]=False
+                            combo=np.vstack((tgt_box[1],old_boxes[box_idx2][1]))
+                            tgt_box=(max(tgt_box[0],old_boxes[box_idx2][0]),
+                                np.hstack((combo[:,:2].min(0),combo[:,2:].max(0))))
+                    sam_boxes.append(tgt_box)
+        if generate_mask:
+            return sam_boxes, mask_combo            
+        else:
+            return sam_boxes
+        
 # Child class for open vocabulary image processing
 #   After loading an image, call process_image or process_image_multi to get all points
 #   associated with each of the specified prompts
@@ -430,18 +512,37 @@ class pcloud_change(pcloud_base):
                 if num_change_points>0 and num_change_points<max_point_count:
                     filtered_maskT=self.loaded_image['depth_mask']*maskT
                     all_pts[tgt_class]=self.get_pts(deltaT, filtered_maskT)
-                    if est_bboxes:
-                        all_bboxes[tgt_class]=build_dbscan_boxes(deltaT.cpu().numpy(),filtered_maskT.cpu().numpy())                        
-                        # mask=np.tile(filtered_maskT.cpu().numpy()[:,:,np.newaxis],(1,1,3))
-                        # im_out=255*np.ones(self.loaded_image['colorT'].shape,dtype=np.uint8)*mask
-                        # for bbox in all_bboxes[tgt_class]:
-                        #     im_out=cv2.rectangle(im_out, bbox[1][:2], bbox[1][2:], (0,0,255), 2)
-                        # cv2.imshow("mask",im_out)
-                        # cv2.waitKey(1)
+                    if est_bboxes:                                                
+                        all_bboxes[tgt_class]=self.generate_boxes_with_sam(deltaT.cpu().numpy(),filtered_maskT.cpu().numpy())
+
+                        if 0: # change to draw the images and masks
+                            im_out=np.array(self.loaded_image['color'])
+                            im_out[:,:,0][filtered_maskT.cpu().numpy()]=255
+                            for bbox in all_bboxes[tgt_class]:
+                                im_out=cv2.rectangle(im_out, bbox[1][:2], bbox[1][2:], (0,0,255), 2)
+                            cv2.imshow("mask",im_out[:,:,[2,1,0]])
+                            cv2.waitKey(1)                        
         
         if est_bboxes:
             return all_pts, all_bboxes
         return all_pts
+
+def is_box_overlap(bbox1,bbox2):
+    from shapely import Polygon
+    polygon1 = Polygon([bbox1[:2], [bbox1[2],bbox1[1]], bbox1[2:],[bbox1[0],bbox1[3]]])
+    polygon2 = Polygon([bbox2[:2], [bbox2[2],bbox2[1]], bbox2[2:],[bbox2[0],bbox2[3]]])
+    return polygon1.intersects(polygon2)
+
+def box_iou(bbox1,bbox2):
+    from shapely import Polygon
+    polygon1 = Polygon([bbox1[:2], [bbox1[2],bbox1[1]], bbox1[2:],[bbox1[0],bbox1[3]]])
+    polygon2 = Polygon([bbox2[:2], [bbox2[2],bbox2[1]], bbox2[2:],[bbox2[0],bbox2[3]]])
+    if polygon1.intersects(polygon2):
+        p_area1=polygon1.area
+        p_area2=polygon2.area
+        i_area=polygon1.intersection(polygon2).area
+        return i_area/(p_area1+p_area2-i_area)
+    return 0.0
 
 def build_dbscan_boxes(prob_image, mask, eps=10, min_samples=20, MAX_CLUSTERING_SAMPLES=50000):
     from sklearn.cluster import DBSCAN

@@ -18,9 +18,11 @@ import open3d as o3d
 from map_utils import identify_related_images_global_pose
 import pickle
 
-ABSOLUTE_MIN_CLUSTER_SIZE=500
-DEPTH_BLUR_THRESHOLD=50 #Applied to Depth images
-COLOR_BLUR_THRESHOLD=5 #Applied to Color images
+ABSOLUTE_MIN_CLUSTER_SIZE=100
+# DEPTH_BLUR_THRESHOLD=50 #Applied to Depth images
+# COLOR_BLUR_THRESHOLD=5 #Applied to Color images
+DEPTH_BLUR_THRESHOLD=None #Applied to Depth images
+COLOR_BLUR_THRESHOLD=None #Applied to Color images
 
 def build_change_clouds(params:camera_params, 
                      fList_new:rgbd_file_list,
@@ -73,7 +75,6 @@ def merge_clusters(cluster_list:list, merge_dist:float):
     #   any clusters matched are marked as "found" and ignored for the 
     #   remainder of the loop
     for cl_idx, cluster in enumerate(cluster_list):
-
         exportCL=cluster
 
         #Skip if marked as found already
@@ -173,6 +174,7 @@ def expand_bbox(bbox,multiplier,maxX,maxY):
     end_XY=center+half_dims
     return np.hstack((truncate_point(start_XY,maxX,maxY),truncate_point(end_XY,maxX,maxY))) 
 
+
 def build_change_cluster_images(exp_params, pcloud_fileName, prompt):
     try:
         with open(pcloud_fileName, 'rb') as handle:
@@ -184,8 +186,7 @@ def build_change_cluster_images(exp_params, pcloud_fileName, prompt):
     file_prefix=prompt.replace(' ','_')
     # Rescale everything ... 
     export=dict()
-    from ultralytics import SAM
-    sam_model = SAM('sam2.1_l.pt')  # load an official model      
+
     if pcloud['xyz'].shape[0]>ABSOLUTE_MIN_CLUSTER_SIZE:
         clusters=create_and_merge_clusters(pcloud['xyz'].cpu().numpy(), 0.01/exp_params['scale'])
         for cluster_idx, cluster in enumerate(clusters):
@@ -202,37 +203,28 @@ def build_change_cluster_images(exp_params, pcloud_fileName, prompt):
                 boxes=pcloud['bboxes'][fName]            
                 M=exp_params['fList_new'].get_pose(iKey)
                 sampled_points = np.array(cluster.find_pts_in_image(exp_params['params'],M,num_points=100))
+                if len(sampled_points)<10:
+                    continue
                 box_count=[ count_points_in_box(sampled_points, box[1]) for box in boxes]
-                if max(box_count)>0:
+                if max(box_count)>10:
                     whichBox=np.argmax(box_count)
                     tgt_box=np.array(boxes[whichBox][1])
                     colorI=cv2.imread(fName)
                     # Expand bbox dimensions by 1.5
-                    expand_bbox(tgt_box, 1.5, exp_params['params'].width, exp_params['params'].height)
-                    color_rect=cv2.rectangle(colorI, tgt_box[:2], tgt_box[2:], (0,0,255), 5)
-                    pdb.set_trace()
-                    sam_results = sam_model(colorI, bboxes=tgt_box)
-                    cv2.imshow("image",color_rect)
-                    cv2.waitKey(0)
-                #     rc_list=np.array(rc_list)
-                #     # Expand bbox dimensions by 1.5
-                #     dims=(1.5*(rc_list.max(0)-rc_list.min(0)))
-                #     start_RC=(rc_list.mean(0)-dims/2).astype(int)
-                #     end_RC=start_RC+dims.astype(int)
-                #     # Do not export image if box extends beyond edge -
-                #     #   likely incomprehensible to LLM
-                #     if start_RC.min()<0:
-                #         continue
-                #     if end_RC[0]>exp_params['params'].height or end_RC[1]>exp_params['params'].width:
-                #         continue
-                #     color_rect=cv2.rectangle(colorI, (start_RC[1],start_RC[0]), (end_RC[1],end_RC[0]), (0,0,255), 5)
+                    # new_box=expand_bbox(tgt_box, 1.5, exp_params['params'].width, exp_params['params'].height)
+                    new_box=np.hstack((truncate_point(tgt_box[:2]-10,exp_params['params'].width, exp_params['params'].height),
+                                       truncate_point(tgt_box[2:]+10,exp_params['params'].width, exp_params['params'].height)))
+                    # colorI=cv2.rectangle(colorI, tgt_box[:2], tgt_box[2:], (0,0,255), 5)
+                    colorI=cv2.rectangle(colorI, new_box[:2], new_box[2:], (255,0,0), 5)
 
-                #     if exp_params['fList_renders'] is not None:
-                #         fName_out=exp_params['fList_new'].intermediate_save_dir+f"/{file_prefix}_{cluster_idx}_{key}.png"
-                #     else:
-                #         fName_out=exp_params['fList_new'].intermediate_save_dir+f"/{file_prefix}_{cluster_idx}_{key}.OV.png"
-
-                #     cv2.imwrite(fName_out,color_rect)
+                    if exp_params['fList_renders'] is not None:
+                        fName_out=exp_params['fList_new'].intermediate_save_dir+f"/{file_prefix}_{cluster_idx}_{key}.png"
+                    else:
+                        fName_out=exp_params['fList_new'].intermediate_save_dir+f"/{file_prefix}_{cluster_idx}_{key}.OV.png"
+                    print(fName_out)
+                    cv2.imwrite(fName_out,colorI)
+                    # cv2.imshow("image",colorI)
+                    # cv2.waitKey(0)
 
 def build_pclouds(exp_params):
     # build clouds if necessary - return list of filenames for saved pclouds
