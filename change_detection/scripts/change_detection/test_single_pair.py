@@ -1,4 +1,3 @@
-from clip_segmentation import clip_seg
 import argparse
 from PIL import Image
 import numpy as np
@@ -122,21 +121,27 @@ if __name__ == '__main__':
     parser.add_argument('prompt',type=str,help='where to save the resulting images')
     parser.add_argument('--threshold',type=float, default=0.3, help="fixed threshold to apply for change detection (default=0.3)")
     parser.add_argument('--draw-boxes', default=None, help="Optional draw boxes ('dbscan','sam','all')")
+    parser.add_argument('--model', default='clipseg', help="Select different open vocabulary segmentation models ('clipseg','yolo-world','dino')")
     args = parser.parse_args()
 
-    # image1 = CSmodel.process_file(args.image1)[:,:,[2,1,0]]
-    # prob1 = CSmodel.get_prob_array(0).to('cpu').numpy()
-    # image2 = CSmodel.process_file(args.image2)[:,:,[2,1,0]]
-    # prob2 = CSmodel.get_prob_array(0).to('cpu').numpy()
-
     prompts=[args.prompt]
-    CSmodel=clip_seg(prompts)
+    if args.model=='clipseg':
+        from clip_segmentation import clip_seg
+        CSmodel=clip_seg(prompts)
+    elif args.model=='yolo-world':
+        from yolo_world_segmentation import yolo_world_segmentation
+        CSmodel=yolo_world_segmentation(prompts)
+    elif args.model=='dino':
+        from dino_segmentation import dino_segmentation
+        CSmodel=dino_segmentation(prompts)
+
     image1=Image.open(args.image1)
     CSmodel.process_image(image1)
     prob1 = CSmodel.get_prob_array(0).to('cpu').numpy()
     image2=Image.open(args.image2)
     CSmodel.process_image(image2)
     prob2 = CSmodel.get_prob_array(0).to('cpu').numpy()
+
 
     delta=(prob2-prob1)
     print(f"MAX DELTA={delta.max()}")

@@ -51,8 +51,6 @@ def get_all_poses(colmap_dir, keyword:str):
     except Exception as e:
         print("Failed to open images.txt in " + colmap_dir + " - exiting")
         os.exit(-1)
-    
-    appliedT=np.array([[1,0,0],[0,0,1],[0,-1,0]])
 
     # Remove comments at beginning
     start_line=-1
@@ -61,28 +59,6 @@ def get_all_poses(colmap_dir, keyword:str):
             continue
         start_line=ln_idx
         break
-
-    # Need to skip every other line while parsing
-    cam_rot_matrix=np.array([
-    [
-        0.9988165497779846,
-        -0.04838203266263008,
-        -0.00497132632881403,
-        -0.1074012890458107
-    ],
-    [
-        -0.00497132632881403,
-        -0.2032356560230255,
-        0.979117214679718,
-        0.15832626819610596
-    ],
-    [
-        -0.04838203266263008,
-        -0.9779337644577026,
-        -0.2032356560230255,
-        -0.00469219870865345
-    ],
-    [0,0,0,1]])
 
     all_poses=dict()
     for ln_idx in range(start_line,len(A),2):
@@ -100,13 +76,8 @@ def get_all_poses(colmap_dir, keyword:str):
             rot_matrix=rot.as_matrix()
             rot_matrix_c2w=rot_matrix.transpose()
             # This hack works - but don't use as it will probably break later
-            # pose=np.matmul(-rot_matrix_c2w,trans)*0.146
-            # all_poses[vals[-1]]={'pose': pose, 'rot_cam2world': np.matmul(appliedT,rot_matrix.transpose())}
             pose=np.matmul(-rot_matrix_c2w,trans)
             all_poses[vals[-1]]={'pose': pose, 'rot_cam2world': rot_matrix.transpose()}
-            # pose=np.matmul(-rot_matrix_c2w,trans)
-            # all_poses[vals[-1]]={'pose': pose, 'rot_cam2world': np.matmul(cam_rot_matrix[:3,:3],rot_matrix.transpose())}
-            # all_poses[vals[-1]]={'pose': pose, 'rot_cam2world': np.matmul(appliedT,rot_matrix.transpose())}
     return all_poses
 
 ## Build the rgbd_file_list structure for use with other pcloud utilities
