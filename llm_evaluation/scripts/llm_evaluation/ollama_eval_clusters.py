@@ -11,19 +11,21 @@ import numpy as np
 RESULTS_TEMPLATE=single_level_results_template(["object","is_pickup"],[str,bool],["<type of object>", "<True/False>"])
 SUMMARY_TEMPLATE=single_level_results_template(["object"],[str],["<describe object in 5 words or less>"])
 
-# TASK_DESCRIPTION = ['We are deciding on tasks for a robot that can pick stuff up and put it away.',
-#                     'The robot should  pick up things left behind by people that used the room.'
-#                     'This includes all small stuff that does not normally belong in the living room.'
-#                     'The owner has requested that the robot not pick up books or other objects related to their work.'
-#                     'The object surrounded by the red box in the provided image(s) has been identified by the robot as a candidate for cleaning.',
-#                     'Is this an object that the robot should pick up and put away?']
-TASK_DESCRIPTION = ['The object surrounded by the blue box in the provided image(s) has been identified as an object that may not belong in this room.',
-                    'It is the same object in all provided images.'
-                    'Identify the object and state whether the object should be picked up and put away.']
+TASK_DESCRIPTION = ['We are deciding on tasks for a robot that can pick small stuff up (<3kg) and put it away.',
+                    'The robot should pick up things left behind by people that used the room.'
+                    'This includes all small stuff that does not normally belong in the living room.'
+                    'The owner has requested that the robot not pick up books or other objects related to their work.'
+                    'The robot should also avoid picking up power cords.'
+                    'The object surrounded by the blue box in the provided image(s) has been identified by the robot as a candidate for cleaning.',
+                    'Is this an object that the robot should pick up and put away?']
+# TASK_DESCRIPTION = ['The object surrounded by the blue box in the provided image(s) has been identified as an object that may not belong in this room.',
+#                     'It is the same object in all provided images.'
+#                     'Identify the object and state whether the object should be picked up and put away.']
 PROMPT=""
 for task in TASK_DESCRIPTION:
     PROMPT+=task
 PROMPT+="Return an answer in JSON format as " + RESULTS_TEMPLATE.generate_format_prompt()
+print(PROMPT)
 
 NUM_MULTI_IMAGES=4
 

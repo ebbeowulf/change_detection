@@ -19,8 +19,6 @@ from map_utils import identify_related_images_global_pose
 import pickle
 
 ABSOLUTE_MIN_CLUSTER_SIZE=100
-# DEPTH_BLUR_THRESHOLD=50 #Applied to Depth images
-# COLOR_BLUR_THRESHOLD=5 #Applied to Color images
 DEPTH_BLUR_THRESHOLD=None #Applied to Depth images
 COLOR_BLUR_THRESHOLD=None #Applied to Color images
 
@@ -90,6 +88,88 @@ def merge_clusters(cluster_list:list, merge_dist:float):
         merged_clusters.append(exportCL)
     return merged_clusters
      
+def merge_by_bounding_box(clusters, pcloud, exp_params):
+    from shapely import Polygon
+    cluster_image_dict=dict()
+
+    for cluster_idx1, cluster in enumerate(clusters):
+        rel_imgs=identify_related_images_global_pose(exp_params['params'],exp_params['fList_new'],cluster.centroid,None,0.5)
+        cluster_image_dict[cluster_idx1]=dict()
+        for key in rel_imgs:
+            iKey=int(key)
+            fName=exp_params['fList_new'].get_color_fileName(iKey)
+
+            # We only want images that had significant change identified
+            #   so that we can build tight bounding boxes around the object of interest
+            if fName not in pcloud['bboxes'] or len(pcloud['bboxes'][fName])==0:
+                continue
+
+            boxes=pcloud['bboxes'][fName]            
+            M=exp_params['fList_new'].get_pose(iKey)
+            sampled_points = np.array(cluster.find_pts_in_image(exp_params['params'],M,num_points=100))
+            if len(sampled_points)<10:
+                continue
+            box_count=[ count_points_in_box(sampled_points, box[1]) for box in boxes]
+            if max(box_count)>10:
+                whichBox=np.argmax(box_count)
+                tgt_box=np.array(boxes[whichBox][1])
+                # Expand bbox dimensions by 1.5
+                new_box=np.hstack((truncate_point(tgt_box[:2]-10,exp_params['params'].width, exp_params['params'].height),
+                                    truncate_point(tgt_box[2:]+10,exp_params['params'].width, exp_params['params'].height))).astype(int)
+                poly=Polygon(np.array([[new_box[0],new_box[1]],
+                                       [new_box[0],new_box[3]],
+                                       [new_box[2],new_box[3]],
+                                       [new_box[2],new_box[1]],
+                                       [new_box[0],new_box[1]]]))
+                cluster_image_dict[cluster_idx1][iKey]=[fName,poly]         
+    
+    # Probababilistic scoring function
+    scoring=dict()
+    for cluster_idx1 in cluster_image_dict.keys():
+        scoring[cluster_idx1]=dict()
+        for cluster_idx2 in cluster_image_dict.keys():
+            if cluster_idx1==cluster_idx2:
+                continue
+            scoring[cluster_idx1][cluster_idx2]=0
+
+            for image_key1 in cluster_image_dict[cluster_idx1]:
+                if image_key1 in cluster_image_dict[cluster_idx2]:
+                    # Calculate IOU
+                    if cluster_image_dict[cluster_idx1][image_key1][1].intersects(cluster_image_dict[cluster_idx2][image_key1][1]):
+                        isect=cluster_image_dict[cluster_idx1][image_key1][1].intersection(cluster_image_dict[cluster_idx2][image_key1][1]).area
+                        IOU=isect/(cluster_image_dict[cluster_idx1][image_key1][1].area + cluster_image_dict[cluster_idx2][image_key1][1].area - isect)
+                    else:
+                        IOU=0
+                    IOU=min(0.95,max(0.05,IOU))
+                else:
+                    IOU=0.3
+                # Update using log odds
+                scoring[cluster_idx1][cluster_idx2]+=(np.log(IOU)-np.log(1-IOU))
+
+    # Merge clusters based on scoring > 50% - need to make sure scoring agrees in both directions
+    merged_clusters=[]
+    isMerged={ key: False for key in cluster_image_dict.keys() }
+    #Else go through remainder of list and merge with close clusters
+    for cluster_idx1 in scoring.keys():
+        # skip clusters we have already merged
+        if isMerged[cluster_idx1]:
+            continue
+
+        exportCL=clusters[cluster_idx1]
+
+        for merge_candidate in scoring[cluster_idx1].keys():
+            if isMerged[merge_candidate]:
+                continue
+
+            # Is the scoring > 0.5 in both directions?
+            if  scoring[cluster_idx1][merge_candidate]>0 and scoring[merge_candidate][cluster_idx1]>0:
+                isMerged[merge_candidate]=True
+                exportCL=object_pcloud(np.vstack((exportCL.pts,clusters[merge_candidate].pts)),num_samples=100,sample=False)
+
+        exportCL.sample_pcloud(100)
+        merged_clusters.append(exportCL)
+        isMerged[cluster_idx1]=True
+    return merged_clusters
 
 def create_and_merge_clusters(pcloud_xyz:np.ndarray, 
                         gridcell_size:float):
@@ -107,12 +187,14 @@ def create_and_merge_clusters(pcloud_xyz:np.ndarray,
                                     eps=dbscan_eps)  
     
     # Merge clusters that are really close together
+    # pdb.set_trace()
     list_count=10000
     while len(object_clusters)<list_count:
-        m_clusters=merge_clusters(object_clusters, 10*gridcell_size)
+        m_clusters=merge_clusters(object_clusters, 20*gridcell_size)
         object_clusters=m_clusters
         list_count=len(object_clusters)
          
+    # pdb.set_trace()
     return object_clusters
 
 def setup_change_experiment():
@@ -121,12 +203,12 @@ def setup_change_experiment():
     parser.add_argument('root_dir',type=str,help='root project folder where the images and colmap info are stored')
     parser.add_argument('--color_dir',type=str,default='images_combined',help='where are the color images? (default=images_combined)')
     parser.add_argument('--renders_dir',type=str,default='renders',help='where are the rendered images? (default=renders)')
-    parser.add_argument('--colmap_dir',type=str,default='colmap_combined/sparse',help='where are the images + cameras.txt files? (default=colmap_combined/sparse)')
+    parser.add_argument('--colmap_dir',type=str,default='colmap_combined/sparse_geo',help='where are the images + cameras.txt files? (default=colmap_combined/sparse)')
     parser.add_argument('--frame_keyword',type=str,default="new",help='a keyword to use when parsing the transforms file (default=new)')
     parser.add_argument('--save_dir',type=str,default='save_results', help='subdirectory of root_dir in which to store the intermediate files (default=save_results)')
     parser.add_argument('--queries', type=str, nargs='*', default=["General clutter", "Small items on surfaces", "Floor-level objects", "Decorative and functional items", "Trash items"],
                 help='Set of target queries to build point clouds for - default is [General clutter, Small items on surfaces, Floor-level objects, Decorative and functional items, Trash items]')
-    parser.add_argument('--threshold',type=float, default=0.3, help="fixed threshold to apply for change detection (default=0.1)")
+    parser.add_argument('--threshold',type=float, default=0.3, help="fixed threshold to apply for change detection (default=0.3)")
     parser.add_argument('--max_route_dist',type=float,default=5.2,help='assuming a fixed route, determine a rough scale for the resulting cloud using a known distance between end points (default = 5.2)')
     parser.add_argument('--no-change', dest='use_change', action='store_false')
     parser.set_defaults(use_change=True)
@@ -185,10 +267,9 @@ def build_change_cluster_images(exp_params, pcloud_fileName, prompt):
 
     file_prefix=prompt.replace(' ','_')
     # Rescale everything ... 
-    export=dict()
-
     if pcloud['xyz'].shape[0]>ABSOLUTE_MIN_CLUSTER_SIZE:
         clusters=create_and_merge_clusters(pcloud['xyz'].cpu().numpy(), 0.01/exp_params['scale'])
+        clusters=merge_by_bounding_box(clusters, pcloud, exp_params)
         for cluster_idx, cluster in enumerate(clusters):
             rel_imgs=identify_related_images_global_pose(exp_params['params'],exp_params['fList_new'],cluster.centroid,None,0.5)
             for key in rel_imgs:
@@ -209,12 +290,11 @@ def build_change_cluster_images(exp_params, pcloud_fileName, prompt):
                 if max(box_count)>10:
                     whichBox=np.argmax(box_count)
                     tgt_box=np.array(boxes[whichBox][1])
-                    colorI=cv2.imread(fName)
                     # Expand bbox dimensions by 1.5
-                    # new_box=expand_bbox(tgt_box, 1.5, exp_params['params'].width, exp_params['params'].height)
                     new_box=np.hstack((truncate_point(tgt_box[:2]-10,exp_params['params'].width, exp_params['params'].height),
                                        truncate_point(tgt_box[2:]+10,exp_params['params'].width, exp_params['params'].height)))
-                    # colorI=cv2.rectangle(colorI, tgt_box[:2], tgt_box[2:], (0,0,255), 5)
+                    
+                    colorI=cv2.imread(fName)
                     colorI=cv2.rectangle(colorI, new_box[:2], new_box[2:], (255,0,0), 5)
 
                     if exp_params['fList_renders'] is not None:

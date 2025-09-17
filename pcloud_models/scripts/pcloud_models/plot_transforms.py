@@ -56,3 +56,5 @@ if __name__ == '__main__':
     pose_np=np.array([ poses[key]['pose'] for key in poses.keys()])
     import matplotlib.pyplot as plt
     plt.plot(pose_np[:,0],pose_np[:,1])
+    plt.show()
+

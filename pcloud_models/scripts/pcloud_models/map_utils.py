@@ -123,10 +123,14 @@ def visualize_combined_xyzrgb(fList:rgbd_file_list, params:camera_params, howman
         count=0
         # Create the generic depth data
         print(fList.get_color_fileName(key))
-        colorI=cv2.imread(fList.get_color_fileName(key), -1)
-        depthI=cv2.imread(fList.get_depth_fileName(key), -1)
-        depthT=torch.tensor(depthI.astype('float')/1000.0,device=DEVICE)
-        colorT=torch.tensor(colorI,device=DEVICE)
+        try:
+            colorI=cv2.imread(fList.get_color_fileName(key), -1)
+            depthI=cv2.imread(fList.get_depth_fileName(key), -1)
+            depthT=torch.tensor(depthI.astype('float')/1000.0,device=DEVICE)
+            colorT=torch.tensor(colorI,device=DEVICE)
+        except Exception as e:
+            print("File not found: " +str(e))
+            continue
         x = cols*depthT/params.fx
         y = rows*depthT/params.fy
         depth_mask=(depthT>1e-4)*(depthT<max_depth)
