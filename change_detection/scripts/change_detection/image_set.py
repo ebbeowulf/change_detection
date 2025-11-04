@@ -145,4 +145,18 @@ class image_set():
         
         return best_key
 
+if __name__ == '__main__':
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('images_txt',type=str,help='location of colmap images.txt file to process')
+    args = parser.parse_args()
+
+    img_set=image_set(args.images_txt)
+    all_poses=img_set.get_all_poses(sort_by_id=True)
+
+    import matplotlib.pyplot as plt    
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection='3d')
+    ax.scatter(all_poses[:,0], all_poses[:,1], all_poses[:,2])
+    plt.show()  
 

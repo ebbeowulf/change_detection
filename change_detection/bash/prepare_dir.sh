@@ -1,7 +1,7 @@
 #!/bin/bash
 
-INITIAL_DIR=$1
-NEW_DIR_ROOT=$2
+INITIAL_DIR=$1 #this is the nerf data directory that contains colmap/
+NEW_DIR_ROOT=$2 #this is the root directory that should contain color/ and depth/ subdirs
 
 ROTATED_DIR=${NEW_DIR_ROOT}/rotated
 
