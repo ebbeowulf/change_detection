@@ -1,33 +1,39 @@
 #!/bin/bash
 
-BASE_NERFSTUDIO_DIR="/home/emartinso/projects/nerfstudio/"
-CONFIG_DIR="outputs/nerf_no_person_initial/nerfacto/2024-01-04_035029/"
-SCRIPTS_DIR="$(pwd)/../scripts/"
+# BASE_NERFSTUDIO_DIR="/home/emartinso/projects/nerfstudio/"
+# CONFIG_DIR="outputs/nerf_no_person_initial/nerfacto/2024-01-04_035029/"
+# SCRIPTS_DIR="$(pwd)/../scripts/"
 
-TARGET_DIR=$1
-RENDER_SAVE_DIR=$2
-IMAGE_NUM=$3
+CHANGE_HOME=/home/emartinso/ros_ws/src/research/change_detection
+SCRIPTS_DIR=${CHANGE_HOME}/scripts/change_detection
 
-#Initialize the conda environment
-CONDA_BASE=$(conda info --base)
-source $CONDA_BASE/etc/profile.d/conda.sh
-conda init bash
-conda activate nerfstudio3
+BASE_CONFIG_DIR=$1
+TARGET_DIR=$2
+RENDER_SAVE_DIR=$3
+IMAGE_NAME=${4:-new} #by default render all images with 'new' in the name
+
+BASE_CONFIG_DIR=$1
+delimiter="outputs"
+BASE_NERFSTUDIO_DIR="${BASE_CONFIG_DIR%$delimiter*}"
+CONFIG_DIR="${BASE_CONFIG_DIR#*$BASE_NERFSTUDIO_DIR}"
 
 cd $BASE_NERFSTUDIO_DIR
 
 # Do we have the transforms.json file already?
 transforms=$TARGET_DIR/transforms.json
 if [[ ! -f $transforms ]];then
-    python $SCRIPTS_DIR/colmap_to_json.py $TARGET_DIR/colmap_combined/sparse_geo $TARGET_DIR
+    cmd="python $SCRIPTS_DIR/colmap_to_json.py $TARGET_DIR/colmap_combined/sparse_geo $TARGET_DIR"
+    echo $cmd
+    eval $cmd
 fi
 
-# Have we created the nerf images?
-rgb_fName="rgb_$IMAGE_NUM.png"
-if [[ ! -f $RENDER_SAVE_DIR/$rgb_fName ]];then
-    if [[ ! -d $RENDER_SAVE_DIR ]];then
-        mkdir -p $RENDER_SAVE_DIR
-    fi
-    python $SCRIPTS_DIR/render_transform.py $CONFIG_DIR $transforms $RENDER_SAVE_DIR --name-filter $rgb_fName --image-type all
+# Make the render save directory
+if [[ ! -d $RENDER_SAVE_DIR ]];then
+    mkdir -p $RENDER_SAVE_DIR
 fi
+
+# Render the image(s)
+cmd="python $SCRIPTS_DIR/render_transform.py $CONFIG_DIR $transforms $RENDER_SAVE_DIR --image-type all --name-filter $IMAGE_NAME"
+echo $cmd
+eval $cmd
 
