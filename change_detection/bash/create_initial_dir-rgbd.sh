@@ -83,7 +83,12 @@ if [[ ! -f $SPARSE_GEO/0/images.bin ]];then
 
     # Convert the aligned COLMAP model to transforms.json and sparse_pc.ply - copy these to the nerf_colmap directory if
     #   you want to use them during training or with depth images
-    cmd="python $PYTHON_HOME/colmap_to_json.py $SPARSE_GEO/0 $COLMAP_NERF_DIR"
+    cmd="python $PYTHON_HOME/colmap_to_json.py $SPARSE_GEO/0 $SPARSE_GEO/0/"
+    echo $cmd
+    eval $cmd
+
+    # Now, add depth image paths to the transforms.json file
+    cmd="python $PYTHON_HOME/add_depth_to_transforms.py $SPARSE_GEO/transforms.json $SPARSE_GEO/transforms_with_depth.json"
     echo $cmd
     eval $cmd
 fi
@@ -91,7 +96,6 @@ fi
 # Step 4: Need to prepare for using depth images - means copying the sparse_geo files to the home directory
 #           and setting up symbolic links for the colmap/sparse directories
 if [[ -f $SPARSE_GEO/0/transforms.json ]];then 
-    cmd="python $PYTHON_HOME/add_depth_to_transforms.py $SPARSE_GEO/transforms.json $SPARSE_GEO/transforms_with_depth.json"
     rm -rf $COLMAP_NERF_DIR/colmap/sparse
     ln -s $SPARSE_GEO $COLMAP_NERF_DIR/colmap/sparse
     cp $SPARSE_GEO/0/transforms_with_depth.json $COLMAP_NERF_DIR/transforms.json

@@ -7,7 +7,6 @@ def add_depth_paths(json_path, output_path):
     with open(json_path, 'r') as f:
         data = json.load(f)
 
-    pdb.set_trace()
     for frame in data.get('frames', []):
         color_path = frame.get('file_path')
         if color_path:
