@@ -91,9 +91,10 @@ fi
 # Step 4: Need to prepare for using depth images - means copying the sparse_geo files to the home directory
 #           and setting up symbolic links for the colmap/sparse directories
 if [[ -f $SPARSE_GEO/0/transforms.json ]];then 
+    cmd="python $PYTHON_HOME/add_depth_to_transforms.py $SPARSE_GEO/transforms.json $SPARSE_GEO/transforms_with_depth.json"
     rm -rf $COLMAP_NERF_DIR/colmap/sparse
     ln -s $SPARSE_GEO $COLMAP_NERF_DIR/colmap/sparse
-    cp $SPARSE_GEO/0/transforms.json $COLMAP_NERF_DIR/transforms.json
+    cp $SPARSE_GEO/0/transforms_with_depth.json $COLMAP_NERF_DIR/transforms.json
     cp $SPARSE_GEO/0/sparse_pc.ply $COLMAP_NERF_DIR/sparse_pc.ply
 fi
 
@@ -101,6 +102,7 @@ fi
 cd $BASE_DIR/
 rm -rf $COLMAP_NERF_DIR/images
 ln -s $COLOR_IMAGE_DIR $COLMAP_NERF_DIR/images
-cmd="ns-train splatfacto --data $COLMAP_NERF_DIR"
-echo "Run the following command from $BASE_DIR to start training:"
-echo $cmd
+cmd="ns-train splatfacto --data nerf_colmap"
+echo "Run one of the following commands from the $BASE_DIR to start training:"
+echo "1) ns-train splatfacto --data nerf_colmap"
+echo "2) ns-train depth-nerfacto --data nerf_colmap"
