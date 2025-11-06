@@ -7,6 +7,7 @@ NEW_DIR_ROOT=$2 #this is the root directory that should contain color/ and depth
 
 COLMAP_DIR=${NEW_DIR_ROOT}/colmap_combined
 IMAGE_DIR=${NEW_DIR_ROOT}/images_combined
+NEW_POSE_FILE=$INITIAL_DIR/camera_pose.txt
 
 #This needs to be changed to point to your vocab tree file - which can be downloaded from
 #      https://github.com/colmap/colmap/releases/download/3.11.1/vocab_tree_flickr100K_words1M.bin
@@ -45,7 +46,7 @@ eval $cmd
 echo "6. Alignment with Robot pose model - Requires a robot pose list retrieved from ROS (image_name X1 Y1 Z1)"
 COLMAP_GEO=${COLMAP_DIR}/sparse_geo
 mkdir $COLMAP_GEO
-echo "colmap model_aligner --input_path ${COLMAP_MODEL} --output_path ${COLMAP_GEO} --alignment_max_error 1 --ref_is_gps 0 --ref_images_path ${INITIAL_DIR}/pose.txt"
+echo "colmap model_aligner --input_path ${COLMAP_MODEL} --output_path ${COLMAP_GEO} --alignment_max_error 1 --ref_is_gps 0 --ref_images_path ${NEW_POSE_FILE}"
 
 echo "7. Convert the binary model to txt"
 echo "colmap model_converter --input_path ${COLMAP_GEO} --output_path ${COLMAP_GEO} --output_type TXT"
