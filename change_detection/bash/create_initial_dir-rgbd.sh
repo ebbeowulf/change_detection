@@ -88,7 +88,7 @@ if [[ ! -f $SPARSE_GEO/0/images.bin ]];then
     eval $cmd
 
     # Now, add depth image paths to the transforms.json file
-    cmd="python $PYTHON_HOME/add_depth_to_transforms.py $SPARSE_GEO/transforms.json $SPARSE_GEO/transforms_with_depth.json"
+    cmd="python $PYTHON_HOME/add_depth_to_transforms.py $SPARSE_GEO/0/transforms.json $SPARSE_GEO/0/transforms_with_depth.json"
     echo $cmd
     eval $cmd
 fi
