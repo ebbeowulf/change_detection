@@ -1,2 +1,0 @@
-[console_scripts]
-segmentation-utils-cli = segmentation_utils.cli:main
