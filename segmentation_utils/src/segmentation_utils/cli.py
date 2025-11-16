@@ -31,7 +31,7 @@ def main():
     segment_parser.add_argument(
         "--model",
         type=str,
-        choices=["yolo", "dino", "clip"],
+        choices=["yolo", "yolo-world", "dino", "clip"],
         default="yolo",
         help="Which segmentation model to use (default: yolo)"
     )
@@ -51,6 +51,13 @@ def main():
         type=float,
         default=0.5,
         help="Detection threshold (default: 0.5)"
+    )
+    segment_parser.add_argument(
+        "--tgt-class",
+        type=str,
+        nargs="+",
+        default=[],
+        help="Target classes/prompts for yolo-world, dino, or clip models (space-separated)"
     )
     
     # Example subcommand: list-models
@@ -76,16 +83,31 @@ def cmd_segment(args):
         return 1
     
     try:
-        # Example: instantiate the appropriate model and process
+        # Instantiate the appropriate model and process
         if args.model == "yolo":
             from segmentation_utils.yolo_segmentation import yolo_segmentation
             model = yolo_segmentation()
+        elif args.model == "yolo-world":
+            from segmentation_utils.yolo_world_segmentation import yolo_world_segmentation
+            if not args.tgt_class:
+                print("Error: yolo-world requires --tgt-class (target classes)", file=sys.stderr)
+                return 1
+            model = yolo_world_segmentation(prompts=args.tgt_class)
         elif args.model == "dino":
             from segmentation_utils.dino_segmentation import dino_segmentation
-            model = dino_segmentation()
+            if not args.tgt_class:
+                print("Error: dino requires --tgt-class (target classes)", file=sys.stderr)
+                return 1
+            model = dino_segmentation(prompts=args.tgt_class)
         elif args.model == "clip":
-            from segmentation_utils.clip_segmentation import clip_segmentation
-            model = clip_segmentation()
+            from segmentation_utils.clip_segmentation import clip_seg
+            if not args.tgt_class:
+                print("Error: clip requires --tgt-class (target classes)", file=sys.stderr)
+                return 1
+            model = clip_seg(prompts=args.tgt_class)
+        else:
+            print(f"Error: Unknown model {args.model}", file=sys.stderr)
+            return 1
         
         # Process the file
         model.process_file(str(image_path), threshold=args.threshold, save_fileName=args.output)
@@ -97,15 +119,18 @@ def cmd_segment(args):
         return 0
     except Exception as e:
         print(f"Error during segmentation: {e}", file=sys.stderr)
+        import traceback
+        traceback.print_exc()
         return 1
 
 
 def cmd_list_models(args):
     """List available segmentation models."""
     models = [
-        "yolo - YOLO segmentation",
-        "dino - DINO object detection and segmentation",
-        "clip - CLIP-based segmentation"
+        "yolo - YOLO segmentation (no prompts needed)",
+        "yolo-world - YOLO-World with custom prompts (requires --tgt-class)",
+        "dino - DINO object detection (requires --tgt-class)",
+        "clip - CLIP semantic segmentation (requires --tgt-class)"
     ]
     print("Available segmentation models:")
     for model in models:

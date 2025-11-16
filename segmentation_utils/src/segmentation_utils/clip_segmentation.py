@@ -99,13 +99,12 @@ class clip_seg(image_segmentation):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('image',type=str,help='location of image to process')
-    parser.add_argument('--targets', type=str, nargs='*', default=None,
-                    help='Set of target classes to build point clouds for')
+    parser.add_argument('tgt_class',type=str,help='specific object class to display')
     parser.add_argument('--threshold',type=float,default=0.2,help='(optional) threshold to apply during computation ')
     parser.add_argument('--options', type=str, default=None, help="Other options: PIL = open with PIL library, CV2 = open with opencv library, CV2_ROTATE = open with opencv and rotate during clip processing")
     args = parser.parse_args()
 
-    CS=clip_seg(args.targets)
+    CS=clip_seg([args.tgt_class])
 
     if args.options is None or args.options=="PIL":
         image=CS.process_file(args.image, threshold=args.threshold)

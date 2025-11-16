@@ -1,7 +1,7 @@
 from ultralytics import YOLO, SAM
 import pdb
 import cv2
-from change_detection.segmentation import image_segmentation
+from segmentation_utils.segmentation import image_segmentation
 import argparse
 import cv2
 import numpy as np
@@ -176,7 +176,7 @@ class yolo_world_segmentation(image_segmentation):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('image',type=str,help='location of image to process')
-    parser.add_argument('--tgt-class',type=str,default=None,help='specific object class to display')
+    parser.add_argument('tgt_class',type=str,default=None,help='specific object class to display')
     parser.add_argument('--threshold',type=float,default=0.25,help='threshold to apply during computation')
     args = parser.parse_args()
 

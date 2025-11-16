@@ -9,8 +9,7 @@ import torch
 import cv2
 import numpy as np
 import argparse
-# from change_detection.segmentation import image_segmentation
-from segmentation import image_segmentation
+from segmentation_utils.segmentation import image_segmentation
 from PIL import Image
 import pdb
 import pickle
