@@ -11,7 +11,6 @@ import numpy as np
 import argparse
 from segmentation_utils.segmentation import image_segmentation
 from PIL import Image
-import pdb
 import pickle
 import sys
 
