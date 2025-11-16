@@ -1,0 +1,62 @@
+This work requires two different data streams:
+1) Initial - the initial recording that we will be creating a NeRF model from
+2) Changed - the second recording that we are investigating to find/identify Changed
+
+*** Step 1 - Create the file structure ***
+In the original work, images were generated from a ROS bagfile using the associated rgbd_image_saver.py. Resulting files were then stored in the following directory structure:
+
+initial -
+   color - rgb_*.png
+   depth - depth_*.png
+   images.txt - the pose reported by the ros tf library
+changed - 
+   color - rgb_*.png
+   depth - depth_*.png
+   images.txt - the pose reported by the ros tf library
+
+Note that it is important that your color images are named "rgb_{image #}.png" or else 
+you will have trouble running some of the following scripts
+*** Step 2 - Train the NeRF model for the initial set of images ***
+Create a conda environment, setup nerf
+
+conda create -n nerfstudio3 python=3.8
+conda activate nerfstudio3
+pip install nerfstudio==1.1.0
+
+Follow the instructions on the nerfstudio website to train a new model
+
+ns-process-data images --data initial/color --output-dir initial/nerf_initial
+ns-train nerfacto --data initial/nerf_initial
+
+*** Step 3 - Prepare the directory for change estimation ***
+Run the associated bash scripts to prepare the directory and register images
+
+If you have robot data, then run the following
+change_detection/bash/register_new_images.sh initial/nerf_initial depth
+
+Note that this will try to rotate all of your color images by default since the images from the robot are rotated by 90 degrees. Also note that the last two steps of this process are not automated. You will need to run them by hand as per the directions echoed to the terminal.
+
+I have also created a new file to run if you do not have robot data:
+change_detection/bash/register_new_images-nodepth.sh ${INITIAL_NERF_DIR} ${CHANGE_DATA_DIR}
+
+*** Step 3 - Create the data transforms file ***
+If you have robot data, then run:
+python colmap_to_json.py $TARGET_DIR/colmap_combined/sparse_geo $TARGET_DIR
+
+Without robot data, run:
+python colmap_to_json.py $TARGET_DIR/colmap_combined/sparse_combined $TARGET_DIR
+
+*** Step 4 - Create all images from the NeRF model***
+python ~/ros_ws/src/research/change_detection/scripts/change_detection/render_transform.py ${NERF_MODEL_DIR} ${CHANGE_DATA_DIR} ${RENDERS_DIR}
+
+Note that you need to run this file from the root workspace from which you ran ns-train. So, for instance, I ran ns-train in my projects/nerfstudio directory, so I have to run this file as follows:
+python ~/ros_ws/src/research/change_detection/scripts/change_detection/render_transform.py outputs/nerf_no_person_initial/nerfacto/2024-05-21_204931/ /data2/datasets/office/no_person/monitor /data2/datasets/office/no_person/monitor/renders
+
+*** Step 5 - Visualize Change Detection ***
+Compare any two files using test_single_pair.py. 
+
+python test_single_pair.py ${START_IMAGE} ${CHANGE_IMAGE} ${CLIPS_QUERY} --threshold ${FIXED_THRESHOLD}
+
+This always searches for positive change (i.e. CHANGE_IMAGE - START_IMAGE). To reverse, change the order of the inputs. You can also input a percentage threshold that finds change relative to the detected max delta. Note, however, that such percentage thresholds require knowing in advance that 
+
+python test_single_pair.py ~/change_detection/plants/weed1/color/rgb_0010.png ~/change_detection/plants/weed1/renders/rgb_0010.png "unwanted weed" --pct_threshold 0.9
