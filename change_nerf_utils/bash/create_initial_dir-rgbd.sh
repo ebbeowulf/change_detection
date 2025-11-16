@@ -87,7 +87,6 @@ if [[ ! -f $SPARSE/0/images.bin ]];then
     echo $cmd
     eval $cmd
 fi
-exit 1
 
 # Step 2.5 - Identify the sparse directory with the best coverage of the initial poses
 #   note that we only check the 0 + 1 directories. If >1 exists, then it won't be used

@@ -3,8 +3,10 @@
 # Before running this, need to run create_initial_dir-rgbd.sh to build the default colmap pipeline
 
 #Check if CHANGE_HOME is set
-set -euo pipefail
-source is_home_set.sh
+if ! source is_home_set.sh; then
+    echo "Failed to source is_home_set.sh" >&2
+    exit 1
+fi
 PYTHON_HOME=$CHANGE_HOME/change_nerf_utils/src/change_nerf_utils
 
 
