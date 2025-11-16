@@ -17,9 +17,9 @@ This work requires two different data streams:
 1) Initial - the initial recording that we will be creating a NeRF model from
 2) Changed - the second recording that we are investigating to find/identify Changed
 
-*** Step 1 - Create the file structure ***
+*** Step 1 - Create the file structure ***:
 In the original work, images were generated from a ROS bagfile using the associated rgbd_image_saver.py. 
-Resulting files were then stored in the following directory structure:
+Resulting files were then stored in the following directory structure
 
 INITIAL_DATA_DIR -
    color - rgb_*.png
@@ -40,24 +40,27 @@ cd change_nerf_utils/bash
 or
 ./create_initial_dir-specAI.sh ${INITIAL_DATA_DIR} # for data captured using the Spectacular AI app on a phone
 
-Note that these will require that your environment variables are set as follows:
+Note that these will require that your environment variables are set as follows
 export CHANGE_HOME={path to root of github repo}
 
-*** Step 3 - Train the NeRF model ***
-Run one of the following commands from your INITIAL_DATA_DIR to start training:"
+*** Step 3 - Train the NeRF model ***:
+Run one of the following commands from your INITIAL_DATA_DIR to start training
 1) ns-train splatfacto --data nerf_colmap
 2) ns-train depth-nerfacto --data nerf_colmap
 
-*** Step 4 - Build a set of images from the changed data for change detection ***
+*** Step 4 - Build a set of images from the changed data for change detection ***:
 Run the associated bash scripts to prepare the directory and register images.
-If you have robot data, then run the following from the bash directory:
+If you have robot data, then run the following from the bash directory
+
 ./register_new_images.sh INITIAL_DATA_DIR/nerf_colmap CHANGE_DATA_DIR
 
-or if you do not have robot data, run:
+or if you do not have robot data, run
+
 ./register_new_images-nodepth.sh INITIAL_DATA_DIR/nerf_colmap CHANGE_DATA_DIR
 
 *** Step 5 - Generate the images from the NeRF model for change detection ***
 Run the following command from bash:
+
 ./generate_nerfstudio_image.sh NERF_MODEL_DIR CHANGE_DATA_DIR RENDERS_DIR
 
 where 

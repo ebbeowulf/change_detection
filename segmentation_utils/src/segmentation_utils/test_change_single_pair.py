@@ -126,13 +126,13 @@ if __name__ == '__main__':
 
     prompts=[args.prompt]
     if args.model=='clipseg':
-        from clip_segmentation import clip_seg
+        from segmentation_utils.clip_segmentation import clip_seg
         CSmodel=clip_seg(prompts)
     elif args.model=='yolo-world':
-        from yolo_world_segmentation import yolo_world_segmentation
+        from segmentation_utils.yolo_world_segmentation import yolo_world_segmentation
         CSmodel=yolo_world_segmentation(prompts)
     elif args.model=='dino':
-        from dino_segmentation import dino_segmentation
+        from segmentation_utils.dino_segmentation import dino_segmentation
         CSmodel=dino_segmentation(prompts)
 
     image1=Image.open(args.image1)
@@ -162,29 +162,6 @@ if __name__ == '__main__':
             im_out[:,:,2][mask_combo]=255
             for bbox in sboxes:
                 im_out=cv2.rectangle(im_out, bbox[1][:2], bbox[1][2:], (0,0,255), 2)
-
-    # if delta.max()>args.threshold and args.use_sam:
-    #     pdb.set_trace()
-    #     from ultralytics import SAM
-    #     sam_model = SAM('sam2.1_l.pt')  # load an official model      
-        # sam_results = sam_model(image1, bboxes=yolo_results[0].boxes.xyxy)
-        # sam_results[0].class_ids=yolo_results[0].boxes.cls
-        # sam_results[0].confs=yolo_results[0].boxes.conf
-
-    # if args.threshold is not None:     
-    #     mask=(delta>args.threshold).astype(np.uint8)
-    # elif args.pct_threshold is not None:
-    #     thresh=delta.max()*(args.pct_threshold)
-    #     mask=(delta>thresh).astype(np.uint8)
-    # else:
-    #     print("Must use either threshold or fixed threshold")
-    #     import sys
-    #     sys.exit(-1)
-
-    # d_mask = (1-mask).astype(np.uint8)
-    # red_image=np.ones(image2.shape,dtype=np.uint8)
-    # red_image[:,:,2]=255
-    # pos=cv2.bitwise_and(image2,image2,mask=d_mask)+cv2.bitwise_and(red_image,red_image,mask=mask)
 
     im_out[:,:,:3]=im_out[:,:,[2,1,0]]
     if im_out.shape[1]>480:

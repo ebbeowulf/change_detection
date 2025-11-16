@@ -3,11 +3,8 @@ import os
 import sys
 import numpy as np
 from scipy.spatial.transform import Rotation as R
-from rgbd_file_list import rgbd_file_list
-from change_detection.camera_params import camera_params
-
-import pdb
-# from change_detection.change_detect_common import image_comparator
+from change_pcloud_utils.rgbd_file_list import rgbd_file_list
+from change_pcloud_utils.camera_params import camera_params
 
 ## Build the camera parameter data structure from cameras.txt
 def get_camera_params(colmap_dir, nerfstudio_dir):

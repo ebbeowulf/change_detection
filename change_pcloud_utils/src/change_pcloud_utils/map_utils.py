@@ -8,14 +8,12 @@ import cv2
 import os
 import pdb
 import sys
-scripts_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..', 'change_detection', 'scripts'))
-sys.path.append(scripts_path)
-from change_detection.segmentation import image_segmentation
+from segmentation_utils.segmentation import image_segmentation
 from rgbd_file_list import rgbd_file_list
-from change_detection.camera_params import camera_params
+from change_pcloud_utils.camera_params import camera_params
 import copy
 from sklearn.cluster import DBSCAN
-from farthest_point_sampling.fps import farthest_point_sampling
+from change_pcloud_utils.farthest_point_sampling.fps import farthest_point_sampling
 import time
 
 DBSCAN_MIN_SAMPLES=20 
@@ -31,7 +29,7 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 #   across all files. Will only load existing pkl files, not 
 #   create any new ones
 def clip_threshold_evaluation(fList:rgbd_file_list, clip_targets:list, proposed_threshold:float):
-    from change_detection.clip_segmentation import clip_seg
+    from segmentation_utils.clip_segmentation import clip_seg
 
     YS=clip_seg(clip_targets)
     image_list=[]
@@ -54,7 +52,7 @@ def clip_threshold_evaluation(fList:rgbd_file_list, clip_targets:list, proposed_
 #   across all files. Will only load existing pkl files, not 
 #   create any new ones
 def create_yolo_object_list(fList:rgbd_file_list):
-    from change_detection.yolo_segmentation import yolo_segmentation
+    from segmentation_utils.yolo_segmentation import yolo_segmentation
 
     YS=yolo_segmentation()
     obj_list=dict()
@@ -346,15 +344,15 @@ class pcloud_from_images():
         # Something missing - update required
         if is_update_required:
             if classifier_type=='clipseg':
-                from change_detection.clip_segmentation import clip_seg
+                from segmentation_utils.clip_segmentation import clip_seg
                 self.YS=clip_seg(tgt_class_list)
                 self.classifier_type=classifier_type
             elif classifier_type=='yolo_world':
-                from change_detection.yolo_world_segmentation import yolo_world_segmentation
+                from segmentation_utils.yolo_world_segmentation import yolo_world_segmentation
                 self.YS=yolo_world_segmentation(tgt_class_list)
                 self.classifier_type=classifier_type
             elif classifier_type=='yolo':
-                from change_detection.yolo_segmentation import yolo_segmentation
+                from segmentation_utils.yolo_segmentation import yolo_segmentation
                 self.YS=yolo_segmentation(tgt_class_list)
                 self.classifier_type=classifier_type
 
