@@ -1,3 +1,10 @@
+# Utility functions for working with COLMAP data
+# Include:
+#   - get_camera_params: extract camera intrinsics from COLMAP files
+#   - get_all_poses: extract camera poses from COLMAP files
+#   - build_file_list: create a rgbd_file_list object from COLMAP data
+#   - build_rendered_file_list: create a rgbd_file_list for rendered images
+
 import json
 import os
 import sys

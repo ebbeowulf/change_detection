@@ -1,8 +1,18 @@
-from map_utils import identify_related_images_global_pose, DEVICE, pointcloud_open3d, get_distinct_clusters, object_pcloud
+# Utility functions for clustering point clouds.
+# Includes:
+#   - merge_clusters: merge nearby clusters based on distance
+#   - merge_by_bounding_box: merge clusters based on bounding box overlap in images
+#   - create_and_merge_clusters: create clusters from point cloud and merge nearby ones
+#   - build_change_cluster_images: generate labeled images for each cluster of change
+#   - count_points_in_box: count points within a bounding box
+#   - truncate_point: truncate point coordinates to be within image bounds
+#   - expand_bbox: expand a bounding box by a multiplier
+
+from map_utils import identify_related_images_global_pose, DEVICE, get_distinct_clusters, object_pcloud
 import numpy as np
 import open3d as o3d
 from rgbd_file_list import rgbd_file_list
-from change_detection.camera_params import camera_params
+from change_pcloud_utils.camera_params import camera_params
 
 ABSOLUTE_MIN_CLUSTER_SIZE=100
 

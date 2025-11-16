@@ -1,3 +1,5 @@
+# Convert a point cloud to a mesh using either Poisson surface reconstruction or Ball Pivoting
+
 import open3d as o3d
 import argparse
 import numpy as np

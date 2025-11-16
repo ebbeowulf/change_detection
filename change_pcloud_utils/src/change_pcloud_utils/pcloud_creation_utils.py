@@ -1,8 +1,17 @@
+# Common utilities for creating point clouds from RGB-D images
+#   Includes:
+#   - pcloud_base: parent class with common utilities for point cloud creation
+#   - pcloud_openVocab: child class for open-vocabulary point cloud creation
+#   - build_dbscan_boxes: utility function to build boxes around clusters in 2D images
+#   - box_iou: utility function to compute intersection-over-union for boxes
+#   - is_box_overlap: utility function to check for box overlap
+#   - estimate_blur: utility function to estimate image blur
+
 import torch
-from rgbd_file_list import rgbd_file_list
+from change_pcloud_utils.rgbd_file_list import rgbd_file_list
 import numpy as np
 import cv2
-from map_utils import get_rotated_points, DEVICE, connected_components_filter, get_center_point
+from change_pcloud_utils.map_utils import get_rotated_points, DEVICE, connected_components_filter, get_center_point
 import os
 import sys
 

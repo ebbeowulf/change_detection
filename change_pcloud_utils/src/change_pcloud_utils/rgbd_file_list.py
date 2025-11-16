@@ -1,3 +1,5 @@
+# Utility class for managing RGB-D file lists and associated metadata
+
 import copy
 import numpy as np
 

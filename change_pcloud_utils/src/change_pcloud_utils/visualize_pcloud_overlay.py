@@ -1,10 +1,12 @@
+# Utility script to visualize a primary point cloud with an overlay from a secondary point cloud stored in a pickle file.
+
 import argparse
 import open3d as o3d
 import pdb
 import os
 import pickle as pkl
 import numpy as np
-from map_utils import pointcloud_open3d
+#from change_pcloud_utils.map_utils import pointcloud_open3d
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()

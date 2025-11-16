@@ -1,15 +1,12 @@
+# Builds the point clouds representing changes detected between two sets of images
+#    and then clusters the changes and generates labeled images for each cluster
+# Requires that the images have already been processed using the change_nerf_utils
+
 import argparse
-from pcloud_creation_utils import build_pclouds
-from pcloud_cluster_utils import build_change_cluster_images
+from change_pcloud_utils.pcloud_creation_utils import build_pclouds
+from change_pcloud_utils.pcloud_cluster_utils import build_change_cluster_images
 import numpy as np
-import os
-import sys
-
-scripts_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..', 'change_detection', 'scripts', 'change_detection'))
-sys.path.append(scripts_path)
-
-from colmap_utils import get_camera_params, build_file_list, build_rendered_file_list
-
+from change_pcloud_utils.colmap_utils import get_camera_params, build_file_list, build_rendered_file_list
 
 def setup_change_experiment():
     parser = argparse.ArgumentParser()

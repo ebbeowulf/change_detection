@@ -1,4 +1,7 @@
-from map_from_robot import build_file_structure, load_camera_info
+# Visualize robot RGB-D data as a combined point cloud - 
+#   used to build point clouds from the robot pose file instead of using 
+#   the recovered colmap poses -- CURRENTLY BROKEN
+
 from map_utils import visualize_combined_xyzrgb
 import argparse
 

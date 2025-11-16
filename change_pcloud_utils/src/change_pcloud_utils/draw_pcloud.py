@@ -1,3 +1,6 @@
+# Utility class for drawing point clouds onto a 2D image
+#    Pointclouds are in the open3d format
+
 import numpy as np
 import copy
 import cv2
