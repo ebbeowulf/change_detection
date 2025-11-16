@@ -3,15 +3,17 @@
 #This is for processing a recording from the spectacular AI app, aligning it with a prior recording,
 # and generating the necessary depth images. A visualization is generated as a tool
 # to demonstrate a successful alignment
-CHANGE_HOME=/home/emartinso/ros_ws/src/research/change_detection
-BASH_HOME=${CHANGE_HOME}/bash
-PYTHON_HOME=${CHANGE_HOME}/scripts/change_detection
-PCLOUD_PYTHON_HOME=/home/emartinso/ros_ws/src/research/pcloud_models/scripts/pcloud_models
-#BASE_NERFSTUDIO_DIR="/home/emartinso/data/living_room/INITIAL/specAI_morning/nerf_specAI2colmap_v2/"
-BASE_COLMAP_DIR="colmap/sparse/0"
-#CONFIG_DIR="outputs/splatfacto/2025-06-26_175947/"
+
+
+#Check if CHANGE_HOME is set
+set -euo pipefail
+source is_home_set.sh
+
+BASH_HOME=$CHANGE_HOME/change_nerf_utils/bash
+PYTHON_HOME=$CHANGE_HOME/change_nerf_utils/src/change_nerf_utils
 
 # Recover the initial nerfstudio directory and the config directory
+BASE_COLMAP_DIR="colmap/sparse/0"
 BASE_CONFIG_DIR=$1
 delimiter="outputs"
 BASE_NERFSTUDIO_DIR="${BASE_CONFIG_DIR%$delimiter*}"
@@ -123,7 +125,7 @@ colmap model_converter --input_path ${GEO_COLMAP_DIR} --output_path ${GEO_COLMAP
 
 echo ""
 echo "STEP 8 - visualize the results"
-echo "Run from $(pwd)"
-echo "python ${PCLOUD_PYTHON_HOME}/visualize_colmap.py ${BASE_NERFSTUDIO_DIR}/${CONFIG_DIR} ${SAVE_DIR} --frame_keyword new_frame"
+echo "Run from ${CHANGE_HOME}/change_pcloud_utils/"
+echo "python change_pcloud_utils/visualize_colmap.py ${BASE_NERFSTUDIO_DIR}/${CONFIG_DIR} ${SAVE_DIR} --frame_keyword new_frame"
 
 

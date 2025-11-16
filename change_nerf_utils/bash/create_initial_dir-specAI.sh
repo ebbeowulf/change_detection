@@ -1,8 +1,14 @@
 #!/bin/bash
 
-CHANGE_HOME=/home/emartinso/ros_ws/src/research/change_detection
-BASH_HOME=$CHANGE_HOME/bash
-PYTHON_HOME=$CHANGE_HOME/scripts/change_detection                                                                                                                                                         
+#Check if CHANGE_HOME is set
+if ! source is_home_set.sh; then
+    echo "Failed to source is_home_set.sh" >&2
+    exit 1
+fi
+
+BASH_HOME=$CHANGE_HOME/change_nerf_utils/bash
+PYTHON_HOME=$CHANGE_HOME/change_nerf_utils/src/change_nerf_utils
+
 RECORDING=$1                                                                                          
 cd $RECORDING/..
 BASE_DIR=$(pwd) # Process the recording...

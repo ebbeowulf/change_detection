@@ -4,8 +4,11 @@
 # CONFIG_DIR="outputs/nerf_no_person_initial/nerfacto/2024-01-04_035029/"
 # SCRIPTS_DIR="$(pwd)/../scripts/"
 
-CHANGE_HOME="$(pwd)/../"
-SCRIPTS_DIR=${CHANGE_HOME}/scripts/change_detection
+#Check if CHANGE_HOME is set
+set -euo pipefail
+source is_home_set.sh
+
+PYTHON_HOME=$CHANGE_HOME/change_nerf_utils/src/change_nerf_utils
 
 BASE_CONFIG_DIR=$1
 TARGET_DIR=$2
@@ -22,7 +25,7 @@ cd $BASE_NERFSTUDIO_DIR
 # Do we have the transforms.json file already?
 transforms=$TARGET_DIR/transforms.json
 if [[ ! -f $transforms ]];then
-    cmd="python $SCRIPTS_DIR/colmap_to_json.py $TARGET_DIR/colmap_combined/sparse_geo/0 $TARGET_DIR"
+    cmd="python $PYTHON_HOME/colmap_to_json.py $TARGET_DIR/colmap_combined/sparse_geo/0 $TARGET_DIR"
     echo $cmd
     eval $cmd
 fi
@@ -33,7 +36,7 @@ if [[ ! -d $RENDER_SAVE_DIR ]];then
 fi
 
 # Render the image(s)
-cmd="python $SCRIPTS_DIR/render_transform.py $CONFIG_DIR $transforms $RENDER_SAVE_DIR --image-type all --name-filter $IMAGE_NAME"
+cmd="python $PYTHON_HOME/render_transform.py $CONFIG_DIR $transforms $RENDER_SAVE_DIR --image-type all --name-filter $IMAGE_NAME"
 echo $cmd
 eval $cmd
 

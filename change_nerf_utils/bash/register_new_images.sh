@@ -1,6 +1,12 @@
 #!/bin/bash
 
-# Before running this, need to run ns-process-data to build the default colmap pipeline
+# Before running this, need to run create_initial_dir-rgbd.sh to build the default colmap pipeline
+
+#Check if CHANGE_HOME is set
+set -euo pipefail
+source is_home_set.sh
+PYTHON_HOME=$CHANGE_HOME/change_nerf_utils/src/change_nerf_utils
+
 
 INITIAL_DIR=$1 #this is the nerf data directory that contains colmap/
 NEW_DIR_ROOT=$2 #this is the root directory that should contain color/ and depth/ subdirs
@@ -8,13 +14,19 @@ NEW_DIR_ROOT=$2 #this is the root directory that should contain color/ and depth
 COLMAP_DIR=${NEW_DIR_ROOT}/colmap_combined
 IMAGE_DIR=${NEW_DIR_ROOT}/images_combined
 OLD_POSE_FILE=${INITIAL_DIR}/../camera_pose.txt
-PYTHON_HOME=../scripts/change_detection  
 
 #This needs to be changed to point to your vocab tree file - which can be downloaded from
 #      https://github.com/colmap/colmap/releases/download/3.11.1/vocab_tree_flickr100K_words1M.bin
-#VOCAB_TREE="/data2/datasets/office/vocab_tree_flickr100K_words256K.bin"
-# VOCAB_TREE="/data2/datasets/office/vocab_tree_flickr100K_words32K.bin"
-VOCAB_TREE="/data2/datasets/office/vocab_tree_flickr100K_words1M.bin"
+VOCAB_TREE_VERSION="1M" #options are 32K, 256K, 1M
+VOCAB_TREE="${CHANGE_HOME}/data/vocab_tree_flickr100K_words${VOCAB_TREE_VERSION}.bin"
+if [[ ! -f $VOCAB_TREE ]]; then
+    mkdir -p ${CHANGE_HOME}/data
+    echo "VOCAB_TREE file not found at $VOCAB_TREE - downloading"
+    LOCAL_VOCAB_FILE="vocab_tree_flickr100K_words${VOCAB_TREE_VERSION}.bin"
+    cmd="wget https://github.com/colmap/colmap/releases/download/3.11.1/$LOCAL_VOCAB_FILE -O $VOCAB_TREE"
+    echo $cmd
+    eval $cmd
+fi
 
 # Convert the initial pose file into a format COLMAP can use
 NEW_POSE_FILE=$NEW_DIR_ROOT/camera_pose.txt

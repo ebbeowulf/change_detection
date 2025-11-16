@@ -1,14 +1,21 @@
 #!/bin/bash
 
-CHANGE_HOME=/home/emartinso/ros_ws/src/research/change_detection
-BASH_HOME=$CHANGE_HOME/bash
-PYTHON_HOME=$CHANGE_HOME/scripts/change_detection                                                                                                                                                         
+#Check if CHANGE_HOME is set
+if ! source is_home_set.sh; then
+    echo "Failed to source is_home_set.sh" >&2
+    exit 1
+fi
+
+BASH_HOME=$CHANGE_HOME/change_nerf_utils/bash
+PYTHON_HOME=$CHANGE_HOME/change_nerf_utils/src/change_nerf_utils
 BASE_DIR=$1
 ROTATE_IMAGES=${2:-1} # by default rotate images
 COLMAP_NERF_DIR=$BASE_DIR/nerf_colmap
+mkdir -p $COLMAP_NERF_DIR
 
 echo "ROTATE_IMAGES = $ROTATE_IMAGES"
 
+# Need to rotate images if they were captured on the stretch robot
 if [[ $ROTATE_IMAGES -ne 0 ]]; then
     echo "Step 0 - Rotate images by 90 degrees"
     ROTATED_COLOR_DIR=${BASE_DIR}/color_rotated
@@ -35,6 +42,19 @@ rm $COLMAP_NERF_DIR/depth
 ln -s $DEPTH_IMAGE_DIR $COLMAP_NERF_DIR/depth
 ln -s $COLOR_IMAGE_DIR $COLMAP_NERF_DIR/images
 
+#This needs to be changed to point to your vocab tree file - which can be downloaded from
+#      https://github.com/colmap/colmap/releases/download/3.11.1/vocab_tree_flickr100K_words1M.bin
+VOCAB_TREE_VERSION="1M" #options are 32K, 256K, 1M
+VOCAB_TREE="${CHANGE_HOME}/data/vocab_tree_flickr100K_words${VOCAB_TREE_VERSION}.bin"
+if [[ ! -f $VOCAB_TREE ]]; then
+    mkdir -p ${CHANGE_HOME}/data
+    echo "VOCAB_TREE file not found at $VOCAB_TREE - downloading"
+    LOCAL_VOCAB_FILE="vocab_tree_flickr100K_words${VOCAB_TREE_VERSION}.bin"
+    cmd="wget https://github.com/colmap/colmap/releases/download/3.11.1/$LOCAL_VOCAB_FILE -O $VOCAB_TREE"
+    echo $cmd
+    eval $cmd
+fi
+
 # Step 1: Convert the initial pose file into a format COLMAP can use
 NEW_POSE_FILE=$BASE_DIR/camera_pose.txt
 cmd="python ${PYTHON_HOME}/generate_initial_poses.py $BASE_DIR/poses.csv $NEW_POSE_FILE"
@@ -44,6 +64,7 @@ eval $cmd
 # Step 2: Run the image registration step using the built-in nerfstudio tool
 cd $BASE_DIR/
 SPARSE=$COLMAP_NERF_DIR/colmap/sparse_orig
+mkdir -p $SPARSE
 ln -s $SPARSE $COLMAP_NERF_DIR/colmap/sparse # temporary link for processing - will be removed later
 
 if [[ ! -f $SPARSE/0/images.bin ]];then
@@ -53,8 +74,6 @@ if [[ ! -f $SPARSE/0/images.bin ]];then
 
     # Alternative method that loads data via colmap without the ns-process-data step
     COLMAP_DB=$COLMAP_NERF_DIR/colmap/database.db
-    VOCAB_TREE="/data2/datasets/office/vocab_tree_flickr100K_words1M.bin"   # no longer supported with colmab 3.12
-    # VOCAB_TREE="/data2/datasets/office/vocab_tree_flickr100K_words256K.bin"
 
     cmd="colmap feature_extractor --database_path $COLMAP_DB --image_path $COLOR_IMAGE_DIR --ImageReader.single_camera 1 --SiftExtraction.use_gpu 1 --ImageReader.camera_model OPENCV"
     echo $cmd
@@ -68,6 +87,7 @@ if [[ ! -f $SPARSE/0/images.bin ]];then
     echo $cmd
     eval $cmd
 fi
+exit 1
 
 # Step 2.5 - Identify the sparse directory with the best coverage of the initial poses
 #   note that we only check the 0 + 1 directories. If >1 exists, then it won't be used

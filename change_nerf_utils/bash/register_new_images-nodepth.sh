@@ -3,14 +3,24 @@
 # Before running this, need to run ns-process-data to build the default colmap pipeline
 # Also note the desired format for color images is rgb_<fixed width number>.png. Not following
 # this convention will cause problems with later methods (generate nerfstudio images)
-
 INITIAL_DIR=$1
 NEW_DIR_ROOT=$2
 
 COLMAP_DIR=${NEW_DIR_ROOT}/colmap_combined
 IMAGE_DIR=${NEW_DIR_ROOT}/images_combined
-#VOCAB_TREE="/data2/datasets/office/vocab_tree_flickr100K_words256K.bin"
-VOCAB_TREE="/data2/datasets/office/vocab_tree_flickr100K_words1M.bin"
+
+#This needs to be changed to point to your vocab tree file - which can be downloaded from
+#      https://github.com/colmap/colmap/releases/download/3.11.1/vocab_tree_flickr100K_words1M.bin
+VOCAB_TREE_VERSION="1M" #options are 32K, 256K, 1M
+VOCAB_TREE="${CHANGE_HOME}/data/vocab_tree_flickr100K_words${VOCAB_TREE_VERSION}.bin"
+if [[ ! -f $VOCAB_TREE ]]; then
+    mkdir -p ${CHANGE_HOME}/data
+    echo "VOCAB_TREE file not found at $VOCAB_TREE - downloading"
+    LOCAL_VOCAB_FILE="vocab_tree_flickr100K_words${VOCAB_TREE_VERSION}.bin"
+    cmd="wget https://github.com/colmap/colmap/releases/download/3.11.1/$LOCAL_VOCAB_FILE -O $VOCAB_TREE"
+    echo $cmd
+    eval $cmd
+fi
 
 echo "Step 1 - Preparing directory"
 echo "./prepare_dir-nodepth.sh $INITIAL_DIR $NEW_DIR_ROOT"
