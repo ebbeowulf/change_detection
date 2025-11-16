@@ -5,12 +5,7 @@ import pdb
 import os
 from colmap_utils import get_camera_params, build_file_list
 import sys
-
-# To import camera_params from change_detection, we need to modify sys.path
-scripts_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..', 'change_detection', 'scripts'))
-sys.path.append(scripts_path)
-
-from change_detection.camera_params import camera_params
+from camera_params import camera_params
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()

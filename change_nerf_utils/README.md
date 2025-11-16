@@ -1,8 +1,14 @@
 ----------------- How to install ---------------------
+Create a conda environment, setup nerf:
+
+conda create -n nerfstudio python=3.8
+conda activate nerfstudio
+pip install nerfstudio==1.1.0 # this is the version I used, but you can try newer versions as well
+
 Install the python package:
 pip install -e .
 
-or to update
+or to update:
 
 pip install -e . --force-reinstall --no-deps
 
@@ -27,14 +33,7 @@ CHANGE_DATA_DIR -
 Note that it is important that your color images are named rgb_{image #}.png or else 
 you will have trouble running some of the following scripts
 
-*** Step 2 - Train the NeRF model for the initial set of images ***
-Create a conda environment, setup nerf
-
-conda create -n nerfstudio python=3.8
-conda activate nerfstudio
-pip install nerfstudio==1.1.0 # this is the version I used, but you can try newer versions as well
-
-*** Step 3 - Use the bash utilities to prepare and train the NeRF model ***
+*** Step 2 - Use the bash utilities to prepare and train the NeRF model ***
 cd change_nerf_utils/bash
 ./create_initial_dir-rgbd.sh ${INITIAL_DATA_DIR} # for robot data with depth
 
@@ -44,12 +43,12 @@ or
 Note that these will require that your environment variables are set as follows:
 export CHANGE_HOME={path to root of github repo}
 
-*** Step 4 - Train the NeRF model ***
+*** Step 3 - Train the NeRF model ***
 Run one of the following commands from your INITIAL_DATA_DIR to start training:"
 1) ns-train splatfacto --data nerf_colmap
 2) ns-train depth-nerfacto --data nerf_colmap
 
-*** Step 5 - Build a set of images from the changed data for change detection ***
+*** Step 4 - Build a set of images from the changed data for change detection ***
 Run the associated bash scripts to prepare the directory and register images.
 If you have robot data, then run the following from the bash directory:
 ./register_new_images.sh INITIAL_DATA_DIR/nerf_colmap CHANGE_DATA_DIR
@@ -57,7 +56,7 @@ If you have robot data, then run the following from the bash directory:
 or if you do not have robot data, run:
 ./register_new_images-nodepth.sh INITIAL_DATA_DIR/nerf_colmap CHANGE_DATA_DIR
 
-*** Step 6 - Generate the images from the NeRF model for change detection ***
+*** Step 5 - Generate the images from the NeRF model for change detection ***
 Run the following command from bash:
 ./generate_nerfstudio_image.sh NERF_MODEL_DIR CHANGE_DATA_DIR RENDERS_DIR
 
@@ -70,11 +69,3 @@ where
 
 
 
-*** Step 5 - Visualize Change Detection ***
-Compare any two files using test_single_pair.py. 
-
-python test_single_pair.py ${START_IMAGE} ${CHANGE_IMAGE} ${CLIPS_QUERY} --threshold ${FIXED_THRESHOLD}
-
-This always searches for positive change (i.e. CHANGE_IMAGE - START_IMAGE). To reverse, change the order of the inputs. You can also input a percentage threshold that finds change relative to the detected max delta. Note, however, that such percentage thresholds require knowing in advance that 
-
-python test_single_pair.py ~/change_detection/plants/weed1/color/rgb_0010.png ~/change_detection/plants/weed1/renders/rgb_0010.png "unwanted weed" --pct_threshold 0.9
