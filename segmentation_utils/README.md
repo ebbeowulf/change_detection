@@ -1,4 +1,8 @@
 -------------- How to install -------------
+Make sure your torch version is installed already
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+
+
 Install the package from this directory:
 
 pip install -e .

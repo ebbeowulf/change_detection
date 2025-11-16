@@ -15,7 +15,7 @@ def setup_change_experiment():
     parser.add_argument('--color_dir',type=str,default='images_combined',help='where are the color images? (default=images_combined)')
     parser.add_argument('--renders_dir',type=str,default='renders',help='where are the rendered images? (default=renders)')
     parser.add_argument('--depth_dir',type=str,default='renders',help='where are the depth images? Use renders if nerfstudio generated. Or depth_rotated if from the robot (default=renders)')
-    parser.add_argument('--colmap_dir',type=str,default='colmap_combined/sparse_geo',help='where are the images + cameras.txt files? (default=colmap_combined/sparse)')
+    parser.add_argument('--colmap_dir',type=str,default='colmap_combined/sparse_geo/0',help='where are the images + cameras.txt files? (default=colmap_combined/sparse_geo/0)')
     parser.add_argument('--frame_keyword',type=str,default="new",help='a keyword to use when parsing the transforms file (default=new)')
     parser.add_argument('--save_dir',type=str,default='save_results', help='subdirectory of root_dir in which to store the intermediate files (default=save_results)')
     parser.add_argument('--queries', type=str, nargs='*', default=["General clutter", "Small items on surfaces", "Floor-level objects", "Decorative and functional items", "Trash items"],

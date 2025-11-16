@@ -6,12 +6,8 @@ import pickle
 import numpy as np
 import cv2
 import os
-import pdb
-import sys
-from segmentation_utils.segmentation import image_segmentation
-from rgbd_file_list import rgbd_file_list
+from change_pcloud_utils.rgbd_file_list import rgbd_file_list
 from change_pcloud_utils.camera_params import camera_params
-import copy
 from sklearn.cluster import DBSCAN
 from change_pcloud_utils.farthest_point_sampling.fps import farthest_point_sampling
 import time

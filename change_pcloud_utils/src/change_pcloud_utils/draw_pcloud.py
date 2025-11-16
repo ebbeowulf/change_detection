@@ -4,7 +4,6 @@
 import numpy as np
 import copy
 import cv2
-import pdb
 
 MAX_POINTS=200000
 

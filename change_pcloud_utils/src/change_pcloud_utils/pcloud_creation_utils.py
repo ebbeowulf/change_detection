@@ -13,15 +13,10 @@ import numpy as np
 import cv2
 from change_pcloud_utils.map_utils import get_rotated_points, DEVICE, connected_components_filter, get_center_point
 import os
-import sys
-
-from segmentation_utils.segmentation import image_segmentation
-from camera_params import camera_params
-
+from change_pcloud_utils.camera_params import camera_params
 import pickle
 import time
 from PIL import Image
-import pdb
 
 DEPTH_BLUR_THRESHOLD=None #Applied to Depth images
 COLOR_BLUR_THRESHOLD=None #Applied to Color images

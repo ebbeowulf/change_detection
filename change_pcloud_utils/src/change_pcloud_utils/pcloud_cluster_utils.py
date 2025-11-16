@@ -8,10 +8,10 @@
 #   - truncate_point: truncate point coordinates to be within image bounds
 #   - expand_bbox: expand a bounding box by a multiplier
 
-from map_utils import identify_related_images_global_pose, DEVICE, get_distinct_clusters, object_pcloud
+from change_pcloud_utils.map_utils import identify_related_images_global_pose, get_distinct_clusters, object_pcloud
 import numpy as np
 import open3d as o3d
-from rgbd_file_list import rgbd_file_list
+from change_pcloud_utils.rgbd_file_list import rgbd_file_list
 from change_pcloud_utils.camera_params import camera_params
 
 ABSOLUTE_MIN_CLUSTER_SIZE=100
