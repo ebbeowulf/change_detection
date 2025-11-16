@@ -9,7 +9,7 @@ import os
 import pdb
 from change_detection.segmentation import image_segmentation
 from rgbd_file_list import rgbd_file_list
-from camera_params import camera_params
+from change_detection.camera_params import camera_params
 import copy
 from map_utils import clip_threshold_evaluation, get_center_point, connected_components_filter, get_rotated_points
 

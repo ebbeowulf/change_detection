@@ -1,18 +1,23 @@
 import torch
-from camera_params import camera_params
 from rgbd_file_list import rgbd_file_list
 import numpy as np
 import cv2
 from map_utils import get_rotated_points, DEVICE, connected_components_filter, get_center_point
 import os
 import sys
+
 scripts_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..', 'change_detection', 'scripts'))
 sys.path.append(scripts_path)
 from change_detection.segmentation import image_segmentation
+from change_detection.camera_params import camera_params
+
 import pickle
 import time
 from PIL import Image
 import pdb
+
+DEPTH_BLUR_THRESHOLD=None #Applied to Depth images
+COLOR_BLUR_THRESHOLD=None #Applied to Color images
 
 #Parent class containing common utilities for creating point clouds
 #   load_image / load_image_from_file - stores images internally for futher processing
@@ -579,3 +584,150 @@ def estimate_blur(gray_np,step=5,filter_size=50):
             Lpl_var[var_row,var_col]=laplacian[row:(row+filter_size),col:(col+filter_size)].var()
     blur=cv2.resize(Lpl_var,(gray_np.shape[1],gray_np.shape[0]))
     return blur
+
+# Build change detection point clouds from two rgbd_file_lists
+#    used for both phone and robot captured images
+def build_change_clouds(params:camera_params, 
+                     fList_new:rgbd_file_list,
+                     fList_renders:rgbd_file_list,
+                     prompts:list,
+                     det_threshold:float):
+    pcloud=dict()
+    for query in prompts:
+        pcloud[query]={'xyz': torch.zeros((0,3),dtype=float,device=DEVICE), 
+                       'probs': torch.zeros((0),dtype=float,device=DEVICE), 
+                       'rgb': torch.zeros((0,3),dtype=float,device=DEVICE),
+                       'bboxes': dict()}
+
+    pcloud_creator=pcloud_change(params)
+    for key in fList_new.keys():
+        try:
+            colorI_new=Image.open(fList_new.get_color_fileName(key))
+            colorI_rendered=Image.open(fList_renders.get_color_fileName(key))
+            depthI=cv2.imread(fList_new.get_depth_fileName(key),-1)
+            M=fList_new.get_pose(key)
+        except Exception as e:
+            print(f"Could not load files associated with key={key}")
+            continue
+        
+        print(fList_new.get_color_fileName(key))
+        pcloud_creator.load_image(colorI_new, depthI, M, str(key),color_blur_threshold=COLOR_BLUR_THRESHOLD, depth_blur_threshold=DEPTH_BLUR_THRESHOLD)
+        results, bboxes=pcloud_creator.multi_prompt_change_process(colorI_rendered, prompts, det_threshold,est_bboxes=True)
+        # Instead of merging cloud here, keep it attached to the original image - so that we can draw boxes later
+        for query in prompts:
+            if query in results and results[query]['xyz'].shape[0]>0:
+                pcloud[query]['xyz']=torch.vstack((pcloud[query]['xyz'],results[query]['xyz']))
+                pcloud[query]['probs']=torch.hstack((pcloud[query]['probs'],results[query]['probs']))
+                pcloud[query]['rgb']=torch.vstack((pcloud[query]['rgb'],results[query]['rgb']))
+            if query in bboxes:
+                pcloud[query]['bboxes'][fList_new.get_color_fileName(key)]=bboxes[query]
+        
+    return pcloud
+
+def build_openVocab_clouds(params:camera_params, 
+                     fList_new:rgbd_file_list,
+                     prompts:list,
+                     det_threshold:float):
+    pcloud=dict()
+    for query in prompts:
+        pcloud[query]={'xyz': torch.zeros((0,3),dtype=float,device=DEVICE), 
+                       'probs': torch.zeros((0),dtype=float,device=DEVICE), 
+                       'rgb': torch.zeros((0,3),dtype=float,device=DEVICE)}
+
+    pcloud_creator=pcloud_openVocab(params)
+    for key in fList_new.keys():
+        try:
+            colorI_new=Image.open(fList_new.get_color_fileName(key))
+            depthI=cv2.imread(fList_new.get_depth_fileName(key),-1)
+            M=fList_new.get_pose(key)
+        except Exception as e:
+            print(f"Could not load files associated with key={key}")
+            continue
+        
+        if(pcloud_creator.load_image(colorI_new, depthI, M, str(key),color_blur_threshold=COLOR_BLUR_THRESHOLD, depth_blur_threshold=DEPTH_BLUR_THRESHOLD)):
+            results=pcloud_creator.multi_prompt_process(prompts, det_threshold)
+            for query in prompts:
+                if query in results and results[query]['xyz'].shape[0]>0:
+                    pcloud[query]['xyz']=torch.vstack((pcloud[query]['xyz'],results[query]['xyz']))
+                    pcloud[query]['probs']=torch.hstack((pcloud[query]['probs'],results[query]['probs']))
+                    pcloud[query]['rgb']=torch.vstack((pcloud[query]['rgb'],results[query]['rgb']))
+        else:
+            print(f"Skipping image {key} - not loaded properly")
+        
+    return pcloud
+
+def build_pclouds(fList_new:rgbd_file_list,
+                  fList_renders:rgbd_file_list,
+                  prompts:list,
+                  params:camera_params,
+                  detection_threshold:float,
+                  rebuild_pcloud:bool=False):
+    # build clouds if necessary - return list of filenames for saved pclouds
+    pcloud_fNames=dict()
+    all_files_exist=True
+    for key in prompts:
+        P1=key.replace(' ','_')
+        if fList_renders is not None:
+            pcloud_fNames[key]=f"{fList_new.intermediate_save_dir}/{P1}.{detection_threshold}.pcloud.pkl"
+        else:
+            pcloud_fNames[key]=f"{fList_new.intermediate_save_dir}/{P1}.{detection_threshold}.OV.pcloud.pkl"
+        
+        # Does the file exist already?
+        if not os.path.exists(pcloud_fNames[key]):
+            all_files_exist=False
+
+    # Rebuild pclouds if requested 
+    if not all_files_exist or rebuild_pcloud:
+        if fList_renders is not None:
+            # Do the original change detection experiment
+            pcloud=build_change_clouds(params, 
+                                    fList_new, 
+                                    fList_renders, 
+                                    prompts, 
+                                    detection_threshold)            
+        else:
+            # Use open vocabulary models only - no change applied
+            pcloud=build_openVocab_clouds(params, 
+                                    fList_new, 
+                                    prompts, 
+                                    detection_threshold)
+        # Save the result
+        for key in pcloud:
+            with open(pcloud_fNames[key],'wb') as handle:
+                pickle.dump(pcloud[key], handle, protocol=pickle.HIGHEST_PROTOCOL)    
+    
+    # Return the list of files to be loaded
+    return pcloud_fNames
+
+if __name__ == '__main__':
+    import argparse
+    from colmap_utils import get_camera_params, build_file_list
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument('nerfacto_dir',type=str,help='location of nerfactor directory containing config.yml and dapaparser_transforms.json')
+    parser.add_argument('root_dir',type=str,help='root project folder where the images and colmap info are stored')
+    parser.add_argument('prompt',type=str,help='what is the prompt to search for in the images?')
+    parser.add_argument('--color_dir',type=str,default='images_combined',help='where are the color images? (default=images_combined)')
+    parser.add_argument('--depth_dir',type=str,default='depth',help='where are the color images? (default=depth)')
+    parser.add_argument('--colmap_dir',type=str,default='colmap_combined/sparse_geo',help='where are the images + cameras.txt files? (default=colmap_combined/sparse)')
+    parser.add_argument('--save_dir',type=str,default='pclouds',help='where to save the point clouds? (default=pclouds)')
+    parser.add_argument('--detection_threshold',type=float,default=0.5,help='detection threshold for point cloud generation (default=0.5)')
+    parser.add_argument('--frame_keyword',type=str,default='new',help='keyword to identify frames in colmap (default=new)')
+    args=parser.parse_args()
+
+    save_dir=f"{args.root_dir}/{args.save_dir}/"
+    color_image_dir=f"{args.root_dir}/{args.color_dir}/"
+    rendered_image_dir=f"{args.root_dir}/{args.depth_dir}/"
+    colmap_dir=f"{args.root_dir}/{args.colmap_dir}/"
+    params=get_camera_params(colmap_dir,args.nerfacto_dir)
+    fList_new=build_file_list(color_image_dir,rendered_image_dir,save_dir,colmap_dir,args.frame_keyword)
+
+    pcloud_fNames = build_pclouds(fList_new,
+                  None,
+                  [args.prompt],
+                  params,
+                  detection_threshold=args.detection_threshold,
+                  rebuild_pcloud=True)
+    
+    print("Generated point cloud files:")
+    print(pcloud_fNames)

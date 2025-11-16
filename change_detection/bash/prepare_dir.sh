@@ -4,6 +4,7 @@ INITIAL_DIR=$1 #this is the nerf data directory that contains colmap/
 NEW_DIR_ROOT=$2 #this is the root directory that should contain color/ and depth/ subdirs
 
 ROTATED_DIR=${NEW_DIR_ROOT}/rotated
+ROTATED_DEPTH_DIR=${NEW_DIR_ROOT}/depth_rotated
 
 echo "Prepare 1 - checking need for rotated images"
 A1=$(ls $ROTATED_DIR/*.png | wc -l)
@@ -11,6 +12,13 @@ B1=$(ls $NEW_DIR_ROOT/color/*.png | wc -l)
 if [[ $A1 -ne $B1 ]]; then
     echo "Rotated image count not equal to color image count - rerunning rotate script"
     ./rotate_images.sh $NEW_DIR_ROOT/color/ $ROTATED_DIR
+fi
+
+A1=$(ls $ROTATED_DEPTH_DIR/*.png | wc -l)
+B1=$(ls $NEW_DIR_ROOT/depth/*.png | wc -l)
+if [[ $A1 -ne $B1 ]]; then
+    echo "Rotated depth image count not equal to color image count - rerunning rotate script on depth images"
+    ./rotate_images.sh $NEW_DIR_ROOT/depth/ $ROTATED_DEPTH_DIR
 fi
 
 echo "Prepare 2 - copy original data to new colmap directory"

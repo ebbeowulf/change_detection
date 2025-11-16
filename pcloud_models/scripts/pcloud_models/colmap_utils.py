@@ -1,9 +1,10 @@
 import json
 import os
+import sys
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 from rgbd_file_list import rgbd_file_list
-from camera_params import camera_params
+from change_detection.camera_params import camera_params
 
 import pdb
 # from change_detection.change_detect_common import image_comparator
@@ -17,7 +18,7 @@ def get_camera_params(colmap_dir, nerfstudio_dir):
         cam_rot_matrix[:3,:]=np.array(A['transform'])
     except Exception as e:
         print("Failed to open cameras.txt in " + colmap_dir + " - exiting")
-        os.exit(-1)
+        sys.exit(-1)
 
     # Load the location csv
     try:
@@ -25,7 +26,7 @@ def get_camera_params(colmap_dir, nerfstudio_dir):
             A=fin.readlines()
     except Exception as e:
         print("Failed to open cameras.txt in " + colmap_dir + " - exiting")
-        os.exit(-1)
+        sys.exit(-1)
 
 
     # Remove comments at beginning

@@ -12,7 +12,7 @@ scripts_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..
 sys.path.append(scripts_path)
 from change_detection.segmentation import image_segmentation
 from rgbd_file_list import rgbd_file_list
-from camera_params import camera_params
+from change_detection.camera_params import camera_params
 import copy
 from sklearn.cluster import DBSCAN
 from farthest_point_sampling.fps import farthest_point_sampling

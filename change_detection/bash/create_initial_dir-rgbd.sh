@@ -4,7 +4,7 @@ CHANGE_HOME=/home/emartinso/ros_ws/src/research/change_detection
 BASH_HOME=$CHANGE_HOME/bash
 PYTHON_HOME=$CHANGE_HOME/scripts/change_detection                                                                                                                                                         
 BASE_DIR=$1
-ROTATE_IMAGES=${2:-0}
+ROTATE_IMAGES=${2:-1} # by default rotate images
 COLMAP_NERF_DIR=$BASE_DIR/nerf_colmap
 
 echo "ROTATE_IMAGES = $ROTATE_IMAGES"
@@ -45,6 +45,7 @@ eval $cmd
 cd $BASE_DIR/
 SPARSE=$COLMAP_NERF_DIR/colmap/sparse_orig
 ln -s $SPARSE $COLMAP_NERF_DIR/colmap/sparse # temporary link for processing - will be removed later
+
 if [[ ! -f $SPARSE/0/images.bin ]];then
     # cmd="ns-process-data images --data $COLOR_IMAGE_DIR --output-dir $COLMAP_NERF_DIR --skip-image-processing"
     # echo $cmd
@@ -55,7 +56,6 @@ if [[ ! -f $SPARSE/0/images.bin ]];then
     VOCAB_TREE="/data2/datasets/office/vocab_tree_flickr100K_words1M.bin"   # no longer supported with colmab 3.12
     # VOCAB_TREE="/data2/datasets/office/vocab_tree_flickr100K_words256K.bin"
 
-    mkdir -p $SPARSE/0    
     cmd="colmap feature_extractor --database_path $COLMAP_DB --image_path $COLOR_IMAGE_DIR --ImageReader.single_camera 1 --SiftExtraction.use_gpu 1 --ImageReader.camera_model OPENCV"
     echo $cmd
     eval $cmd
@@ -69,7 +69,27 @@ if [[ ! -f $SPARSE/0/images.bin ]];then
     eval $cmd
 fi
 
-# Step 3: Align the COLMAP model to the initial poses
+# Step 2.5 - Identify the sparse directory with the best coverage of the initial poses
+#   note that we only check the 0 + 1 directories. If >1 exists, then it won't be used
+if [[ -d $SPARSE/1 ]]; then
+    cmd="colmap model_converter --input_path $SPARSE/0/ --output_path $SPARSE/0/ --output_type TXT"
+    echo $cmd
+    eval $cmd
+
+    cmd="colmap model_converter --input_path $SPARSE/1/ --output_path $SPARSE/1/ --output_type TXT"
+    echo $cmd
+    eval $cmd
+
+    CNT0=$(grep png $SPARSE/0/images.txt | wc -l)
+    CNT1=$(grep png $SPARSE/1/images.txt | wc -l)
+    if [[ $CNT1 -gt $CNT0 ]]; then
+        echo "Using sparse/1/ directory for alignment since it has more images ($CNT1 vs $CNT0)"
+        mv $SPARSE/0 $SPARSE/0_old
+        ln -s $SPARSE/1 $SPARSE/0
+    fi
+fi
+
+Step 3: Align the COLMAP model to the initial poses
 SPARSE_GEO=$COLMAP_NERF_DIR/colmap/sparse_geo
 if [[ ! -f $SPARSE_GEO/0/images.bin ]];then
     mkdir -p $SPARSE_GEO/0
@@ -88,7 +108,7 @@ if [[ ! -f $SPARSE_GEO/0/images.bin ]];then
     eval $cmd
 
     # Now, add depth image paths to the transforms.json file
-    cmd="python $PYTHON_HOME/add_depth_to_transforms.py $SPARSE_GEO/transforms.json $SPARSE_GEO/transforms_with_depth.json"
+    cmd="python $PYTHON_HOME/add_depth_to_transforms.py $SPARSE_GEO/0/transforms.json $SPARSE_GEO/0/transforms_with_depth.json"
     echo $cmd
     eval $cmd
 fi
