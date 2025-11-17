@@ -33,7 +33,7 @@ class drawn_image():
         self.dx_dc=(self.maxXYZ-self.minXYZ)[0]/self.width
 
         self.window_name=window_name
-        self.bg_image=self.draw_all_dots(height_range=[0.1,2.0])
+        self.bg_image=self.draw_all_dots(height_range=[-10.0,10.0])
         self.fg_image=self.bg_image
 
     # Draw the dots with the specified color, returning the image
@@ -55,6 +55,8 @@ class drawn_image():
         else:
             raise Exception("Color array is incorrect - not drawing")
 
+        # import pdb
+        # pdb.set_trace()
         for idx in range(len(rr)):
             try:
                 row,col=self.xyz_to_rc(local_xyz[rr[idx]])
@@ -62,6 +64,7 @@ class drawn_image():
                     tmpC=(local_rgb[rr[idx]]*255).astype(int).tolist()
                     clr=(tmpC[2],tmpC[1],tmpC[0])
                 cv2.circle(image, (col, row), radius=2,color=clr,thickness=-1)
+                # cv2.circle(image, (col, row), radius=2,color=clr,thickness=5)
             except Exception as e:
                 print("Exception: " + str(e))
                 print("skipping pixel during dot printing")

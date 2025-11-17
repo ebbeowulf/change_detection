@@ -13,7 +13,7 @@ if __name__ == '__main__':
     parser.add_argument('root_image_dir',type=str,help='root project folder where the images and colmap info are stored')
     parser.add_argument('--color_dir',type=str,default='images_combined',help='where are the color images? (default=images_combined)')
     parser.add_argument('--depth_dir',type=str,default='depth',help='where are the depth images? (default=depth)')
-    parser.add_argument('--colmap_dir',type=str,default='colmap_combined/sparse/0',help='where are the images + cameras.txt files? (default=colmap_combined/sparse/0)')
+    parser.add_argument('--colmap_dir',type=str,default='colmap_combined/sparse_geo/0',help='where are the images + cameras.txt files? (default=colmap_combined/sparse_geo/0)')
     parser.add_argument('--frame_keyword',type=str,default=None,help='a keyword to use when parsing the transforms file (default=None)')
     parser.add_argument('--save_dir',type=str,default='save_results', help='subdirectory of color_dir in which to store the intermediate files (default=save_results)')
     parser.add_argument('--headless', dest='draw', action='store_false')

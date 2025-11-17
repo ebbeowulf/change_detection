@@ -657,13 +657,24 @@ class object_pcloud():
             return self.centroid[2]>input_cloud.centroid[2]
         return False
     
+    def filter_points_in_box(self, xyz):
+        filt=(xyz[:,0]>=self.box[0][0])*(xyz[:,0]<=self.box[1][0])*(xyz[:,1]>=self.box[0][1])*(xyz[:,1]<=self.box[1][1])*(xyz[:,2]>=self.box[0][2])*(xyz[:,2]<=self.box[1][2])
+        return filt
+
     def estimate_probability(self, original_xyz, original_prob):
-        filt=(original_xyz[:,0]>=self.box[0][0])*(original_xyz[:,0]<=self.box[1][0])*(original_xyz[:,1]>=self.box[0][1])*(original_xyz[:,1]<=self.box[1][1])*(original_xyz[:,2]>=self.box[0][2])*(original_xyz[:,2]<=self.box[1][2])
+        filt=self.filter_points_in_box(original_xyz)
         self.prob_stats=dict()
-        self.prob_stats['max']=original_prob[filt].max()
-        self.prob_stats['mean']=original_prob[filt].mean()
-        self.prob_stats['stdev']=original_prob[filt].std()
+        self.prob_stats['max']=original_prob[filt].max().to('cpu').item()
+        self.prob_stats['mean']=original_prob[filt].mean().to('cpu').item()
+        self.prob_stats['prob_sum']=original_prob[filt].sum().to('cpu').item()
+        self.prob_stats['median']=original_prob[filt].median().to('cpu').item()
         self.prob_stats['pcount']=filt.shape[0]
+
+        # Inverse stats
+        self.prob_stats['stdev']=original_prob[filt].std().to('cpu').item()
+        from scipy.stats import entropy
+        prob_dist=original_prob[filt]/self.prob_stats['mean']
+        self.prob_stats['entropy']=entropy(prob_dist.to('cpu').numpy()+1e-6)
     
     def size(self):
         return self.pts_shape[0]
