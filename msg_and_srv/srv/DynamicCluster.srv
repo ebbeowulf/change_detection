@@ -1,0 +1,8 @@
+string                   main_query
+string                   llm_query
+int32                    num_points #how many points should be returned?
+---
+bool                     success    #indicate successful run of triggered services
+string                   message    #text field to describe the output - optional
+float32[]                bbox3d     #3D bounding box [x1,y1,zy,x2,y2,z2]
+geometry_msgs/Point[]    pts        #Selection of points within the cluster 
