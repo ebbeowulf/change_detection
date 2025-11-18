@@ -74,8 +74,17 @@ fi
 SPARSE_GEO_0=${COLMAP_DIR}/sparse_geo/0
 if [[ ! -f ${SPARSE_GEO_0}/images.txt ]]; then
     mkdir -p ${SPARSE_GEO_0}
+    NEW_POSE_FILE=$NEW_DIR_ROOT/camera_pose.txt
+    NEW_POSE_FILE_v2=$NEW_DIR_ROOT/camera_pose.txt.new
+    # Need to correct the camera poses file to use the proper keywords (replace color with new_color)
+    cmd="sed 's/color_/new_color_/g' $NEW_POSE_FILE > ${NEW_POSE_FILE_v2}"
+    echo $cmd
+    eval $cmd
+
     echo "Step 6 - Align model to robot poses"
-    cmd="colmap model_aligner --input_path ${SPARSE_0} --output_path ${SPARSE_GEO_0} --alignment_max_error 1 --ref_is_gps 0 --ref_images_path ${OLD_POSE_FILE}"
+    # Using the old pose file doesn't seem to work very well - not sure why 
+    # cmd="colmap model_aligner --input_path ${SPARSE_0} --output_path ${SPARSE_GEO_0} --alignment_max_error 1 --ref_is_gps 0 --ref_images_path ${OLD_POSE_FILE}"
+    cmd="colmap model_aligner --input_path ${SPARSE_0} --output_path ${SPARSE_GEO_0} --alignment_max_error 1 --ref_is_gps 0 --ref_images_path ${NEW_POSE_FILE_v2}"
     echo $cmd
     eval $cmd
 

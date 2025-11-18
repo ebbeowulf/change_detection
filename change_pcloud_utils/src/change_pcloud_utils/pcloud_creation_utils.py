@@ -125,15 +125,15 @@ class pcloud_base():
         # Something missing - update required
         if is_update_required:
             if classifier_type=='clipseg':
-                from change_detection.clip_segmentation import clip_seg
+                from segmentation_utils.clip_segmentation import clip_seg
                 self.YS=clip_seg(tgt_class_list)
                 self.classifier_type=classifier_type
             elif classifier_type=='yolo_world':
-                from change_detection.yolo_world_segmentation import yolo_world_segmentation
+                from segmentation_utils.yolo_world_segmentation import yolo_world_segmentation
                 self.YS=yolo_world_segmentation(tgt_class_list)
                 self.classifier_type=classifier_type
             elif classifier_type=='yolo':
-                from change_detection.yolo_segmentation import yolo_segmentation
+                from segmentation_utils.yolo_segmentation import yolo_segmentation
                 self.YS=yolo_segmentation(tgt_class_list)
                 self.classifier_type=classifier_type
     

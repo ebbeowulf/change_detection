@@ -120,3 +120,27 @@ def build_rendered_file_list(fList_new:rgbd_file_list, rendered_image_dir,save_d
         M=fList_new.get_pose(key)
         fList_renders.add_pose(key,M)    
     return fList_renders
+
+def compare_colmap_to_robot_pose(fList:rgbd_file_list, 
+                                 input_pose_file:str  # of format: image_name x y z
+                                 ):
+    import numpy as np
+    import json
+    data = {}
+    with open(input_pose_file, 'r') as f:
+        next(f)  # skip header
+        for line in f:
+            parts = line.strip().split()
+            img_name = parts[0]
+            coords = np.array([float(parts[1]), float(parts[2]), float(parts[3])], dtype=float)
+            uid=img_name.split('_')[-1].split('.')[0]
+            number=int(uid) 
+            data[number] = coords
+
+    robot_pose_array=np.array([ data[key] for key in data.keys() ])
+    colmap_pose_array=np.array([ fList.get_pose(key)[:3,3] for key in fList.keys() ])
+    Dcolmap=colmap_pose_array.max(0)-colmap_pose_array.min(0)
+    Drobot=robot_pose_array.max(0)-robot_pose_array.min(0)
+
+    import pdb
+    pdb.set_trace()

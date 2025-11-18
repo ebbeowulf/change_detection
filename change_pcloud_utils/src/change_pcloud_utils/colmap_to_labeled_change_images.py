@@ -56,7 +56,8 @@ def setup_change_experiment():
             'detection_threshold': args.threshold,
             'prompts': prompts,
             'scale': scale,
-            'rebuild_pcloud': args.new_pcloud}
+            'rebuild_pcloud': args.new_pcloud,
+            'root_dir': args.root_dir}
 
 if __name__ == '__main__':
     exp_params=setup_change_experiment()
