@@ -16,7 +16,7 @@ This work is NOT going to work with the other libraries in ROS. It needs CUDA 12
 with huggingface. So I've set it up as a standalone repo that is communicated with by sockets. 
 
 Server:
-python llm_server.py # By default uses localhost and port 5000
+python llm_server.py # By default uses localhost and port 5001
 
 Client Example Code:
 python llm_client.py
