@@ -11,6 +11,8 @@ HOST = 'localhost'
 PORT = 5001
 BUFFER_SIZE = 4096
 
+# Function for communicating with llm server
+#    accepts both text and images by default
 def send_data(text, numpy_images):
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.connect((HOST, PORT))
@@ -41,30 +43,4 @@ def send_data(text, numpy_images):
 
         response = s.recv(BUFFER_SIZE)
         return json.loads(response.decode())
-
-
-# 🔧 Test mode: run from terminal
-if __name__ == '__main__':
-    import sys
-    import os
-
-    if len(sys.argv) < 3:
-        print("Usage: python client.py 'your message here' image1 [image2 ... image4]")
-        sys.exit(1)
-
-    message = sys.argv[1]
-    image_files = sys.argv[2:]
-
-    if not (1 <= len(image_files) <= 4):
-        print("Please provide between 1 and 4 image files.")
-        sys.exit(1)
-
-    image_list=[]
-    for img in image_files:
-        if not os.path.isfile(img):
-            print(f"File not found: {img}")
-            sys.exit(1)
-        image_list.append(cv2.imread(img,-1))
-
-    result = send_data(message, image_list)
-    print("Server response:", json.dumps(result, indent=2))
+    

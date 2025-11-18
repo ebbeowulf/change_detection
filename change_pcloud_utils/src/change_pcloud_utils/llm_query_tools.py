@@ -11,7 +11,6 @@ def string_to_bool(input:str):
         if tt in low_input:
             return True
     return None
-    
 
 #Single level results template assumes
 #   that there are no lists or dictionaries in the resulting JSON string
