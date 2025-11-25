@@ -57,10 +57,6 @@ class clip_seg(image_segmentation):
         # Convert the PIL image to opencv format and return
         return np.array(image)
 
-    def process_image_numpy(self, image: np.ndarray, threshold=0.5):
-        image_pil=Image.fromarray(image)
-        return self.process_image(image_pil, threshold=threshold)
-            
     def process_image(self, image: Image, threshold=0.5): #image should be in PIL format
         # print("Clip Inference")
         self.clear_data()
@@ -95,6 +91,7 @@ class clip_seg(image_segmentation):
             # print("%s = %f"%(self.prompts[dim],self.max_probs[dim]))            
             self.probs[dim]=P2_large[dim]
             self.masks[dim]=self.probs[dim]>threshold
+        pdb.set_trace()
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()

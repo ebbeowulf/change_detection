@@ -1,6 +1,7 @@
 import numpy as np
 import pdb
 from sklearn.cluster import DBSCAN
+from PIL import Image
 
 class image_segmentation():
     def __init__(self):
@@ -28,6 +29,19 @@ class image_segmentation():
         print("Base: load file.")
         return False
 
+    # Process an image - implemented in the sub-classes
+    #   pil_image: use PIL library to load by default
+    #   threshold: the detection threshold to use when building a mask
+    def process_image(self, pil_image, threshold):
+        print("Base: process image.")
+
+    # Process a numpy image -
+    #   because normal operations expect a PIL image,
+    #   this process converts numpy to PIL and call process_image
+    def process_image_numpy(self, image: np.ndarray, threshold):
+        image_pil=Image.fromarray(image)
+        return self.process_image(image_pil, threshold=threshold)
+    
     def get_all_classes(self):
         # Get all the classes
         return self.label2id
