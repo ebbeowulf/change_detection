@@ -2,6 +2,7 @@
 
 import copy
 import numpy as np
+from pathlib import Path
 
 class rgbd_file_list():
     def __init__(self, 
@@ -10,9 +11,9 @@ class rgbd_file_list():
                  intermediate_save_dir:str, 
                  is_pose_filtered:bool=False):
         self.all_files=dict()
-        self.color_image_dir=color_image_dir + "/"
-        self.depth_image_dir=depth_image_dir + "/"
-        self.intermediate_save_dir=intermediate_save_dir + "/"
+        self.color_image_dir=str(Path(color_image_dir)) + "/"
+        self.depth_image_dir=str(Path(depth_image_dir)) + "/"
+        self.intermediate_save_dir=str(Path(intermediate_save_dir)) + "/"
         self.is_pose_filtered=is_pose_filtered
     
     def add_file(self, id:int, color_fName:str, depth_fName:str):

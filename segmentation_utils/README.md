@@ -1,7 +1,6 @@
 -------------- How to install -------------
-Make sure your torch version is installed already
+Make sure your torch version is installed already for the right version of CUDA (e.g):
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
-
 
 Install the package from this directory:
 

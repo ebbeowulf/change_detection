@@ -20,6 +20,7 @@ from PIL import Image
 
 DEPTH_BLUR_THRESHOLD=None #Applied to Depth images
 COLOR_BLUR_THRESHOLD=None #Applied to Color images
+MIN_CLUSTER_POINTS=100 #Discard clusters that are too small
 
 #Parent class containing common utilities for creating point clouds
 #   load_image / load_image_from_file - stores images internally for futher processing
@@ -136,8 +137,21 @@ class pcloud_base():
                 from segmentation_utils.yolo_segmentation import yolo_segmentation
                 self.YS=yolo_segmentation(tgt_class_list)
                 self.classifier_type=classifier_type
+            elif classifier_type=='grounded_dino':
+                from segmentation_utils.dino_segmentation import dino_segmentation
+                self.YS=dino_segmentation(tgt_class_list)
+                self.classifier_type=classifier_type
+            elif classifier_type=='sam3':
+                from segmentation_utils.sam3_segmentation import sam3_segmentation
+                self.YS=sam3_segmentation(tgt_class_list, 0.1)
+                self.classifier_type=classifier_type
+
     
-    def generate_boxes_with_sam(self,delta_np,filtered_mask_np,generate_mask=False,merge_overlap=False):
+    def generate_boxes_with_sam(self,
+                                delta_np,           # likelihood scores
+                                filtered_mask_np,   # additional masking
+                                generate_mask=False,
+                                merge_overlap=False):
         # First step ... need some seed boxes. Going to use dbscan for this
         dbscan_boxes=build_dbscan_boxes(delta_np,filtered_mask_np)
 
@@ -251,28 +265,18 @@ class pcloud_openVocab(pcloud_base):
                 pickle.dump(filtered_maskT, handle, protocol=pickle.HIGHEST_PROTOCOL)
         return filtered_maskT
     
-    def get_pts_per_class(self, tgt_class, use_connected_components=False, rotate90=False):
+    def get_pts_per_class(self, tgt_class):
         # Build the class associated mask for this image
         cls_mask=self.YS.get_mask(tgt_class)
         if cls_mask is not None:
             if type(cls_mask)==torch.Tensor:
-                if rotate90:
-                    cls_maskT=torch.rot90(cls_mask,dims=(0,1))
-                else:
-                    cls_maskT=cls_mask
+                cls_maskT=cls_mask
             else:
-                if rotate90:
-                    cls_maskT=torch.tensor(np.rot90(cls_mask,dims=(0,1)).copy(),device=DEVICE)
-                else:
-                    cls_maskT=torch.tensor(cls_mask,device=DEVICE)
+                cls_maskT=torch.tensor(cls_mask,device=DEVICE)
 
-            # Apply connected components if requested       
-            if use_connected_components:
-                filtered_maskT=self.cluster_pcloud()
-            else:
-                filtered_maskT=cls_maskT*self.loaded_image['depth_mask']
+            filtered_maskT=cls_maskT*self.loaded_image['depth_mask']
             
-            return self.get_pts(self.YS.get_prob_array(tgt_class),filtered_maskT,rotate90)
+            return self.get_pts(self.YS.get_prob_array(tgt_class),filtered_maskT)
         else:
             return None
         
@@ -283,11 +287,9 @@ class pcloud_openVocab(pcloud_base):
             if not self.YS.load_file(segmentation_save_file,threshold=detection_threshold):
                 return None
         else:
-            # self.YS.process_image_numpy(self.loaded_image['colorT'].cpu().numpy(), detection_threshold)    
             # This numpy bit was originally done to handle images coming from the robot ...
             #   may need to correct for live image stream processing
-            #self.YS.process_image(self.loaded_image['colorT'].cpu().numpy(), detection_threshold)    
-            self.YS.process_image(self.loaded_image['color'].cpu().numpy(), detection_threshold)    
+            self.YS.process_image_numpy(self.loaded_image['color'].cpu().numpy(), detection_threshold)    
         return self.get_pts_per_class(tgt_class)
       
     # Process all images in the fList with a single prompt - probably broken after changing all loaded color files to PIL format
@@ -307,10 +309,10 @@ class pcloud_openVocab(pcloud_base):
             self.setup_image_processing([tgt_class], classifier_type)
 
             # Build the pcloud from individual images
-            # pcloud={'xyz': np.zeros((0,3),dtype=float),'rgb': np.zeros((0,3),dtype=np.uint8),'probs': []}
             pcloud={'xyz': torch.zeros((0,3),dtype=torch.float32,device=DEVICE),
                             'rgb': torch.zeros((0,3),dtype=torch.uint8,device=DEVICE),
-                            'probs': torch.zeros((0,),dtype=torch.float,device=DEVICE)}
+                            'probs': torch.zeros((0,),dtype=torch.float,device=DEVICE),
+                            'bboxes': []}
             count=0
             intermediate_files=[]
             deltaT=np.zeros((3,),dtype=float)
@@ -322,10 +324,7 @@ class pcloud_openVocab(pcloud_base):
                     t_array.append(time.time())
                     icloud=self.process_image(tgt_class, conf_threshold, segmentation_save_file=fList.get_segmentation_fileName(key, False, tgt_class))                    
                     t_array.append(time.time())
-                    if icloud is not None and icloud['xyz'].shape[0]>100:
-                        # pcloud['xyz']=np.vstack((pcloud['xyz'],icloud['xyz']))
-                        # pcloud['rgb']=np.vstack((pcloud['rgb'],icloud['rgb']))
-                        # pcloud['probs']=np.hstack((pcloud['probs'],icloud['probs']))
+                    if icloud is not None and icloud['xyz'].shape[0]>MIN_CLUSTER_POINTS:
                         pcloud['xyz']=torch.vstack((pcloud['xyz'],icloud['xyz']))
                         pcloud['rgb']=torch.vstack((pcloud['rgb'],icloud['rgb']))
                         pcloud['probs']=torch.hstack((pcloud['probs'],icloud['probs']))                        
@@ -367,21 +366,30 @@ class pcloud_openVocab(pcloud_base):
         return {'xyz':pcloud['xyz'][whichP],'rgb':pcloud['rgb'][whichP],'probs':pcloud['probs'][whichP]}
 
     # Process an image with multiple prompts, saving the resulting points
-    def multi_prompt_process(self, prompts:list, detection_threshold, rotate90:bool=False, classifier_type='clipseg'):
+    def multi_prompt_process(self, prompts:list, 
+                             detection_threshold, 
+                             classifier_type='clipseg',
+                             est_bboxes=False):
         self.setup_image_processing(prompts,classifier_type)
 
-        if rotate90:
-            rot_color=np.rot90(self.loaded_image['colorT'].cpu().numpy(), k=1, axes=(1,0))
-            self.YS.process_image_numpy(rot_color, detection_threshold)    
-        else:
-            # self.YS.process_image_numpy(self.loaded_image['color'], detection_threshold)    
-            self.YS.process_image(self.loaded_image['color'], detection_threshold)    
+        self.YS.process_image(self.loaded_image['color'], detection_threshold)    
 
         all_pts=dict()
+        all_bboxes=dict()
+
         # Build the class associated mask for this image
         for tgt_class in prompts:
-            all_pts[tgt_class]=self.get_pts_per_class(tgt_class, rotate90=rotate90)
+            all_pts[tgt_class]=self.get_pts_per_class(tgt_class)
 
+            if est_bboxes and classifier_type=='clipseg':
+                maskT=(self.YS.get_prob_array(tgt_class)>detection_threshold)
+                filtered_maskT=self.loaded_image['depth_mask']*maskT
+                all_bboxes[tgt_class]=self.generate_boxes_with_sam(self.YS.get_prob_array(tgt_class).cpu().numpy(),filtered_maskT.cpu().numpy())
+            else:
+                all_bboxes[tgt_class]=self.YS.get_boxes(tgt_class)
+        
+        if est_bboxes:
+            return all_pts, all_bboxes
         return all_pts
     
     # Process all images in the fList with multiple prompts
@@ -520,7 +528,13 @@ class pcloud_change(pcloud_base):
                     filtered_maskT=self.loaded_image['depth_mask']*maskT
                     all_pts[tgt_class]=self.get_pts(deltaT, filtered_maskT)
                     if est_bboxes:                                                
-                        all_bboxes[tgt_class]=self.generate_boxes_with_sam(deltaT.cpu().numpy(),filtered_maskT.cpu().numpy())
+                        try:
+                            all_bboxes[tgt_class]=self.generate_boxes_with_sam(deltaT.cpu().numpy(),filtered_maskT.cpu().numpy())
+                        except Exception as e:
+                            print(f"Exception {e} caught around generate_boxes_with_sam")
+                            import pdb
+                            pdb.set_trace()
+                            all_bboxes[tgt_class]=[]
 
                         if 0: # change to draw the images and masks
                             im_out=np.array(self.loaded_image['color'])
@@ -593,7 +607,8 @@ def build_change_clouds(params:camera_params,
                      fList_new:rgbd_file_list,
                      fList_renders:rgbd_file_list,
                      prompts:list,
-                     det_threshold:float):
+                     det_threshold:float,
+                     classifier_type='clipseg'):
     pcloud=dict()
     for query in prompts:
         pcloud[query]={'xyz': torch.zeros((0,3),dtype=float,device=DEVICE), 
@@ -614,7 +629,7 @@ def build_change_clouds(params:camera_params,
         
         print(fList_new.get_color_fileName(key))
         pcloud_creator.load_image(colorI_new, depthI, M, str(key),color_blur_threshold=COLOR_BLUR_THRESHOLD, depth_blur_threshold=DEPTH_BLUR_THRESHOLD)
-        results, bboxes=pcloud_creator.multi_prompt_change_process(colorI_rendered, prompts, det_threshold,est_bboxes=True)
+        results, bboxes=pcloud_creator.multi_prompt_change_process(colorI_rendered, prompts, det_threshold,est_bboxes=True,classifier_type=classifier_type)
         # Instead of merging cloud here, keep it attached to the original image - so that we can draw boxes later
         for query in prompts:
             if query in results and results[query]['xyz'].shape[0]>0:
@@ -629,12 +644,14 @@ def build_change_clouds(params:camera_params,
 def build_openVocab_clouds(params:camera_params, 
                      fList_new:rgbd_file_list,
                      prompts:list,
-                     det_threshold:float):
+                     det_threshold:float,
+                     classifier_type:str='clipseg'):
     pcloud=dict()
     for query in prompts:
         pcloud[query]={'xyz': torch.zeros((0,3),dtype=float,device=DEVICE), 
                        'probs': torch.zeros((0),dtype=float,device=DEVICE), 
-                       'rgb': torch.zeros((0,3),dtype=float,device=DEVICE)}
+                       'rgb': torch.zeros((0,3),dtype=float,device=DEVICE),
+                       'bboxes': dict()}
 
     pcloud_creator=pcloud_openVocab(params)
     for key in fList_new.keys():
@@ -647,12 +664,19 @@ def build_openVocab_clouds(params:camera_params,
             continue
         
         if(pcloud_creator.load_image(colorI_new, depthI, M, str(key),color_blur_threshold=COLOR_BLUR_THRESHOLD, depth_blur_threshold=DEPTH_BLUR_THRESHOLD)):
-            results=pcloud_creator.multi_prompt_process(prompts, det_threshold)
+            results, bboxes=pcloud_creator.multi_prompt_process(prompts, det_threshold, classifier_type=classifier_type, est_bboxes=True)
             for query in prompts:
-                if query in results and results[query]['xyz'].shape[0]>0:
-                    pcloud[query]['xyz']=torch.vstack((pcloud[query]['xyz'],results[query]['xyz']))
-                    pcloud[query]['probs']=torch.hstack((pcloud[query]['probs'],results[query]['probs']))
-                    pcloud[query]['rgb']=torch.vstack((pcloud[query]['rgb'],results[query]['rgb']))
+                try:
+                    if query in results and results[query] is not None:
+                        if 'xyz' in results[query] and results[query]['xyz'].shape[0]>0:
+                            pcloud[query]['xyz']=torch.vstack((pcloud[query]['xyz'],results[query]['xyz']))
+                            pcloud[query]['probs']=torch.hstack((pcloud[query]['probs'],results[query]['probs']))
+                            pcloud[query]['rgb']=torch.vstack((pcloud[query]['rgb'],results[query]['rgb']))
+                        if query in bboxes:
+                            pcloud[query]['bboxes'][fList_new.get_color_fileName(key)]=bboxes[query]
+                except Exception as e:
+                    import pdb
+                    pdb.set_trace()
         else:
             print(f"Skipping image {key} - not loaded properly")
         
@@ -663,16 +687,17 @@ def build_pclouds(fList_new:rgbd_file_list,
                   prompts:list,
                   params:camera_params,
                   detection_threshold:float,
-                  rebuild_pcloud:bool=False):
+                  rebuild_pcloud:bool=False,
+                  classifier_type:str='clipseg'):
     # build clouds if necessary - return list of filenames for saved pclouds
     pcloud_fNames=dict()
     all_files_exist=True
     for key in prompts:
         P1=key.replace(' ','_')
         if fList_renders is not None:
-            pcloud_fNames[key]=f"{fList_new.intermediate_save_dir}/{P1}.{detection_threshold}.pcloud.pkl"
+            pcloud_fNames[key]=f"{fList_new.intermediate_save_dir}/{P1}.{detection_threshold}.{classifier_type}.change.pcloud.pkl"
         else:
-            pcloud_fNames[key]=f"{fList_new.intermediate_save_dir}/{P1}.{detection_threshold}.OV.pcloud.pkl"
+            pcloud_fNames[key]=f"{fList_new.intermediate_save_dir}/{P1}.{detection_threshold}.{classifier_type}.pcloud.pkl"
         
         # Does the file exist already?
         if not os.path.exists(pcloud_fNames[key]):
@@ -686,13 +711,15 @@ def build_pclouds(fList_new:rgbd_file_list,
                                     fList_new, 
                                     fList_renders, 
                                     prompts, 
-                                    detection_threshold)            
+                                    detection_threshold,
+                                    classifier_type=classifier_type)            
         else:
             # Use open vocabulary models only - no change applied
             pcloud=build_openVocab_clouds(params, 
                                     fList_new, 
                                     prompts, 
-                                    detection_threshold)
+                                    detection_threshold,
+                                    classifier_type=classifier_type)
         # Save the result
         for key in pcloud:
             with open(pcloud_fNames[key],'wb') as handle:

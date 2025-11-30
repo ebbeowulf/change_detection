@@ -12,6 +12,9 @@ or to update:
 
 pip install -e . --force-reinstall --no-deps
 
+If you will be using spectacular AI app on the phone, then also install:
+pip install spectacularAI
+
 ----------------- How to use ---------------------
 This work requires two different data streams:
 1) Initial - the initial recording that we will be creating a NeRF model from

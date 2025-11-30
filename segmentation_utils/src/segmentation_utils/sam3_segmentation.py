@@ -49,33 +49,36 @@ class sam3_segmentation(image_segmentation):
     def process_image(self, image: Image, threshold=0.1): #image should be in PIL format
         # print("Clip Inference")
         self.clear_data()
-        outputs=dict()
+        outputs=None
         try:
             inference_state = self.processor.set_image(image)
             for text in self.prompts:
-                outputs[self.label2id[text]] = self.processor.set_text_prompt(state=inference_state, prompt=text)
+                outputs = self.processor.set_text_prompt(state=inference_state, prompt=text)
+                self.set_data(outputs, threshold, self.label2id[text])
         except Exception as e:
             print("Exception during inference step - returning")
             return
 
-        self.set_data(outputs,threshold)
-        return outputs
+        return outputs #only return most recent outputs
 
     def set_box(self, cls, box, output_mask, score):
         boxI=box.floor().cpu().numpy().astype('int')
-        self.boxes[cls].append((score,box))        
+        self.boxes[cls].append((score.cpu().tolist(),boxI))
         self.probs[cls][boxI[1]:boxI[3],boxI[0]:boxI[2]]=self.probs[cls][boxI[1]:boxI[3],boxI[0]:boxI[2]].max(score*output_mask[0,boxI[1]:boxI[3],boxI[0]:boxI[2]])
 
-    def set_data(self, outputs, threshold=0.2):
-        for cls in outputs.keys():  
-            filter=(outputs[cls]['scores']>threshold).cpu() # which boxes exceed threshold?
-            whichV=np.where(filter.numpy())[0]
-            self.masks[cls]=outputs[cls]['masks'][whichV].sum(0).squeeze()>0
-            self.probs[cls]=torch.zeros(self.masks[cls].shape).cuda()
-            self.max_probs[cls]=outputs[cls]['scores'].max().cpu().tolist()
-            self.boxes[cls]=[]
+    def set_data(self, outputs, threshold, cls):
+        filter=(outputs['scores']>threshold).cpu() # which boxes exceed threshold?
+        whichV=np.where(filter.numpy())[0]
+        self.probs[cls]=torch.zeros((outputs['original_height'],outputs['original_width'])).cuda()
+        self.boxes[cls]=[]
+        if len(whichV)>0:
+            self.masks[cls]=outputs['masks'][whichV].sum(0).squeeze()>0
+            self.max_probs[cls]=outputs['scores'].max().cpu().tolist()
             for val in whichV:
-                self.set_box(cls, outputs[cls]['boxes'][val], outputs[cls]['masks'][val], outputs[cls]['scores'][val])
+                self.set_box(cls, outputs['boxes'][val], outputs['masks'][val], outputs['scores'][val])
+        else:   # no valid points found
+            self.masks[cls]=torch.zeros((outputs['original_height'],outputs['original_width']),dtype=torch.bool).cuda()
+            self.max_probs[cls]=0.0
 
 if __name__ == '__main__':
     import argparse
@@ -93,7 +96,7 @@ if __name__ == '__main__':
     if args.options is None:
         from sam3.visualization_utils import plot_results
         import matplotlib.pyplot as plt
-        plot_results(image, outputs[0])
+        plot_results(image, outputs)
         plt.show()
     elif args.options=="CV2_DRAW":
         mask=CS.get_mask(0).cpu().numpy()

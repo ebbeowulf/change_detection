@@ -4,9 +4,10 @@
 
 import argparse
 from change_pcloud_utils.pcloud_creation_utils import build_pclouds
-from change_pcloud_utils.pcloud_cluster_utils import build_change_cluster_images
+from change_pcloud_utils.pcloud_cluster_utils import build_change_clusters, draw_boxes_around_cluster, write_change_cluster_images_to_disk
 import numpy as np
 from change_pcloud_utils.colmap_utils import get_camera_params, build_file_list, build_rendered_file_list
+import subprocess
 
 def setup_change_experiment():
     parser = argparse.ArgumentParser()
@@ -26,9 +27,17 @@ def setup_change_experiment():
     parser.set_defaults(use_change=True)
     parser.add_argument('--rebuild-pcloud', dest='new_pcloud', action='store_true')
     parser.set_defaults(new_pcloud=False)
+    parser.add_argument('--classifier',type=str,default='clipseg',help='Classifier type. Currently supports clipseg(default),grounded_dino,yolo_world,sam3')
     args = parser.parse_args()
 
-    save_dir=f"{args.root_dir}/{args.save_dir}/"
+    if args.use_change:
+        save_dir=f"{args.root_dir}/{args.save_dir}/{args.classifier}_{args.threshold}_change"
+    else:
+        save_dir=f"{args.root_dir}/{args.save_dir}/{args.classifier}_{args.threshold}_openVocab"
+
+    cmd = f'mkdir -p {save_dir}'
+    subprocess.run(cmd, shell=True, check=True)
+    
     color_image_dir=f"{args.root_dir}/{args.color_dir}/"
     depth_image_dir=f"{args.root_dir}/{args.depth_dir}/"
     rendered_image_dir=f"{args.root_dir}/{args.renders_dir}/"
@@ -57,7 +66,22 @@ def setup_change_experiment():
             'prompts': prompts,
             'scale': scale,
             'rebuild_pcloud': args.new_pcloud,
-            'root_dir': args.root_dir}
+            'root_dir': args.root_dir,
+            'classifier': args.classifier}
+
+def clear_images(directory):
+    # One-line bash command to delete common image types
+    cmd = f'find "{directory}" -type f \\( -iname "*.jpg" -o -iname "*.jpeg" -o -iname "*.png" -o -iname "*.gif" -o -iname "*.bmp" -o -iname "*.tiff" -o -iname "*.webp" \\) -delete'    
+    subprocess.run(cmd, shell=True, check=True)
+
+def get_values_from_dict(d_in, tgt_key, default_val):
+    p_array=[]
+    for key in d_in:
+        if tgt_key in d_in[key]:
+            p_array.append(d_in[key][tgt_key])
+        else:
+            p_array.append(default_val)
+    return p_array
 
 if __name__ == '__main__':
     exp_params=setup_change_experiment()
@@ -69,14 +93,75 @@ if __name__ == '__main__':
                   exp_params['prompts'],
                   exp_params['params'],
                   exp_params['detection_threshold'],
-                  rebuild_pcloud=False)
-        
+                  rebuild_pcloud=exp_params['rebuild_pcloud'],
+                  classifier_type=exp_params['classifier'])
+
+    clear_images(exp_params['fList_new'].intermediate_save_dir)
+           
     for key in pcloud_fNames.keys():
-        image_list=build_change_cluster_images(
-            exp_params['fList_new'],
+        # Build the clusters
+        pcloud, clusters = build_change_clusters(exp_params['fList_new'],
             exp_params['fList_renders'],
             exp_params['params'],
             pcloud_fNames[key],
-            key)
+            exp_params['scale'])
+
+        # Draw the boxes
+        # from change_pcloud_utils.llm_utils import before_and_after_cluster_filter, multi_view_cluster_filter
+        # cl_filter=before_and_after_cluster_filter()
+        # mv_filter=multi_view_cluster_filter()
+        for cluster_idx, cluster in enumerate(clusters):
+            all_images=draw_boxes_around_cluster(exp_params['fList_new'],
+                                             exp_params['fList_renders'],
+                                             exp_params['params'],
+                                             pcloud,
+                                             cluster)
+            
+            pn = np.array(get_values_from_dict(all_images, 'max_prob', exp_params['detection_threshold']))
+
+            import pickle
+            save_struct={'exp_params': exp_params,
+                         'query': key,
+                         'all_images': all_images,
+                         'cluster': cluster}
+            file_prefix=key.replace(' ','_')
+            save_fName=exp_params['fList_new'].intermediate_save_dir+f"/{file_prefix}_{cluster_idx}.pkl"
+            with open(save_fName,'wb') as handle:
+                pickle.dump(save_struct, handle, protocol=pickle.HIGHEST_PROTOCOL)
+
+            write_change_cluster_images_to_disk(all_images,exp_params['fList_new'],key,cluster_idx)
+
+            # if pn.mean()>exp_params['detection_threshold']*1.2:
+            #     write_change_cluster_images_to_disk(all_images,exp_params['fList_new'],key,cluster_idx)
+
+            # at least 10% of the images looking at the target should be marked as
+            #   containing change - this will impact objects that are only visible
+            #   from one direction due to occlusions, but significantly cuts back
+            #   on spurious false positives
+            # valid_images=np.array([ 'new' in all_images[key] for key in all_images ])
+            # if (valid_images.sum()/valid_images.shape[0])>0.2:
+            #   write_change_cluster_images_to_disk(all_images,exp_params['fList_new'],key,cluster_idx)
+            
+            #   Filter clusters with LLM - comparing matching images
+            # if cl_filter.evaluate_multiple_image_pairs(all_images):
+            #     write_change_cluster_images_to_disk(all_images,exp_params['fList_new'],key,cluster_idx)
+
+            #   Story to LLM - giving rules and trying to classify object type
+            # if mv_filter.evaluate_cluster(all_images):
+            #     write_change_cluster_images_to_disk(all_images,exp_params['fList_new'],key,cluster_idx)
+
+            # Combine the before and after filter and a weak percentage filter
+            # if ((valid_images.sum()/valid_images.shape[0])>0.1) and cl_filter.evaluate_multiple_image_pairs(all_images):
+            #    write_change_cluster_images_to_disk(all_images,exp_params['fList_new'],key,cluster_idx)
+
+            #   baseline - write everything
+            # write_change_cluster_images_to_disk(all_images,exp_params['fList_new'],key,cluster_idx)
+
+        # image_list=build_change_cluster_images(
+        #     exp_params['fList_new'],
+        #     exp_params['fList_renders'],
+        #     exp_params['params'],
+        #     pcloud_fNames[key],
+        #     key)
 
 

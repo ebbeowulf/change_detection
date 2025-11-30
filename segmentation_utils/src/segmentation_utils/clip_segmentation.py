@@ -91,7 +91,6 @@ class clip_seg(image_segmentation):
             # print("%s = %f"%(self.prompts[dim],self.max_probs[dim]))            
             self.probs[dim]=P2_large[dim]
             self.masks[dim]=self.probs[dim]>threshold
-        pdb.set_trace()
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -116,7 +115,6 @@ if __name__ == '__main__':
         image_pil=Image.fromarray(image_rot)
         CS.process_image(image_pil, threshold=args.threshold)
         mask=np.rot90(CS.get_mask(0),axes=(0,1)).cpu().numpy()
-        pdb.set_trace()
     else:
         print(f"Invalid option {args.options}")
         import sys

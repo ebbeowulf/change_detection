@@ -8,6 +8,7 @@ fi
 
 BASH_HOME=$CHANGE_HOME/change_nerf_utils/bash
 PYTHON_HOME=$CHANGE_HOME/change_nerf_utils/src/change_nerf_utils
+
 BASE_DIR=$1
 ROTATE_IMAGES=${2:-1} # by default rotate images
 COLMAP_NERF_DIR=$BASE_DIR/nerf_colmap
@@ -57,11 +58,13 @@ fi
 
 # Step 1: Convert the initial pose file into a format COLMAP can use
 NEW_POSE_FILE=$BASE_DIR/camera_pose.txt
-cmd="python ${PYTHON_HOME}/generate_initial_poses.py $BASE_DIR/poses.csv $NEW_POSE_FILE"
-echo $cmd
-eval $cmd
+if [[ ! -f $NEW_POSE_FILE ]]; then
+    cmd="python ${PYTHON_HOME}/generate_initial_poses.py $BASE_DIR/poses.csv $NEW_POSE_FILE"
+    echo $cmd
+    eval $cmd
+fi
 
-# Step 2: Run the image registration step using the built-in nerfstudio tool
+# Step 2: Run the image registration step using colmap
 cd $BASE_DIR/
 SPARSE=$COLMAP_NERF_DIR/colmap/sparse_orig
 mkdir -p $SPARSE
@@ -90,23 +93,24 @@ fi
 
 # Step 2.5 - Identify the sparse directory with the best coverage of the initial poses
 #   note that we only check the 0 + 1 directories. If >1 exists, then it won't be used
-if [[ -d $SPARSE/1 ]]; then
-    cmd="colmap model_converter --input_path $SPARSE/0/ --output_path $SPARSE/0/ --output_type TXT"
-    echo $cmd
-    eval $cmd
+./set_best_colmap_subdir.sh $SPARSE png
+# if [[ -d $SPARSE/1 ]]; then
+#     cmd="colmap model_converter --input_path $SPARSE/0/ --output_path $SPARSE/0/ --output_type TXT"
+#     echo $cmd
+#     eval $cmd
 
-    cmd="colmap model_converter --input_path $SPARSE/1/ --output_path $SPARSE/1/ --output_type TXT"
-    echo $cmd
-    eval $cmd
+#     cmd="colmap model_converter --input_path $SPARSE/1/ --output_path $SPARSE/1/ --output_type TXT"
+#     echo $cmd
+#     eval $cmd
 
-    CNT0=$(grep png $SPARSE/0/images.txt | wc -l)
-    CNT1=$(grep png $SPARSE/1/images.txt | wc -l)
-    if [[ $CNT1 -gt $CNT0 ]]; then
-        echo "Using sparse/1/ directory for alignment since it has more images ($CNT1 vs $CNT0)"
-        mv $SPARSE/0 $SPARSE/0_old
-        ln -s $SPARSE/1 $SPARSE/0
-    fi
-fi
+#     CNT0=$(grep png $SPARSE/0/images.txt | wc -l)
+#     CNT1=$(grep png $SPARSE/1/images.txt | wc -l)
+#     if [[ $CNT1 -gt $CNT0 ]]; then
+#         echo "Using sparse/1/ directory for alignment since it has more images ($CNT1 vs $CNT0)"
+#         mv $SPARSE/0 $SPARSE/0_old
+#         ln -s $SPARSE/1 $SPARSE/0
+#     fi
+# fi
 
 Step 3: Align the COLMAP model to the initial poses
 SPARSE_GEO=$COLMAP_NERF_DIR/colmap/sparse_geo
@@ -145,7 +149,7 @@ fi
 cd $BASE_DIR/
 rm -rf $COLMAP_NERF_DIR/images
 ln -s $COLOR_IMAGE_DIR $COLMAP_NERF_DIR/images
-cmd="ns-train splatfacto --data nerf_colmap"
+#cmd="ns-train splatfacto --data nerf_colmap"
 echo "Run one of the following commands from the $BASE_DIR to start training:"
 echo "1) ns-train splatfacto --data nerf_colmap"
 echo "2) ns-train depth-nerfacto --data nerf_colmap"

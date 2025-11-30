@@ -55,7 +55,7 @@ if [[ ! -f $SPARSE_0/images.bin ]]; then
 
     echo "Step 3 - Match features with existing images"
     cmd="colmap vocab_tree_matcher --database_path ${COLMAP_DIR}/database.db --VocabTreeMatching.vocab_tree_path $VOCAB_TREE --SiftMatching.use_gpu 1"
-    # cmd="colmap exhaustive_matcher --database_path ${COLMAP_DIR}/database.db --SiftMatching.use_gpu 1"
+    #cmd="colmap exhaustive_matcher --database_path ${COLMAP_DIR}/database.db --SiftMatching.use_gpu 1"
     echo $cmd
     eval $cmd
 

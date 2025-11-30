@@ -44,6 +44,7 @@ def handle_client(conn, VLM):
         images.append(image)
 
     result = query_llm(VLM, text, images)  # Pass PIL images directly
+    print(result)
     conn.sendall(json.dumps(result).encode())
     conn.close()
 
@@ -54,7 +55,7 @@ if __name__ == '__main__':
     parser.add_argument('--host', type=str, default=HOST, help='Host to bind the server')
     parser.add_argument('--port', type=int, default=PORT, help='Port to bind the server')
     parser.add_argument('--llm_library', type=str, default='ollama', help='LLM library to use (e.g., ollama)')
-    parser.add_argument('--llm_model', type=str, default='llama4:scout', help='LLM library to use (e.g., ollama)')
+    parser.add_argument('--llm_model', type=str, default='llama4:scout', help='LLM library to use (e.g., llama4:scout)')
     args = parser.parse_args()
 
     if args.llm_library == 'ollama':

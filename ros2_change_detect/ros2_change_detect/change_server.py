@@ -61,6 +61,7 @@ class change_server(Node):
             return response
 
         top1_idx=np.argmax(val_array)
+        print(f"Top1 cluster ID={top1_idx}")
         response.bbox3d=self.loaded_clusters['clusters'][top1_idx].box.reshape((6,)).tolist()
 
         # sample points randomly for now

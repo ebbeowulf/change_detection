@@ -102,9 +102,6 @@ def main():
                 num_runs=int(np.ceil(all_image_files.shape[0]/NUM_MULTI_IMAGES))
                 for i in range(num_runs):
                     capture_results[i]=run_multi_image_inference(args.model_name, np.random.choice(all_image_files,NUM_MULTI_IMAGES).tolist())
-            # pdb.set_trace()
-            # for image_name in all_image_files:
-            #     capture_results[image_name]=run_single_image_inference(args.model_name, image_name)
         all_results.append(capture_results)
         
     import pickle

@@ -121,7 +121,7 @@ if __name__ == '__main__':
     parser.add_argument('prompt',type=str,help='where to save the resulting images')
     parser.add_argument('--threshold',type=float, default=0.3, help="fixed threshold to apply for change detection (default=0.3)")
     parser.add_argument('--draw-boxes', default=None, help="Optional draw boxes ('dbscan','sam','all')")
-    parser.add_argument('--model', default='clipseg', help="Select different open vocabulary segmentation models ('clipseg','yolo-world','dino')")
+    parser.add_argument('--model', default='clipseg', help="Select different open vocabulary segmentation models ('clipseg','yolo-world','dino','sam3')")
     args = parser.parse_args()
 
     prompts=[args.prompt]
@@ -134,20 +134,29 @@ if __name__ == '__main__':
     elif args.model=='dino':
         from segmentation_utils.dino_segmentation import dino_segmentation
         CSmodel=dino_segmentation(prompts)
+    elif args.model=='sam3':
+        from segmentation_utils.sam3_segmentation import sam3_segmentation
+        CSmodel=sam3_segmentation(prompts,threshold=0.1)
 
     image1=Image.open(args.image1)
-    CSmodel.process_image(image1)
-    prob1 = CSmodel.get_prob_array(0).to('cpu').numpy()
     image2=Image.open(args.image2)
+    im_out=np.array(image2)
+    CSmodel.process_image(image1)
+    prob1 = CSmodel.get_prob_array(0)
+    if prob1 is None:
+        prob1=np.zeros(im_out.shape[:2],dtype=float)
+    else:
+        prob1=prob1.to('cpu').numpy()
     CSmodel.process_image(image2)
-    prob2 = CSmodel.get_prob_array(0).to('cpu').numpy()
-
+    prob2 = CSmodel.get_prob_array(0)
+    if prob2 is None:
+        prob2=np.zeros(im_out.shape[:2],dtype=float)
+    else:
+        prob2=prob2.to('cpu').numpy()
 
     delta=(prob2-prob1)
     print(f"MAX DELTA={delta.max()}")
-
     mask=(delta>args.threshold)
-    im_out=np.array(image2)
 
     if args.draw_boxes is None:
         im_out[:,:,0][mask]=255
@@ -163,12 +172,16 @@ if __name__ == '__main__':
             for bbox in sboxes:
                 im_out=cv2.rectangle(im_out, bbox[1][:2], bbox[1][2:], (0,0,255), 2)
 
-    im_out[:,:,:3]=im_out[:,:,[2,1,0]]
+    # im_out[:,:,:3]=im_out[:,:,[2,1,0]]
     if im_out.shape[1]>480:
         import cv2
         dim=(int(im_out.shape[1]/2),int(im_out.shape[0]/2))
         im_out=cv2.resize(im_out,dim)        
 
-    print("Added Objects")
-    cv2.imshow("delta",im_out)
-    cv2.waitKey(0)
+    import matplotlib.pyplot as plt
+    plt.imshow(im_out)
+    plt.show()
+    # pdb.set_trace()
+    # print("Added Objects")
+    # cv2.imshow("delta",im_out)
+    # cv2.waitKey(0)
