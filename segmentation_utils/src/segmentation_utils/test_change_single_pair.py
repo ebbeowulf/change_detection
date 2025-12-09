@@ -77,6 +77,7 @@ def refine_boxes_with_sam(colorI,
         rowD,colD=np.nonzero(subR)
         whichP=np.random.choice(np.arange(rowD.shape[0]),10)
         xy_points=np.vstack((colD[whichP]+box[1][0],rowD[whichP]+box[1][1])).transpose().tolist()
+        
         sam_mask=sam_segmentation(colorI,xy_points)        
         # ctr=((box[1][:2]+box[1][2:])/2.0).astype(int)
         # sam_mask=sam_segmentation(colorI,[ctr.tolist()])        
@@ -122,6 +123,7 @@ if __name__ == '__main__':
     parser.add_argument('--threshold',type=float, default=0.3, help="fixed threshold to apply for change detection (default=0.3)")
     parser.add_argument('--draw-boxes', default=None, help="Optional draw boxes ('dbscan','sam','all')")
     parser.add_argument('--model', default='clipseg', help="Select different open vocabulary segmentation models ('clipseg','yolo-world','dino','sam3')")
+    parser.add_argument('--filter', type=str, default='', help='Apply filtering to the mask [median, erosion]')
     args = parser.parse_args()
 
     prompts=[args.prompt]
@@ -153,10 +155,26 @@ if __name__ == '__main__':
         prob2=np.zeros(im_out.shape[:2],dtype=float)
     else:
         prob2=prob2.to('cpu').numpy()
-
     delta=(prob2-prob1)
+    pdb.set_trace()
+    if args.filter=='blur':
+        blur = cv2.GaussianBlur(delta, (7, 7), 0) # Kernel size is 5x5, sigmaX=0
+        delta=blur
     print(f"MAX DELTA={delta.max()}")
     mask=(delta>args.threshold)
+
+    if args.filter=='median':
+        print('applying median filtering')
+        # OpenCV expects 8-bit images for medianBlur; convert boolean mask to uint8
+        d2=cv2.medianBlur(mask.astype(np.uint8), 7)
+        mask=d2.astype(bool)
+        print('applying median filtering')
+    elif args.filter=='erosion':
+        print('applying erosion')
+        kernel = np.ones((7, 7), np.uint8)
+        # Use uint8 (0/1) for morphological ops; OpenCV doesn't accept default Python ints
+        d2 = cv2.erode(mask.astype(np.uint8), kernel, iterations=1)
+        mask=d2.astype(bool)
 
     if args.draw_boxes is None:
         im_out[:,:,0][mask]=255

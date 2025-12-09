@@ -8,6 +8,7 @@ from change_pcloud_utils.pcloud_cluster_utils import build_change_clusters, draw
 import numpy as np
 from change_pcloud_utils.colmap_utils import get_camera_params, build_file_list, build_rendered_file_list
 import subprocess
+import pdb
 
 def setup_change_experiment():
     parser = argparse.ArgumentParser()
@@ -16,7 +17,7 @@ def setup_change_experiment():
     parser.add_argument('--color_dir',type=str,default='images_combined',help='where are the color images? (default=images_combined)')
     parser.add_argument('--renders_dir',type=str,default='renders',help='where are the rendered images? (default=renders)')
     parser.add_argument('--depth_dir',type=str,default='renders',help='where are the depth images? Use renders if nerfstudio generated. Or depth_rotated if from the robot (default=renders)')
-    parser.add_argument('--colmap_dir',type=str,default='colmap_combined/sparse_geo/0',help='where are the images + cameras.txt files? (default=colmap_combined/sparse_geo/0)')
+    parser.add_argument('--colmap_dir',type=str,default='colmap_combined/sparse_combined/0',help='where are the images + cameras.txt files? (default=colmap_combined/sparse_combined/0)')
     parser.add_argument('--frame_keyword',type=str,default="new",help='a keyword to use when parsing the transforms file (default=new)')
     parser.add_argument('--save_dir',type=str,default='save_results', help='subdirectory of root_dir in which to store the intermediate files (default=save_results)')
     parser.add_argument('--queries', type=str, nargs='*', default=["General clutter", "Small items on surfaces", "Floor-level objects", "Decorative and functional items", "Trash items"],
@@ -72,7 +73,12 @@ def setup_change_experiment():
 def clear_images(directory):
     # One-line bash command to delete common image types
     cmd = f'find "{directory}" -type f \\( -iname "*.jpg" -o -iname "*.jpeg" -o -iname "*.png" -o -iname "*.gif" -o -iname "*.bmp" -o -iname "*.tiff" -o -iname "*.webp" \\) -delete'    
-    subprocess.run(cmd, shell=True, check=True)
+    subprocess.run(cmd, shell=True, check=False)
+
+def clear_clusters(directory):
+    # One-line bash command to delete common image types
+    cmd = f'find {directory}/*[0-9].pkl -delete'
+    subprocess.run(cmd, shell=True, check=False)
 
 def get_values_from_dict(d_in, tgt_key, default_val):
     p_array=[]
@@ -97,19 +103,18 @@ if __name__ == '__main__':
                   classifier_type=exp_params['classifier'])
 
     clear_images(exp_params['fList_new'].intermediate_save_dir)
+    clear_clusters(exp_params['fList_new'].intermediate_save_dir)
            
     for key in pcloud_fNames.keys():
         # Build the clusters
-        pcloud, clusters = build_change_clusters(exp_params['fList_new'],
-            exp_params['fList_renders'],
-            exp_params['params'],
-            pcloud_fNames[key],
+        pcloud, clusters = build_change_clusters(pcloud_fNames[key],
             exp_params['scale'])
 
-        # Draw the boxes
-        # from change_pcloud_utils.llm_utils import before_and_after_cluster_filter, multi_view_cluster_filter
-        # cl_filter=before_and_after_cluster_filter()
-        # mv_filter=multi_view_cluster_filter()
+        # Can apply additional merge opt at this point if so desired...
+        # clusters=merge_by_bounding_box(clusters, pcloud, fList_new, fList_renders, params)
+        from change_pcloud_utils.pcloud_cluster_utils import merge_by_bounding_box
+        clusters=merge_by_bounding_box(clusters, pcloud, exp_params['fList_new'], exp_params['params'],-0.8)
+
         for cluster_idx, cluster in enumerate(clusters):
             all_images=draw_boxes_around_cluster(exp_params['fList_new'],
                                              exp_params['fList_renders'],

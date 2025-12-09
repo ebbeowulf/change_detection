@@ -9,7 +9,7 @@ NUM_MULTI_IMAGES=4  # max number of images to send for processing at a given tim
 #   the multi-view-cluster-filter tries to show the LLM a bunch of images of the object
 #   at the same time to remove bad candidates
 class multi_view_cluster_filter():
-    def __init__(self):
+    def __init__(self, image_scale:float=1.0):
         self.RESULTS_TEMPLATE=single_level_results_template(["object","is_pickup"],[str,bool],["<type of object>", "<True/False>"])
         #self.SUMMARY_TEMPLATE=single_level_results_template(["object"],[str],["<describe object in 5 words or less>"])
         self.TASK_DESCRIPTION = ['We are deciding on tasks for a robot that can pick small stuff up and put them away.',
@@ -23,11 +23,12 @@ class multi_view_cluster_filter():
         for task in self.TASK_DESCRIPTION:
             self.PROMPT+=task
         self.PROMPT+="Return an answer in JSON format as " + self.RESULTS_TEMPLATE.generate_format_prompt()
+        self.scale=image_scale
         print(self.PROMPT)
 
     def evaluate_cluster(self, all_images:list):
-        def get_images_from_set(all_images:list, key_set):
-            return [ all_images[key]['new'] for key in key_set ]
+        def get_images_from_set(all_images:list, key_set, scale:float=1.0):                     
+            return [ cv2.resize(all_images[key]['new'], (0,0), fx=scale, fy=scale) for key in key_set] 
 
         keys_with_new = np.array([key for key, subdict in all_images.items() if "new" in subdict])
         all_results=[]
@@ -35,7 +36,7 @@ class multi_view_cluster_filter():
         cnt_negative=0
         if keys_with_new.shape[0]>0:
             if keys_with_new.shape[0]<=NUM_MULTI_IMAGES:
-                text_results= send_data_to_llm(self.PROMPT, get_images_from_set(all_images, keys_with_new.tolist()))
+                text_results= send_data_to_llm(self.PROMPT, get_images_from_set(all_images, keys_with_new.tolist(), self.scale))
                 res=self.RESULTS_TEMPLATE.recover_json(text_results)
                 if res['is_pickup']:
                     cnt_positive+=1
@@ -46,7 +47,7 @@ class multi_view_cluster_filter():
                 num_runs=int(np.ceil(keys_with_new.shape[0]/NUM_MULTI_IMAGES))
                 for i in range(num_runs):
                     selected_images = np.random.choice(keys_with_new, NUM_MULTI_IMAGES, replace=False)
-                    text_results= send_data_to_llm(self.PROMPT, get_images_from_set(all_images, selected_images.tolist()))
+                    text_results= send_data_to_llm(self.PROMPT, get_images_from_set(all_images, selected_images.tolist(), self.scale))
                     res=self.RESULTS_TEMPLATE.recover_json(text_results)
                     if res['is_pickup']:
                         cnt_positive+=1

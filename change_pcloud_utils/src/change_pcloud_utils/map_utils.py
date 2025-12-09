@@ -18,7 +18,8 @@ DBSCAN_EPS=0.018 # allows for connections in cells full range of surrounding cub
 CLUSTER_MIN_COUNT=10000
 CLUSTER_PROXIMITY_THRESH=0.3
 CLUSTER_TOUCHING_THRESH=0.05
-
+DBSCAN_WEIGHTED_EPS=0.05
+DBSCAN_WEIGHTED_MIN_SAMPLES=2200
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Create a list of all of the objects recognized by yolo
@@ -573,7 +574,135 @@ class pcloud_from_images():
 
 TIME_STRUCT={'count': 0, 'times':np.zeros((3,),dtype=float)}
 
-def get_distinct_clusters(pcloud, 
+# def voxel_down_sample_with_prob(pts:np.ndarray, voxel_size, probs, agg="mean"):
+#     # pcd: open3d.geometry.PointCloud
+#     # probs: numpy array of shape (N,) with per-point probabilities
+#     # agg: "mean", "max", "median", or "sum"
+
+#     # Compute voxel indices
+#     voxel_indices = np.floor(pts / voxel_size).astype(np.int32)
+#     # Hash voxel indices into a single key
+#     keys, inverse = np.unique(voxel_indices, axis=0, return_inverse=True)
+
+#     new_pts = []
+#     new_probs = []
+#     for i in range(len(keys)):
+#         mask = (inverse == i)
+#         voxel_points = pts[mask]
+#         voxel_probs = probs[mask]
+
+#         # Representative point = centroid
+#         centroid = voxel_points.mean(axis=0)
+#         new_pts.append(centroid)
+
+#         # Aggregate probability
+#         if agg == "mean":
+#             new_probs.append(voxel_probs.mean())
+#         elif agg == "max":
+#             new_probs.append(voxel_probs.max())
+#         elif agg == "median":
+#             new_probs.append(np.median(voxel_probs))
+#         elif agg == "sum":
+#             new_probs.append(voxel_probs.sum())
+
+#     return np.array(new_pts), np.array(new_probs)
+
+def voxel_downsample_with_prob_torch(points:torch.tensor, 
+                                     probs:torch.tensor, 
+                                     voxel_size, agg="mean", device="cuda"):
+    """
+    points: (N,3) torch tensor
+    probs: (N,) torch tensor
+    voxel_size: float
+    agg: "mean", "max", "sum"
+    device: "cuda" or "cpu"
+    """
+    # Ensure probs has the same dtype and device as points
+    probs = probs.to(dtype=points.dtype, device=points.device)
+    
+    # Compute voxel indices
+    voxel_indices = torch.floor(points / voxel_size).to(torch.int64)
+
+    # Hash voxel indices into a single integer key
+    # (works up to large ranges; adjust scaling if needed)
+    max_range = voxel_indices.max(dim=0).values + 1
+    keys = (voxel_indices[:,0] * max_range[1] * max_range[2] +
+            voxel_indices[:,1] * max_range[2] +
+            voxel_indices[:,2])
+
+    # Get unique voxels
+    unique_keys, inverse = torch.unique(keys, return_inverse=True)
+
+    # Aggregate positions
+    if agg == "mean":
+        new_pts = torch.zeros((len(unique_keys), 3), dtype=points.dtype, device=device)
+        new_probs = torch.zeros(len(unique_keys), dtype=points.dtype, device=device)
+        new_pts.index_add_(0, inverse, points)
+        new_probs.index_add_(0, inverse, probs)
+        counts = torch.bincount(inverse, minlength=len(unique_keys)).float()
+        new_pts /= counts[:,None]
+        new_probs /= counts
+    elif agg == "max":
+        new_pts = torch.zeros((len(unique_keys), 3), dtype=points.dtype, device=device)
+        new_probs = torch.full((len(unique_keys),), -float("inf"), dtype=points.dtype, device=device)
+        # scatter_reduce is available in PyTorch >= 1.12
+        new_pts = torch.zeros((len(unique_keys), 3), dtype=points.dtype, device=device)
+        new_probs = torch.zeros(len(unique_keys), dtype=points.dtype, device=device)
+        new_pts.index_add_(0, inverse, points)  # centroid approx
+        new_probs = torch.scatter_reduce(probs, 0, inverse, reduce="amax")
+    elif agg == "sum":
+        new_pts = torch.zeros((len(unique_keys), 3), dtype=points.dtype, device=device)
+        new_probs = torch.zeros(len(unique_keys), dtype=points.dtype, device=device)
+        new_pts.index_add_(0, inverse, points)
+        new_probs.index_add_(0, inverse, probs)
+        counts = torch.bincount(inverse, minlength=len(unique_keys)).float()
+        new_pts /= counts[:,None]  # centroid
+        # sum of probs already computed
+
+    return new_pts, new_probs
+
+def get_weighted_clusters(pts_original:torch.tensor,
+                          weights_original:torch.tensor,
+                          gridcell_size=DBSCAN_GRIDCELL_SIZE, 
+                          eps=DBSCAN_WEIGHTED_EPS, 
+                          min_samples=DBSCAN_WEIGHTED_MIN_SAMPLES, 
+                          cluster_min_count=CLUSTER_MIN_COUNT, 
+                          floor_threshold=0.1):
+    clouds=[]
+    if pts_original.shape[0]<cluster_min_count:
+        return clouds
+    
+    if gridcell_size>0:
+        ptsT, weightsT=voxel_downsample_with_prob_torch(pts_original,
+                                                        weights_original,
+                                                        gridcell_size,
+                                                        agg="sum")
+    else:
+        ptsT=pts_original
+        weightsT=weights_original
+    pts=ptsT.cpu().numpy()
+    weights=weightsT.cpu().numpy()
+    # t_array.append(time.time())
+    p2=DBSCAN(eps=eps, min_samples=min_samples,n_jobs=10).fit(pts,sample_weight=weights)
+
+    # Need to get the cluster sizes... so we can focus on the largest clusters only
+    cl_cnt=np.array([ (p2.labels_==cnt).sum() for cnt in range(p2.labels_.max() + 1) ])
+    validID=np.where(cl_cnt>cluster_min_count)[0]
+    if validID.shape[0]>0:
+        sortedI=np.argsort(-cl_cnt[validID])
+
+        for id in validID[sortedI]:
+            whichP=(p2.labels_==id)
+            pts2=pts[whichP]
+            # weights2=weights[whichP]
+            whichP2=(pts2[:,2]>floor_threshold)
+            if whichP2.sum()>cluster_min_count:
+                clouds.append(object_pcloud(pts2[whichP2], sample=False))
+                clouds[-1].estimate_probability(pts_original,weights_original) #calculates stats from original point stack instead of voxel grid
+
+    return clouds
+
+def get_distinct_clusters(pcloud, #o3d.geometry.PointCloud() 
                           gridcell_size=DBSCAN_GRIDCELL_SIZE, 
                           eps=DBSCAN_EPS, 
                           min_samples=DBSCAN_MIN_SAMPLES, 
@@ -586,6 +715,7 @@ def get_distinct_clusters(pcloud,
     clouds=[]
     if pcloud is None or len(pcloud.points)<cluster_min_count:
         return clouds
+    
     if gridcell_size>0:
         pcd_small=pcloud.voxel_down_sample(gridcell_size)
         t_array.append(time.time())
@@ -602,7 +732,7 @@ def get_distinct_clusters(pcloud,
     if validID.shape[0]>0:
         sortedI=np.argsort(-cl_cnt[validID])
 
-        for id in validID[sortedI][:10]:
+        for id in validID[sortedI]:
             whichP=(p2.labels_==id)
             pts2=pts[whichP]
             whichP2=(pts2[:,2]>floor_threshold)
@@ -616,7 +746,6 @@ def get_distinct_clusters(pcloud,
         print(TIME_STRUCT['times']/500)
         TIME_STRUCT['times']=np.zeros((3,),dtype=float)
         # pdb.set_trace()
-
     return clouds
 
 class object_pcloud():
@@ -667,14 +796,14 @@ class object_pcloud():
         self.prob_stats['max']=original_prob[filt].max().to('cpu').item()
         self.prob_stats['mean']=original_prob[filt].mean().to('cpu').item()
         self.prob_stats['prob_sum']=original_prob[filt].sum().to('cpu').item()
-        self.prob_stats['median']=original_prob[filt].median().to('cpu').item()
-        self.prob_stats['pcount']=filt.shape[0]
+        self.prob_stats['pcount']=filt.sum()
+        self.prob_stats['stdev']=original_prob[filt].std().to('cpu').item()
 
         # Inverse stats
-        self.prob_stats['stdev']=original_prob[filt].std().to('cpu').item()
-        from scipy.stats import entropy
-        prob_dist=original_prob[filt]/self.prob_stats['mean']
-        self.prob_stats['entropy']=entropy(prob_dist.to('cpu').numpy()+1e-6)
+        # self.prob_stats['stdev']=original_prob[filt].std().to('cpu').item()
+        # from scipy.stats import entropy
+        # prob_dist=original_prob[filt]/self.prob_stats['mean']
+        # self.prob_stats['entropy']=entropy(prob_dist.to('cpu').numpy()+1e-6)
     
     def size(self):
         return self.pts_shape[0]
@@ -703,10 +832,7 @@ class object_pcloud():
 def identify_related_images_from_bbox(cam_info:camera_params, 
                             fList:rgbd_file_list, 
                             primary_image_key:int, 
-                            xy_bbox:np.array, #[xmin, ymin, xmax, ymax]
-                            dist_threshold:float,
-                            angular_dist:float):
-
+                            xy_bbox:np.array): #[xmin, ymin, xmax, ymax]
     depth_fName=fList.get_depth_fileName(primary_image_key)
     depthI=cv2.imread(depth_fName,-1)
     #Calculuate median depth over area
@@ -718,34 +844,16 @@ def identify_related_images_from_bbox(cam_info:camera_params,
     import pdb
     M=np.matmul(cam_info.rot_matrix,fList.get_pose(primary_image_key))
     object_pose=np.matmul(M,ctrV)
-    return identify_related_images_global_pose(cam_info, fList, object_pose, dist_threshold, angular_dist)     
+    return identify_related_images_global_pose(cam_info, fList, object_pose)     
 
-# Based on angles alone, identify a list of images that point at the same bbox
-#   This example uses a known object pose in global coordinates as a starting point
-#   Available thresholds are:
-#       dist_threshold = distance from object to centroid (requires loading depth image)
-#       angular_dist   = maximum offset angle from image center
 def identify_related_images_global_pose(cam_info:camera_params, 
                             fList:rgbd_file_list, 
-                            object_pose:np.array,
-                            dist_threshold:float=None,
-                            angular_dist:float=None):
-
+                            object_pose:np.array):
     # Need to load depth image
-    stats=[]
-    for key in fList.keys():
+    valid_imgs=[]
+    for key in fList.keys():        
         M=np.matmul(cam_info.rot_matrix,fList.get_pose(key))
-        V1=np.matmul(M[:3,:3],[0,0,1])
-        V2=object_pose[:3]-M[:3,3]
-        V2_dist=np.sqrt((V2**2).sum())
-        angle=np.arccos((V1*V2/V2_dist).sum())
-        stats.append([np.abs(angle),V2_dist, key])
-    stats=np.array(stats)
-    validF=stats[:,1]>0
-    if angular_dist is not None:
-        validF=validF*(stats[:,0]<angular_dist)
-    if dist_threshold is not None:
-        validF=validF*(stats[:,1]<dist_threshold)
-    if validF.sum()>0:
-        return stats[np.where(validF)[0],2]
-    return []
+        row,col=cam_info.globalXYZ_to_imageRC(object_pose[0],object_pose[1],object_pose[2],M)
+        if row>=0 and row<cam_info.height and col>=0 and col<cam_info.width:
+            valid_imgs.append(key)
+    return valid_imgs

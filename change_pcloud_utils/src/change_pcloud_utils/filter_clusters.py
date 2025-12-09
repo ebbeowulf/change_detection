@@ -1,5 +1,6 @@
 import numpy as np
 import pdb
+import random
 import matplotlib.pyplot as plt
 import matplotlib.image as mpimg
 import json
@@ -13,7 +14,7 @@ from PIL import Image
 def gaussian_dist_function(val1, std1):
     return np.exp(-0.5*np.power(val1/std1,2))
 
-def label_clusters(cluster_dict, query, max_images=10):
+def label_clusters(cluster_dict, query, max_images=21):
     labels = {}
 
     # Create one persistent figure
@@ -21,14 +22,21 @@ def label_clusters(cluster_dict, query, max_images=10):
     fig = plt.figure(figsize=(15, 9))
 
     for cluster, data in cluster_dict.items():
-        images = data['images'][:max_images]
+        
+        # Select up to `max_images` at random (no replacement). Keep original list
+        # if it has <= max_images entries.
+        imgs = list(data.get('images', []))
+        if len(imgs) > max_images:
+            images = random.sample(imgs, max_images)
+        else:
+            images = imgs
 
         if not images:
             print(f"Cluster {cluster}: No images available.")
             continue
         else:
             n = len(images)
-            cols = min(5, n)
+            cols = min(7, n)
             rows = (n + cols - 1) // cols
 
             fig.clf()  # clear old contents
@@ -172,12 +180,12 @@ class evaluate():
                 self.count_invalid+=1
             else:
                 self.count_valid+=1
-                if labels[cl_key]['changed']:
-                    self.stats['TP']+=self.threshold<=v_pct
-                    self.stats['FN']+=self.threshold>v_pct
-                else:
-                    self.stats['FP']+=self.threshold<=v_pct
-                    self.stats['TN']+=self.threshold>v_pct    
+            if labels[cl_key]['changed']:
+                self.stats['TP']+=self.threshold<=v_pct
+                self.stats['FN']+=self.threshold>v_pct
+            else:
+                self.stats['FP']+=self.threshold<=v_pct
+                self.stats['TN']+=self.threshold>v_pct    
 #################
 # prob_mean_filter
 #   Tracks the max probability of the object per image that should be looking at the cluster
@@ -217,6 +225,18 @@ class pcloud_size_filter(evaluate):
         p_count=np.array(get_values_from_dict(all_images, 'pt_count',0)).sum()
         return p_count
 
+#################
+# image cnt filter
+#   Counts the number of images of the target
+#################
+class image_cnt_filter(evaluate):
+    def __init__(self, threshold_range=np.arange(0.0,10,1)):
+        super().__init__(threshold_range)
+    
+    def calculate_score(self, all_images, cluster=None, exp_params=None):
+        valid_images=np.array([ 'new' in all_images[key] for key in all_images ])
+        return valid_images.shape()
+    
 #################
 # prob mean with size filter
 #################
@@ -310,13 +330,44 @@ class before_and_after_filter(evaluate):
 # is_pickup_filter - query llm about picking up objects specifically
 #################
 class is_pickup_filter(evaluate):
-    def __init__(self, threshold_range=np.arange(0.0,1.0,0.02)):
+    def __init__(self, threshold_range=np.arange(0.0,1.0,0.02),image_scale=1.0):
         self.llm_obj=multi_view_cluster_filter()
         super().__init__(threshold_range)
     
     def calculate_score(self, all_images, cluster=None, exp_params=None):
         return self.llm_obj.evaluate_cluster(all_images)
-    
+
+def get_filter_by_name(filter):
+    if filter=='prob_mean_filter':
+        return prob_mean_filter()
+    elif filter=='pct_valid_filter':
+        return pct_valid_filter()
+    elif filter=='render_and_after_filter':
+        return before_and_after_filter(use_render=True)
+    elif filter=='before_and_after_filter':
+        return before_and_after_filter(use_render=False)     
+    elif filter=='pcloud_size_filter':
+         return pcloud_size_filter()     
+    elif filter=='prob_mean_and_size':
+        return prob_mean_and_size()   
+    elif filter=='image_cnt_filter':
+        return image_cnt_filter()  
+    elif filter=='combo_pmf_pctV':
+        F1=prob_mean_filter()
+        F2=pct_valid_filter()
+        return multiply2_filter(F1,F2)     
+    elif filter=='combo_pctV_baF':
+        F1=pct_valid_filter()
+        F2=before_and_after_filter(use_render=False)
+        return multiply2_filter(F1,F2)     
+    elif filter=='is_pickup_filter':
+        return is_pickup_filter()     
+    elif filter=='combo_pctV_pickup':
+        F1=pct_valid_filter()
+        F2=is_pickup_filter()
+        return multiply2_filter(F1,F2)     
+    return None
+
 ###########################
 ## multi-evaluator
 ##   this is a hack - stores the intermediate evaluations per directory
@@ -325,7 +376,8 @@ class is_pickup_filter(evaluate):
 ##   functions
 ###########################
 def multi_evaluator(tgt_dir, queries):
-    active=['prob_mean_filter','pct_valid_filter','combo_pmf_pctV']
+    # active=['prob_mean_filter','pct_valid_filter','combo_pmf_pctV']
+    active=['pct_valid_filter']
     # active=['pct_valid_filter','combo_pmf_pctV','before_and_after_filter','combo_pctV_baF']
     # active=['is_pickup_filter', 'combo_pctV_pickup']
     filterBank={}
@@ -335,41 +387,23 @@ def multi_evaluator(tgt_dir, queries):
             # Try to open this file - if exists, move on, else will need to execute
             with open(filterName, 'rb') as handle:
                 filterBank[filter]=pickle.load(handle)
+            is_valid=[ prompt in filterBank[filter] for prompt in queries ]
+            if sum(is_valid)<len(queries):
+                filterBank[filter]=None
+                raise Exception("all prompts not present - rebuilding {filterName}")
         except Exception as e:
             # When a new filter is added, put the initialization code here - keeping things separated by prompt
             #    for further analysis
-            if filter=='prob_mean_filter':
-                filterBank['prob_mean_filter']={ prompt:prob_mean_filter() for prompt in queries }
-            elif filter=='pct_valid_filter':
-                filterBank['pct_valid_filter']={ prompt:pct_valid_filter() for prompt in queries }
-            elif filter=='render_and_after_filter':
-                filterBank['render_and_after_filter']={ prompt:before_and_after_filter(use_render=True) for prompt in queries }
-            elif filter=='before_and_after_filter':
-                filterBank['before_and_after_filter']={ prompt:before_and_after_filter(use_render=False) for prompt in queries }     
-            elif filter=='pcloud_size_filter':
-                filterBank['pcloud_size_filter']={ prompt:pcloud_size_filter() for prompt in queries }     
-            elif filter=='prob_mean_and_size':
-                filterBank['prob_mean_and_size']={ prompt:prob_mean_and_size() for prompt in queries }     
-            elif filter=='combo_pmf_pctV':
-                F1=prob_mean_filter()
-                F2=pct_valid_filter()
-                filterBank['combo_pmf_pctV']={ prompt:multiply2_filter(F1,F2) for prompt in queries }     
-            elif filter=='combo_pctV_baF':
-                F1=pct_valid_filter()
-                F2=before_and_after_filter(use_render=False)
-                filterBank['combo_pctV_baF']={ prompt:multiply2_filter(F1,F2) for prompt in queries }     
-            elif filter=='is_pickup_filter':
-                filterBank['is_pickup_filter']={ prompt:is_pickup_filter() for prompt in queries }     
-            elif filter=='combo_pctV_pickup':
-                F1=pct_valid_filter()
-                F2=is_pickup_filter()
-                filterBank['combo_pctV_pickup']={ prompt:multiply2_filter(F1,F2) for prompt in queries }     
+            filterBank[filter]={ prompt:get_filter_by_name(filter) for prompt in queries }
 
             # Execution code
             for prompt in queries:
                 print(f"Evaluating {prompt}")
                 c_dict,labels=build_cluster_dict(tgtD, prompt.replace(' ','_'))
-                filterBank[filter][prompt].process_record(c_dict,labels)
+                try:                    
+                    filterBank[filter][prompt].process_record(c_dict,labels)
+                except Exception as e:
+                    pdb.set_trace()
             
             # Save the result
             with open(filterName,'wb') as handle:
@@ -383,7 +417,7 @@ if __name__ == '__main__':
     parser.add_argument('--tgt_dir', type=str, nargs='*', default=None,help='set of directories to evaluate with the same baseline')
     parser.add_argument('--queries', type=str, nargs='*', default=["clothing", "dishes", "general clutter", "small items"],
                 help='Set of target queries to build point clouds for - default is [General clutter, Small items on surfaces, Floor-level objects, Decorative and functional items, Trash items]')
-    parser.add_argument('--color_dir',type=str,default='nerf_colmap/images',help='where are the color images? (default=nerf_colmap/images)')
+    parser.add_argument('--color_dir',type=str,default='nerf_colmap/images',help='where are the color images of the base directory? (default=nerf_colmap/images)')
     parser.add_argument('--colmap_dir',type=str,default='nerf_colmap/colmap/sparse_geo/0',help='where are the images + cameras.txt files? (default=nerf_colmap/colmap/sparse_geo/0)')
     parser.add_argument('--frame_keyword',type=str,default="frame",help='a keyword to use when parsing the transforms file (default=new)')    
     args = parser.parse_args()

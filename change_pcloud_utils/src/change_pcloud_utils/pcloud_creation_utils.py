@@ -312,7 +312,7 @@ class pcloud_openVocab(pcloud_base):
             pcloud={'xyz': torch.zeros((0,3),dtype=torch.float32,device=DEVICE),
                             'rgb': torch.zeros((0,3),dtype=torch.uint8,device=DEVICE),
                             'probs': torch.zeros((0,),dtype=torch.float,device=DEVICE),
-                            'bboxes': []}
+                            'bboxes': [],}
             count=0
             intermediate_files=[]
             deltaT=np.zeros((3,),dtype=float)
@@ -380,7 +380,6 @@ class pcloud_openVocab(pcloud_base):
         # Build the class associated mask for this image
         for tgt_class in prompts:
             all_pts[tgt_class]=self.get_pts_per_class(tgt_class)
-
             if est_bboxes and classifier_type=='clipseg':
                 maskT=(self.YS.get_prob_array(tgt_class)>detection_threshold)
                 filtered_maskT=self.loaded_image['depth_mask']*maskT
@@ -511,8 +510,9 @@ class pcloud_change(pcloud_base):
         all_pts=dict()
         all_bboxes=dict()
         # Build the class associated mask for this image - discard any images where the counts are too high as likely 
-        #       localization or generative errors. If "change" > 10%, then probably couldn't localize the image very well anyways
-        max_point_count=self.loaded_image['colorT'].shape[0]*self.loaded_image['colorT'].shape[1]/10
+        #       localization or generative errors. If "change" > 10%, then probably couldn't localize the image very well anyways (DEPRECATED - no longer doing this)
+        # max_point_count=self.loaded_image['colorT'].shape[0]*self.loaded_image['colorT'].shape[1]/10
+        cnt_change_pts=dict()
         for tgt_class in prompts:
             if tgt_class in latest_result and latest_result[tgt_class]['new_prob'] is not None and latest_result[tgt_class]['baseline_prob'] is not None:
                 # Get the change image by subtracting clipseg results
@@ -524,17 +524,21 @@ class pcloud_change(pcloud_base):
                 maskT=(deltaT>detection_threshold)
                 num_change_points=maskT.sum()
                 print(f"num change points = {num_change_points}")
-                if num_change_points>0 and num_change_points<max_point_count:
+                cnt_change_pts[tgt_class]=num_change_points
+                # if num_change_points>0 and num_change_points<max_point_count:
+                if num_change_points>0:
                     filtered_maskT=self.loaded_image['depth_mask']*maskT
                     all_pts[tgt_class]=self.get_pts(deltaT, filtered_maskT)
                     if est_bboxes:                                                
                         try:
-                            all_bboxes[tgt_class]=self.generate_boxes_with_sam(deltaT.cpu().numpy(),filtered_maskT.cpu().numpy())
+                            # all_bboxes[tgt_class]=self.generate_boxes_with_sam(deltaT.cpu().numpy(),filtered_maskT.cpu().numpy())
+                            all_bboxes[tgt_class]=self.generate_boxes_with_sam(deltaT.cpu().numpy(),filtered_maskT.cpu().numpy(),merge_overlap=True)
                         except Exception as e:
                             print(f"Exception {e} caught around generate_boxes_with_sam")
-                            import pdb
-                            pdb.set_trace()
+                            # import pdb
+                            # pdb.set_trace()
                             all_bboxes[tgt_class]=[]
+                            continue
 
                         if 0: # change to draw the images and masks
                             im_out=np.array(self.loaded_image['color'])
@@ -545,7 +549,7 @@ class pcloud_change(pcloud_base):
                             cv2.waitKey(1)                        
         
         if est_bboxes:
-            return all_pts, all_bboxes
+            return all_pts, all_bboxes, cnt_change_pts
         return all_pts
 
 def is_box_overlap(bbox1,bbox2):
@@ -614,7 +618,8 @@ def build_change_clouds(params:camera_params,
         pcloud[query]={'xyz': torch.zeros((0,3),dtype=float,device=DEVICE), 
                        'probs': torch.zeros((0),dtype=float,device=DEVICE), 
                        'rgb': torch.zeros((0,3),dtype=float,device=DEVICE),
-                       'bboxes': dict()}
+                       'bboxes': dict(),
+                       'pt_count': dict()}
 
     pcloud_creator=pcloud_change(params)
     for key in fList_new.keys():
@@ -629,9 +634,10 @@ def build_change_clouds(params:camera_params,
         
         print(fList_new.get_color_fileName(key))
         pcloud_creator.load_image(colorI_new, depthI, M, str(key),color_blur_threshold=COLOR_BLUR_THRESHOLD, depth_blur_threshold=DEPTH_BLUR_THRESHOLD)
-        results, bboxes=pcloud_creator.multi_prompt_change_process(colorI_rendered, prompts, det_threshold,est_bboxes=True,classifier_type=classifier_type)
+        results, bboxes, pt_counts=pcloud_creator.multi_prompt_change_process(colorI_rendered, prompts, det_threshold,est_bboxes=True,classifier_type=classifier_type)
         # Instead of merging cloud here, keep it attached to the original image - so that we can draw boxes later
         for query in prompts:
+            pcloud[query]['pt_count'][fList_new.get_color_fileName(key)]=pt_counts[query]
             if query in results and results[query]['xyz'].shape[0]>0:
                 pcloud[query]['xyz']=torch.vstack((pcloud[query]['xyz'],results[query]['xyz']))
                 pcloud[query]['probs']=torch.hstack((pcloud[query]['probs'],results[query]['probs']))
@@ -651,7 +657,9 @@ def build_openVocab_clouds(params:camera_params,
         pcloud[query]={'xyz': torch.zeros((0,3),dtype=float,device=DEVICE), 
                        'probs': torch.zeros((0),dtype=float,device=DEVICE), 
                        'rgb': torch.zeros((0,3),dtype=float,device=DEVICE),
-                       'bboxes': dict()}
+                       'bboxes': dict(),
+                       'pt_count': dict()}
+
 
     pcloud_creator=pcloud_openVocab(params)
     for key in fList_new.keys():
@@ -668,6 +676,7 @@ def build_openVocab_clouds(params:camera_params,
             for query in prompts:
                 try:
                     if query in results and results[query] is not None:
+                        pcloud[query]['pt_count'][fList_new.get_color_fileName(key)]=results[query]['xyz'].shape[0]
                         if 'xyz' in results[query] and results[query]['xyz'].shape[0]>0:
                             pcloud[query]['xyz']=torch.vstack((pcloud[query]['xyz'],results[query]['xyz']))
                             pcloud[query]['probs']=torch.hstack((pcloud[query]['probs'],results[query]['probs']))
