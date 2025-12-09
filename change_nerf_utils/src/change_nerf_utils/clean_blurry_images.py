@@ -113,6 +113,7 @@ def main():
     args = parser.parse_args()
 
     scores = compute_blur_scores(args.input_dir,args.keyword)
+    # plot_scores(scores)
     sharp_images = get_sharp_images(scores, keep_fraction=args.keep_fraction)
     copy_images(sharp_images, args.input_dir, args.output_dir)
 

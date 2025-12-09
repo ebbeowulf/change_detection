@@ -54,8 +54,8 @@ if [[ ! -f $SPARSE_0/images.bin ]]; then
     eval $cmd
 
     echo "Step 3 - Match features with existing images"
-    cmd="colmap vocab_tree_matcher --database_path ${COLMAP_DIR}/database.db --VocabTreeMatching.vocab_tree_path $VOCAB_TREE --SiftMatching.use_gpu 1"
-    #cmd="colmap exhaustive_matcher --database_path ${COLMAP_DIR}/database.db --SiftMatching.use_gpu 1"
+    # cmd="colmap vocab_tree_matcher --database_path ${COLMAP_DIR}/database.db --VocabTreeMatching.vocab_tree_path $VOCAB_TREE --SiftMatching.use_gpu 1"
+    cmd="colmap exhaustive_matcher --database_path ${COLMAP_DIR}/database.db --SiftMatching.use_gpu 1"
     echo $cmd
     eval $cmd
 
@@ -71,33 +71,37 @@ if [[ ! -f $SPARSE_0/images.bin ]]; then
     eval $cmd
 fi
 
-SPARSE_GEO_0=${COLMAP_DIR}/sparse_geo/0
-if [[ ! -f ${SPARSE_GEO_0}/images.txt ]]; then
-    mkdir -p ${SPARSE_GEO_0}
-    NEW_POSE_FILE=$NEW_DIR_ROOT/camera_pose.txt
-    NEW_POSE_FILE_v2=$NEW_DIR_ROOT/camera_pose.txt.new
-    # Need to correct the camera poses file to use the proper keywords (replace color with new_color)
-    cmd="sed 's/color_/new_color_/g' $NEW_POSE_FILE > ${NEW_POSE_FILE_v2}"
-    echo $cmd
-    eval $cmd
+cmd="colmap model_converter --input_path ${SPARSE_0} --output_path ${SPARSE_0} --output_type TXT"
+echo $cmd
+eval $cmd
 
-    echo "Step 6 - Align model to robot poses"
-    # Using the old pose file doesn't seem to work very well - not sure why 
-    # cmd="colmap model_aligner --input_path ${SPARSE_0} --output_path ${SPARSE_GEO_0} --alignment_max_error 1 --ref_is_gps 0 --ref_images_path ${OLD_POSE_FILE}"
-    cmd="colmap model_aligner --input_path ${SPARSE_0} --output_path ${SPARSE_GEO_0} --alignment_max_error 1 --ref_is_gps 0 --ref_images_path ${NEW_POSE_FILE_v2}"
-    echo $cmd
-    eval $cmd
+# SPARSE_GEO_0=${COLMAP_DIR}/sparse_geo/0
+# if [[ ! -f ${SPARSE_GEO_0}/images.txt ]]; then
+#     mkdir -p ${SPARSE_GEO_0}
+#     NEW_POSE_FILE=$NEW_DIR_ROOT/camera_pose.txt
+#     NEW_POSE_FILE_v2=$NEW_DIR_ROOT/camera_pose.txt.new
+#     # Need to correct the camera poses file to use the proper keywords (replace color with new_color)
+#     cmd="sed 's/color_/new_color_/g' $NEW_POSE_FILE > ${NEW_POSE_FILE_v2}"
+#     echo $cmd
+#     eval $cmd
 
-    echo "Step 7 - Convert to txt format"
-    cmd="colmap model_converter --input_path ${SPARSE_GEO_0} --output_path ${SPARSE_GEO_0} --output_type TXT"
-    echo $cmd
-    eval $cmd
+#     echo "Step 6 - Align model to robot poses"
+#     # Using the old pose file doesn't seem to work very well - not sure why 
+#     # cmd="colmap model_aligner --input_path ${SPARSE_0} --output_path ${SPARSE_GEO_0} --alignment_max_error 1 --ref_is_gps 0 --ref_images_path ${OLD_POSE_FILE}"
+#     cmd="colmap model_aligner --input_path ${SPARSE_0} --output_path ${SPARSE_GEO_0} --alignment_max_error 1 --ref_is_gps 0 --ref_images_path ${NEW_POSE_FILE_v2}"
+#     echo $cmd
+#     eval $cmd
 
-    echo "Step 8 - Convert to transforms.json"
-    cmd="python ${PYTHON_HOME}/colmap_to_json.py ${SPARSE_GEO_0} ${NEW_DIR_ROOT}"
-    echo $cmd
-    eval $cmd
-fi
+#     echo "Step 7 - Convert to txt format"
+#     cmd="colmap model_converter --input_path ${SPARSE_GEO_0} --output_path ${SPARSE_GEO_0} --output_type TXT"
+#     echo $cmd
+#     eval $cmd
+
+#     echo "Step 8 - Convert to transforms.json"
+#     cmd="python ${PYTHON_HOME}/colmap_to_json.py ${SPARSE_GEO_0} ${NEW_DIR_ROOT}"
+#     echo $cmd
+#     eval $cmd
+# fi
 
 echo ""
 echo "To generate images, now run:"

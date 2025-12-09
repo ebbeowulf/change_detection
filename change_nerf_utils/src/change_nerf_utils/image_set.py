@@ -19,7 +19,7 @@ def is_number(val:str):
     except Exception as e:
         return False
 
-def read_image_csv(images_txt):
+def read_image_csv(images_txt, keyword=None):
     with open(images_txt,"r") as fin:
         A=fin.readlines()
 
@@ -37,6 +37,9 @@ def read_image_csv(images_txt):
             else:
                 ln_s=ln_.split(' ')
 
+            if keyword is not None and keyword not in ln_s[-1]:
+                continue
+
             # We will assume a format of {rootname}_{image_id}.png in the image name
             id_str=ln_s[-1].split('_')[-1].split('.')[0]
             id=int(id_str)
@@ -50,15 +53,18 @@ def read_image_csv(images_txt):
             image={'rot': quat, 'trans': trans, 'id': id, 'global_pose': world_pose, 'global_poseM': rotM, 'name': ln_s[-1], 'directory': directory}
             all_images[image['directory']+image['name']]=image
         except Exception as e:
-            print("Error adding image: " + ln_)
+            continue
     return all_images
 
 def dist(A:np.array):
     return np.sqrt(np.power(A,2).sum())
 
 class image_set():
-    def __init__(self, images_csv:str):
-        self.all_images = read_image_csv(images_csv)
+    def __init__(self, images_csv:str, keyword:str=None):
+        self.all_images = read_image_csv(images_csv,keyword)
+
+    def get_id_list(self):
+        return [ self.all_images[key]['id'] for key in self.all_images ]
 
     def get_pose_list(self):
         return list(self.all_images.keys())
@@ -149,12 +155,19 @@ if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument('images_txt',type=str,help='location of colmap images.txt file to process')
+    parser.add_argument('--keyword',type=str,default=None,help='keyword to use in extracting images')
     args = parser.parse_args()
 
-    img_set=image_set(args.images_txt)
-    all_poses=img_set.get_all_poses(sort_by_id=True)
-
     import matplotlib.pyplot as plt    
+    img_set=image_set(args.images_txt,args.keyword)
+    all_poses=img_set.get_all_poses(sort_by_id=True)
+    deltaD=np.sqrt((np.diff(all_poses,0)**2).sum(1))
+    pList=np.sort(img_set.get_id_list())
+    fig = plt.figure()
+    plt.plot(pList,deltaD)
+    plt.ylabel('delta dist')
+    plt.ylabel('img number')
+    
     fig = plt.figure()
     ax = fig.add_subplot(111, projection='3d')
     ax.scatter(all_poses[:,0], all_poses[:,1], all_poses[:,2])

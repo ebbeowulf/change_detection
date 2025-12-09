@@ -93,24 +93,7 @@ fi
 
 # Step 2.5 - Identify the sparse directory with the best coverage of the initial poses
 #   note that we only check the 0 + 1 directories. If >1 exists, then it won't be used
-./set_best_colmap_subdir.sh $SPARSE png
-# if [[ -d $SPARSE/1 ]]; then
-#     cmd="colmap model_converter --input_path $SPARSE/0/ --output_path $SPARSE/0/ --output_type TXT"
-#     echo $cmd
-#     eval $cmd
-
-#     cmd="colmap model_converter --input_path $SPARSE/1/ --output_path $SPARSE/1/ --output_type TXT"
-#     echo $cmd
-#     eval $cmd
-
-#     CNT0=$(grep png $SPARSE/0/images.txt | wc -l)
-#     CNT1=$(grep png $SPARSE/1/images.txt | wc -l)
-#     if [[ $CNT1 -gt $CNT0 ]]; then
-#         echo "Using sparse/1/ directory for alignment since it has more images ($CNT1 vs $CNT0)"
-#         mv $SPARSE/0 $SPARSE/0_old
-#         ln -s $SPARSE/1 $SPARSE/0
-#     fi
-# fi
+bash ${BASH_HOME}/set_best_colmap_subdir.sh $SPARSE png
 
 Step 3: Align the COLMAP model to the initial poses
 SPARSE_GEO=$COLMAP_NERF_DIR/colmap/sparse_geo

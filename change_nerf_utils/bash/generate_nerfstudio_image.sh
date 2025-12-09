@@ -27,7 +27,7 @@ cd $BASE_NERFSTUDIO_DIR
 # Do we have the transforms.json file already?
 transforms=$TARGET_DIR/transforms.json
 if [[ ! -f $transforms ]];then
-    cmd="python $PYTHON_HOME/colmap_to_json.py $TARGET_DIR/colmap_combined/sparse_geo/0 $TARGET_DIR"
+    cmd="python $PYTHON_HOME/colmap_to_json.py $TARGET_DIR/colmap_combined/sparse_combined/0 $TARGET_DIR"
     echo $cmd
     eval $cmd
 fi
@@ -37,8 +37,11 @@ if [[ ! -d $RENDER_SAVE_DIR ]];then
     mkdir -p $RENDER_SAVE_DIR
 fi
 
+echo "Current Directory"
+echo $(pwd)
+
 # Render the image(s)
-cmd="python $PYTHON_HOME/render_transform.py $CONFIG_DIR $transforms $RENDER_SAVE_DIR --image-type all --name-filter $IMAGE_NAME"
+cmd="python $PYTHON_HOME/render_transform.py $CONFIG_DIR $transforms $RENDER_SAVE_DIR --name-filter $IMAGE_NAME"
 echo $cmd
 eval $cmd
 
