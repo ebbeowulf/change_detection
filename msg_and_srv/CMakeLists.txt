@@ -63,6 +63,7 @@ add_service_files(
   SetFloat.srv
   SetInt.srv
   SetString.srv
+  SetGlobalDetectionTarget.srv
 )
 
 ## Generate actions in the 'action' folder

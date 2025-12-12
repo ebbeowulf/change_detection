@@ -24,14 +24,15 @@ class multi_view_cluster_filter():
             self.PROMPT+=task
         self.PROMPT+="Return an answer in JSON format as " + self.RESULTS_TEMPLATE.generate_format_prompt()
         self.scale=image_scale
-        print(self.PROMPT)
+        self.all_results=[]
+        # print(self.PROMPT)
 
     def evaluate_cluster(self, all_images:list):
         def get_images_from_set(all_images:list, key_set, scale:float=1.0):                     
             return [ cv2.resize(all_images[key]['new'], (0,0), fx=scale, fy=scale) for key in key_set] 
 
         keys_with_new = np.array([key for key, subdict in all_images.items() if "new" in subdict])
-        all_results=[]
+        self.all_results=[]
         cnt_positive=0
         cnt_negative=0
         if keys_with_new.shape[0]>0:
@@ -42,7 +43,7 @@ class multi_view_cluster_filter():
                     cnt_positive+=1
                 else:
                     cnt_negative+=1
-                all_results.append(res)
+                self.all_results.append(res)
             else:
                 num_runs=int(np.ceil(keys_with_new.shape[0]/NUM_MULTI_IMAGES))
                 for i in range(num_runs):
@@ -53,9 +54,9 @@ class multi_view_cluster_filter():
                         cnt_positive+=1
                     else:
                         cnt_negative+=1
-                    all_results.append(res)
+                    self.all_results.append(res)
         
-        print(all_results)
+        print(self.all_results)
         if cnt_positive==0:
             return 0
         return (cnt_positive / (cnt_positive+cnt_negative))
@@ -81,7 +82,7 @@ class before_and_after_cluster_filter():
         for task in self.TASK_DESCRIPTION:
             self.PROMPT+=task
         self.PROMPT+="Return an answer in JSON format as " + self.RESULTS_TEMPLATE.generate_format_prompt()
-        print(self.PROMPT)
+        # print(self.PROMPT)
 
     def merge_images_with_strip(self, img1: np.ndarray, img2: np.ndarray, strip_width: int = 20) -> np.ndarray:
         """

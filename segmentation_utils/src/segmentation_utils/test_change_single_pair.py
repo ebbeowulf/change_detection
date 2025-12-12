@@ -156,12 +156,12 @@ if __name__ == '__main__':
     else:
         prob2=prob2.to('cpu').numpy()
     delta=(prob2-prob1)
-    pdb.set_trace()
     if args.filter=='blur':
         blur = cv2.GaussianBlur(delta, (7, 7), 0) # Kernel size is 5x5, sigmaX=0
         delta=blur
     print(f"MAX DELTA={delta.max()}")
     mask=(delta>args.threshold)
+    pdb.set_trace()
 
     if args.filter=='median':
         print('applying median filtering')

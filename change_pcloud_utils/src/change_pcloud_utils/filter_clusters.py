@@ -10,95 +10,10 @@ import pickle
 from change_pcloud_utils.llm_utils import before_and_after_cluster_filter, multi_view_cluster_filter
 from change_pcloud_utils.map_utils import identify_related_images_global_pose
 from PIL import Image
+import torch
 
 def gaussian_dist_function(val1, std1):
     return np.exp(-0.5*np.power(val1/std1,2))
-
-def label_clusters(cluster_dict, query, max_images=21):
-    labels = {}
-
-    # Create one persistent figure
-    plt.ion()
-    fig = plt.figure(figsize=(15, 9))
-
-    for cluster, data in cluster_dict.items():
-        
-        # Select up to `max_images` at random (no replacement). Keep original list
-        # if it has <= max_images entries.
-        imgs = list(data.get('images', []))
-        if len(imgs) > max_images:
-            images = random.sample(imgs, max_images)
-        else:
-            images = imgs
-
-        if not images:
-            print(f"Cluster {cluster}: No images available.")
-            continue
-        else:
-            n = len(images)
-            cols = min(7, n)
-            rows = (n + cols - 1) // cols
-
-            fig.clf()  # clear old contents
-
-            for i, img_path in enumerate(images):
-                ax = fig.add_subplot(rows, cols, i+1)
-                img = mpimg.imread(img_path)
-                ax.imshow(img)
-
-                # Label = everything after query_
-                fname = os.path.basename(img_path).replace(".png", "")
-                label = fname.replace(f"{query}_", "")
-                ax.set_title(label, fontsize=10)
-                ax.axis("off")
-
-            fig.suptitle(f"{query} (Cluster {cluster})", fontsize=14)
-            fig.tight_layout()
-            fig.canvas.draw()  # redraw in same window
-
-        # Ask user for labels
-        valid_obj = input(f"{query} {cluster}: Is this a valid cluster? (0: valid, 1: invalid, 2: duplicate): ")
-        changed = input(f"{query} {cluster}: Has the object changed? (y/n): ").strip().lower() == "y"
-        pickup = input(f"{query} {cluster}: Could the object be picked up by a robot? (y/n): ").strip().lower() == "y"
-
-        labels[cluster] = {"changed": changed, "pickup": pickup, 'valid_obj': valid_obj}
-
-    plt.ioff()  # turn off interactive mode when done
-    return labels
-
-def build_cluster_dict(base_dir, query):
-    """
-    Build dict of clusters for given query.
-    Each cluster has:
-      'pkl': path to its .pkl file (or None if missing)
-      'images': list of .png paths belonging to that cluster
-    """
-    cluster_dict = {}
-
-    # Find all pkl files for this query
-    pkl_files = glob.glob(os.path.join(base_dir, f"{query}_*.pkl"))
-    for pkl in pkl_files:
-        fname = os.path.basename(pkl)
-        # "{query}_{cluster}.pkl"
-        cluster = fname.replace(f"{query}_", "").replace(".pkl", "")
-        cluster_dict[cluster] = {'pkl': pkl, 'images': glob.glob(os.path.join(base_dir, f"{query}_{cluster}*.png"))}
-
-    label_file=os.path.join(base_dir,f"{query}.labels.json")
-    labels = None
-    if len(cluster_dict.keys())==0:
-        labels={}
-    else:
-        try:
-            if os.path.exists(label_file):
-                with open(label_file,'r') as fin:
-                    labels=json.load(fin)
-        except Exception as e:
-            print("Labels not loaded")
-        if not labels:
-            labels=label_clusters(cluster_dict, query)
-            with open(label_file,'w') as fout:
-                json.dump(labels,fout)
-    return cluster_dict, labels
 
 def get_values_from_dict(d_in, tgt_key, default_val):
     p_array=[]
@@ -109,94 +24,70 @@ def get_values_from_dict(d_in, tgt_key, default_val):
             p_array.append(default_val)
     return p_array
 
-class evaluate():
-    def __init__(self,threshold_range):
-        self.records=dict()
-        self.latest_record=None
-        self.count_invalid=0
-        self.count_valid=0
-        self.threshold=threshold_range
-        self.build_stat_structs(self.threshold.shape[0])
-    
-    def build_stat_structs(self, length):
-        self.stats = {'TP': np.zeros((length,),dtype=int),
-                      'FP': np.zeros((length,),dtype=int),
-                      'TN': np.zeros((length,),dtype=int),
-                      'FN': np.zeros((length,),dtype=int)}
-    
-    def load_cluster_pkl(self, cluster_fileName):
-        try:
-            with open(cluster_fileName, 'rb') as handle:
-                cluster=pickle.load(handle)
-        except Exception as e:
-            print(f"Error loading {cluster_fileName} - {e}")
-            return None
-        return cluster
-    
-    def recall(self):
-        result = np.true_divide(self.stats['TP'],(self.stats['TP']+self.stats['FN']))
-        result[~np.isfinite(result)] = 0
-        return result
+# The primary purpose of the general class here
+# is to provide a common interface for a number of different 
+# filtering approaches. The filter also allows us to save
+# the results for each generated set of clusters - which
+# is important for slow methods like those using LLMs
+class cluster_filter():
+    def __init__(self):
+        self.clear_results()
+        
+    def clear_results(self):
+        self.scores=dict() # to be stored as 'cluster id': float
 
-    def precision(self):
-        result = np.true_divide(self.stats['TP'],(self.stats['TP']+self.stats['FP']))
-        result[~np.isfinite(result)] = 0
-        return result
+    def get_save_file_name(self, tgt_dir, prompt):
+        return f"{tgt_dir}/{self.__class__.__name__}-{prompt}.json"
 
-    def F_score(self):        
-        R=self.recall()
-        P=self.precision()
-        result = np.true_divide(2*R*P,R+P)
-        result[~np.isfinite(result)] = 0
-        return result
-    
-    def add_stats(self, B):
-        assert(self.stats['TP'].shape==B.stats['TP'].shape)
-        self.stats['TP']+=B.stats['TP']
-        self.stats['FP']+=B.stats['FP']
-        self.stats['TN']+=B.stats['TN']
-        self.stats['FN']+=B.stats['FN']
-        self.count_invalid+=B.count_invalid
-        self.count_valid+=B.count_valid
+    def save2file(self, tgt_dir, prompt):
+        fileName=self.get_save_file_name(tgt_dir, prompt)
+        filter_state=self.serialize()
+        with open(fileName,'w') as fout:
+            json.dump(filter_state,fout)
 
-    def print_stats(self):
-        with np.errstate(divide='ignore', invalid='ignore'):
-            R=self.recall()
-            P=self.precision()
-            F1=self.F_score()
-            whichF=np.argmax(F1)
-            print(f"Pct Valid Clusters: {self.count_valid/(self.count_invalid+self.count_valid)}")
-            print(f"Initial F-score: {F1[0]}, P/R={P[0]}/{R[0]} ")
-            print(f"Max F-score: {F1[whichF]}, P/R={P[whichF]}/{R[whichF]} ")
+    def serialize(self):
+        return {'type': self.__class__.__name__, 'scores': self.scores}
 
-    def process_record(self, c_dict, labels):
-        for cl_key in c_dict.keys():
-            if cl_key not in labels:
-                continue
-            print(f"Cluster {cl_key}")
-            cluster=self.load_cluster_pkl(c_dict[cl_key]['pkl'])
-            v_pct=self.calculate_score(cluster['all_images'],cluster['cluster'],cluster['exp_params'])
-            if labels[cl_key]['valid_obj']=="1":
-                self.count_invalid+=1
-            else:
-                self.count_valid+=1
-            if labels[cl_key]['changed']:
-                self.stats['TP']+=self.threshold<=v_pct
-                self.stats['FN']+=self.threshold>v_pct
-            else:
-                self.stats['FP']+=self.threshold<=v_pct
-                self.stats['TN']+=self.threshold>v_pct    
+    def loader(self, json_dict):
+        assert(json_dict['type']==self.__class__.__name__)
+        self.scores=json_dict['scores']
+
+    def loadFromFile(self, tgt_dir, prompt):
+        fileName=self.get_save_file_name(tgt_dir, prompt)
+        if os.path.exists(fileName):
+            try:
+                with open(fileName,'r') as fin:
+                    A=json.load(fin)
+                self.loader(A)
+            except Exception as e:
+                print(f"{fileName} not found")
+                return
+
+    def save_score(self, cluster_id:str, score):
+        self.scores[cluster_id] = score
+
+    def calculate_score(self, all_images, cluster=None):
+        raise Exception("Called the baseline calculate_score function - ERROR")
+
+    def get_score(self, cluster_id:str, all_images=None, cluster=None):
+        assert(type(cluster_id)==str)
+        if cluster_id not in self.scores:
+            if all_images is None:
+                raise Exception("Cannot score cluster without a valid all_images struct")
+            self.scores[cluster_id]=self.calculate_score(all_images, cluster)
+        return self.scores[cluster_id]
+
 #################
 # prob_mean_filter
-#   Tracks the max probability of the object per image that should be looking at the cluster
+#   Scores the max probability of the object per image that should be looking at the cluster
 #   It uses a default detection threshold for images with no detections
 #################
-class prob_mean_filter(evaluate):
-    def __init__(self, threshold_range=np.arange(0.1,1.0,0.01), detection_threshold=0.1):
-        self.detection_threshold=detection_threshold
-        super().__init__(threshold_range)
+class prob_mean_filter(cluster_filter):
+    def __init__(self, segmentation_detection_threshold=0.1):
+        self.detection_threshold=segmentation_detection_threshold
+        super().__init__()
     
-    def calculate_score(self, all_images, cluster=None, exp_params=None):
+    def calculate_score(self, all_images, cluster=None):
         pn = np.array(get_values_from_dict(all_images, 'max_prob',self.detection_threshold))
         return pn.mean() 
 
@@ -205,75 +96,91 @@ class prob_mean_filter(evaluate):
 #   Tracks the percentage of images with points inside the bounding box
 #   to those with no detections. 
 #################
-class pct_valid_filter(evaluate):
-    def __init__(self, threshold_range=np.arange(0.0,1.0,0.02)):
-        super().__init__(threshold_range)
+class pct_valid_filter(cluster_filter):
+    def __init__(self):
+        super().__init__()
     
-    def calculate_score(self,all_images, cluster=None, exp_params=None):
+    def calculate_score(self,all_images, cluster=None):
         valid_images=np.array([ 'new' in all_images[key] for key in all_images ])
-        return (valid_images.sum()/len(all_images.keys()))    
+        return (valid_images.sum()/len(all_images.keys()))  
 
 #################
-# pcloud_size_filter
-#   Counts the number of points between all images included in the cloud. 
+# cluster_stat_filter
+#   Returns one of the cluster stats
+#   stat_name: max, mean, prob_sum, pcount, stdev
 #################
-class pcloud_size_filter(evaluate):
-    def __init__(self, threshold_range=np.arange(0.0,1000,10)):
-        super().__init__(threshold_range)
+class cluster_stat_filter(cluster_filter):
+    def __init__(self, stat_name:str):
+        valid_names=['max','mean','prob_sum','pcount','stdev']
+        if stat_name not in valid_names:
+            raise Exception("Invalid stat name to retrieve")
+        self.stat=stat_name
+        super().__init__()
     
-    def calculate_score(self, all_images, cluster=None, exp_params=None):
-        p_count=np.array(get_values_from_dict(all_images, 'pt_count',0)).sum()
-        return p_count
+    def calculate_score(self,all_images, cluster):
+        if cluster is None:
+            raise Exception("Must provide cluster for score calculations")
+        val=cluster.prob_stats[self.stat]
+        if type(val)==torch.Tensor:
+            val=val.cpu().item()
+        return val
 
 #################
-# image cnt filter
-#   Counts the number of images of the target
+# combo filter
 #################
-class image_cnt_filter(evaluate):
-    def __init__(self, threshold_range=np.arange(0.0,10,1)):
-        super().__init__(threshold_range)
-    
-    def calculate_score(self, all_images, cluster=None, exp_params=None):
-        valid_images=np.array([ 'new' in all_images[key] for key in all_images ])
-        return valid_images.shape()
-    
-#################
-# prob mean with size filter
-#################
-class prob_mean_and_size(evaluate):
-    def __init__(self, threshold_range=np.arange(0.0,1.0,0.02)):
-        super().__init__(threshold_range)
-    
-    def calculate_score(self, all_images, cluster=None, exp_params=None):
-        arr=[]
-        for key in all_images.keys():
-            if 'pt_count' in all_images[key] and all_images[key]['pt_count']>100:
-                arr.append(all_images[key]['max_prob'])
-            else:
-                arr.append(0.0)
-        return np.array(arr).mean()
-
-#################
-# multiply filter
-#################
-class multiply2_filter(evaluate):
-    def __init__(self, filter1:evaluate, filter2: evaluate,
-                 threshold_range=np.arange(0.0,1.0,0.02)):
+class combo_filter(cluster_filter):
+    def __init__(self, filter1:cluster_filter, filter2: cluster_filter, operator:str="*", score_range:list=[0.05,0.99]):
         self.filter1=filter1
         self.filter2=filter2
-        super().__init__(threshold_range)
+        self.score_range=score_range
+        assert(operator in ["*","+","lo"])
+        self.operator=operator
+        super().__init__()
     
-    def calculate_score(self, all_images, cluster=None, exp_params=None):
-        return self.filter1.calculate_score(all_images, cluster, exp_params)*self.filter2.calculate_score(all_images, cluster, exp_params)
+    def combine_scores(self, score1, score2):
+        score1_redux=min(self.score_range[1],max(self.score_range[0],score1))
+        score2_redux=min(self.score_range[1],max(self.score_range[0],score2))
+        if self.operator=="*":
+            return score1_redux*score2_redux
+        elif self.operator=="+":
+            return score1_redux+score2_redux
+        elif self.operator=="lo": #log-odds
+            LO=np.log(score1_redux/(1-score1_redux))+np.log(score2_redux/(1-score2_redux))
+            return np.exp(LO)/(1+np.exp(LO))
+        return None        
+        
+    def calculate_score(self, all_images, cluster=None):
+        return self.combine_scores(self.filter1.calculate_score(all_images, cluster),
+                                   self.filter2.calculate_score(all_images, cluster))
+
+    def loadFromFile(self, tgt_dir, prompt):
+        self.filter1.loadFromFile(tgt_dir, prompt)
+        self.filter2.loadFromFile(tgt_dir, prompt)
+        for key in self.filter1.scores.keys():
+            if key in self.filter2.scores:
+                self.scores[key]=self.combine_scores(self.filter1.get_score(key),self.filter2.get_score(key))
+            else:
+                print(f"Key {key} missing from filter2")
+
+        for key in self.filter2.scores.keys():
+            if key not in self.scores:
+                print(f"Key {key} missing from filter1")
+
+    def save2file(self, tgt_dir, prompt):
+        self.filter1.save2file(tgt_dir, prompt)
+        self.filter2.save2file(tgt_dir, prompt)
 
 #################
 # LLM - Before And After Filter
 #   Tracks the percentage of images with points inside the bounding box
 #   to those with no detections. 
 #################
-class before_and_after_filter(evaluate):
-    def __init__(self, threshold_range=np.arange(0.0,1.0,0.02), use_render=True):
+class before_and_after_filter(cluster_filter):
+    def __init__(self, fList_base, fList_new, params, use_render=True):
         self.use_render=use_render
+        self.fList_new=fList_new
+        self.fList_base=fList_base
+        self.params=params
         if self.use_render:
             self.ba_cluster_filt=before_and_after_cluster_filter()
             self.before_key='render'
@@ -284,12 +191,12 @@ class before_and_after_filter(evaluate):
                     '(2) Should a housekeeper pick up the object in the blue box and put it away?']
             self.ba_cluster_filt=before_and_after_cluster_filter(desc)
             self.before_key='before'
-        super().__init__(threshold_range)
+        super().__init__()
     
-    def set_closest_images(self, all_images, cluster_centroid, fList_new):
-        global params, fList_base
+    def set_closest_images(self, all_images, cluster_centroid):
         # find images in the baseline dataset that can see the target cluster
-        rel_imgs=identify_related_images_global_pose(params, fList_base, cluster_centroid, None, 0.5)
+        rel_imgs=identify_related_images_global_pose(self.params, self.fList_base, cluster_centroid, None, 0.5)
+
         # now find the vector to the object and the associated distance
         dist_relM=np.zeros((len(rel_imgs)))
         zVec_relM=np.zeros((3,len(rel_imgs)))
@@ -298,10 +205,11 @@ class before_and_after_filter(evaluate):
             dist_relM[key_idx]=np.sqrt(((cluster_centroid[:3]-relM[:3,3])**2).sum())
             zVec_relM[:,key_idx]=np.matmul(relM[:3,:3],[0,0,1])
         zVec_relM=np.transpose(zVec_relM)
+
         # step through images that point at the object and calculate     
         for key in all_images.keys():
             if 'new' in all_images[key]:
-                M=np.matmul(params.rot_matrix,fList_new.get_pose(int(key)))
+                M=np.matmul(params.rot_matrix,self.fList_new.get_pose(int(key)))
                 distM=np.sqrt(((cluster_centroid-M[:3,3])**2).sum())
                 zVecM=np.matmul(M[:3,:3],[0,0,1])
                 angle=zVec_relM@zVecM #dot-product, returns a [N,] vector
@@ -314,29 +222,88 @@ class before_and_after_filter(evaluate):
                     print(f"Cannot load image {color_fName}- skipping")
         return all_images
     
-    def calculate_score(self,all_images, cluster=None, exp_params=None):
+    def calculate_score(self,all_images, cluster=None):
         if not self.use_render: # need to add "before" images to all_images
-            all_images=self.set_closest_images(all_images,cluster.centroid,exp_params['fList_new'])
+            all_images=self.set_closest_images(all_images,cluster.centroid)
         # Need to flip dimensions of the images - they are inverted
         for key in all_images.keys():
             if 'new' in all_images[key]:
                 all_images[key]['new']=all_images[key]['new'][:,:,[2,1,0]]
             if 'render' in all_images[key]:
                 all_images[key]['render']=all_images[key]['render'][:,:,[2,1,0]]
+        self.last_result=dict()
         pickup_pct, new_pct=self.ba_cluster_filt.evaluate_multiple_image_pairs(all_images, before_key=self.before_key)
+        self.last_result={'is_pickup':pickup_pct, 'is_new':new_pct}
         return new_pct
+
+    def get_save_file_name(self, tgt_dir, prompt):
+        if self.use_render:
+            return f"{tgt_dir}/render_and_after_filter-{prompt}.json"
+        return super().get_save_file_name(tgt_dir, prompt)
     
+    def clear_results(self):
+        self.all_results=dict()
+        return super().clear_results()
+    
+    def get_score(self, cluster_id, all_images=None, cluster=None):
+        if cluster_id not in self.scores:
+            if all_images is None:
+                raise Exception("Cannot score cluster without a valid all_images struct")
+            self.scores[cluster_id]=self.calculate_score(all_images, cluster)
+            self.all_results[cluster_id]=self.last_result
+        return self.scores[cluster_id]
+    
+    def serialize(self):
+        filter_state=super().serialize()
+        filter_state['all_results']=self.all_results
+        return filter_state
+    
+    def loader(self, json_dict):
+        super().loader(json_dict)
+        self.all_results=json_dict['all_results']
+
 #################
 # is_pickup_filter - query llm about picking up objects specifically
 #################
-class is_pickup_filter(evaluate):
-    def __init__(self, threshold_range=np.arange(0.0,1.0,0.02),image_scale=1.0):
-        self.llm_obj=multi_view_cluster_filter()
-        super().__init__(threshold_range)
+class is_pickup_filter(cluster_filter):
+    def __init__(self, image_scale=1.0):
+        self.llm_obj=multi_view_cluster_filter(image_scale)
+        super().__init__()
     
-    def calculate_score(self, all_images, cluster=None, exp_params=None):
+    def calculate_score(self, all_images, cluster=None):
         return self.llm_obj.evaluate_cluster(all_images)
 
+    def clear_results(self):
+        self.all_results=dict()
+        return super().clear_results()
+
+    def get_save_file_name(self, tgt_dir, prompt):
+        if self.llm_obj.scale!=1.0:
+            return f"{tgt_dir}/is_pickup_filter{self.llm_obj.scale}-{prompt}.json"
+        return super().get_save_file_name(tgt_dir, prompt)
+
+    def get_score(self, cluster_id, all_images=None, cluster=None):
+        if cluster_id not in self.scores:
+            if all_images is None:
+                raise Exception("Cannot score cluster without a valid all_images struct")
+            self.scores[cluster_id]=self.calculate_score(all_images, cluster)
+            self.all_results[cluster_id]=self.llm_obj.all_results
+        return self.scores[cluster_id]
+    
+    def serialize(self):
+        filter_state=super().serialize()
+        filter_state['all_results']=self.all_results
+        return filter_state
+    
+    def loader(self, json_dict):
+        super().loader(json_dict)
+        self.all_results=json_dict['all_results']
+
+#################
+# Functions for using the filters
+#   get_filter_by_name: instantiates the right type of filter with the right arguments
+#   score_all_clusters: executes multiple filter types on a single tgt dir and prompt
+#################     
 def get_filter_by_name(filter):
     if filter=='prob_mean_filter':
         return prob_mean_filter()
@@ -345,120 +312,107 @@ def get_filter_by_name(filter):
     elif filter=='render_and_after_filter':
         return before_and_after_filter(use_render=True)
     elif filter=='before_and_after_filter':
-        return before_and_after_filter(use_render=False)     
-    elif filter=='pcloud_size_filter':
-         return pcloud_size_filter()     
-    elif filter=='prob_mean_and_size':
-        return prob_mean_and_size()   
-    elif filter=='image_cnt_filter':
-        return image_cnt_filter()  
+        global fList_base, params
+        return before_and_after_filter(fList_base=fList_base, params=params, use_render=False)     
     elif filter=='combo_pmf_pctV':
         F1=prob_mean_filter()
         F2=pct_valid_filter()
-        return multiply2_filter(F1,F2)     
+        return combo_filter(F1,F2)     
     elif filter=='combo_pctV_baF':
         F1=pct_valid_filter()
         F2=before_and_after_filter(use_render=False)
-        return multiply2_filter(F1,F2)     
+        return combo_filter(F1,F2)     
     elif filter=='is_pickup_filter':
         return is_pickup_filter()     
+    elif filter=='is_pickup_filter0.5':
+        return is_pickup_filter(image_scale=0.5)     
     elif filter=='combo_pctV_pickup':
         F1=pct_valid_filter()
         F2=is_pickup_filter()
-        return multiply2_filter(F1,F2)     
+        return combo_filter(F1,F2,"lo")     
+    elif filter=='pcloud_mean_prob':
+        return cluster_stat_filter('mean')
+    elif filter=='pcloud_max_prob':
+        return cluster_stat_filter('max')
+    elif filter=='pcloud_size_filter':
+        return cluster_stat_filter('pcount')
     return None
 
-###########################
-## multi-evaluator
-##   this is a hack - stores the intermediate evaluations per directory
-##   in a file so that we don't have to re-run laborious LLM calls repeatedly
-##   Designed to be generic enough that it will work with arbitrary evaluation
-##   functions
-###########################
-def multi_evaluator(tgt_dir, queries):
-    # active=['prob_mean_filter','pct_valid_filter','combo_pmf_pctV']
-    active=['pct_valid_filter']
-    # active=['pct_valid_filter','combo_pmf_pctV','before_and_after_filter','combo_pctV_baF']
-    # active=['is_pickup_filter', 'combo_pctV_pickup']
-    filterBank={}
-    for filter in active:
-        filterName=f"{tgt_dir}/{filter}.filt"
-        try:
-            # Try to open this file - if exists, move on, else will need to execute
-            with open(filterName, 'rb') as handle:
-                filterBank[filter]=pickle.load(handle)
-            is_valid=[ prompt in filterBank[filter] for prompt in queries ]
-            if sum(is_valid)<len(queries):
-                filterBank[filter]=None
-                raise Exception("all prompts not present - rebuilding {filterName}")
-        except Exception as e:
-            # When a new filter is added, put the initialization code here - keeping things separated by prompt
-            #    for further analysis
-            filterBank[filter]={ prompt:get_filter_by_name(filter) for prompt in queries }
+def score_all_clusters(tgt_dir, query, active_filter_list:list):
+    Q=query.replace(" ","_")
+    cluster_files=glob.glob(os.path.join(tgt_dir,Q+"*[0-9].pkl"))    
 
-            # Execution code
-            for prompt in queries:
-                print(f"Evaluating {prompt}")
-                c_dict,labels=build_cluster_dict(tgtD, prompt.replace(' ','_'))
-                try:                    
-                    filterBank[filter][prompt].process_record(c_dict,labels)
-                except Exception as e:
-                    pdb.set_trace()
-            
-            # Save the result
-            with open(filterName,'wb') as handle:
-                pickle.dump(filterBank[filter], handle, protocol=pickle.HIGHEST_PROTOCOL)    
+    # Initialize the filterBank - loading from file when possible
+    filterBank={}
+    for filterName in active_filter_list:
+        filterBank[filterName]=get_filter_by_name(filterName)
+        filterBank[filterName].loadFromFile(tgt_dir, Q)
+
+    # Score all of the clusters - storing the results locally in the filter
+    #   by the ID of the cluster
+    print(f"Evaluating {query}")
+    for file in cluster_files:
+        with open(file, 'rb') as handle:
+            A=pickle.load(handle)     
+        ID=file.split('_')[-1].split('.')[0]
+        for filterName in active_filter_list:
+            filterBank[filterName].get_score(ID,A['all_images'],A['cluster'])
+
+    # Save the result
+    for filterName in active_filter_list:
+        filterBank[filterName].save2file(tgt_dir, Q)
+
     return filterBank
 
-if __name__ == '__main__':
-    import argparse
-    parser = argparse.ArgumentParser()
-    parser.add_argument('nerfacto_dir',type=str,help='location of nerfactor directory containing config.yml and dapaparser_transforms.json')
-    parser.add_argument('--tgt_dir', type=str, nargs='*', default=None,help='set of directories to evaluate with the same baseline')
-    parser.add_argument('--queries', type=str, nargs='*', default=["clothing", "dishes", "general clutter", "small items"],
-                help='Set of target queries to build point clouds for - default is [General clutter, Small items on surfaces, Floor-level objects, Decorative and functional items, Trash items]')
-    parser.add_argument('--color_dir',type=str,default='nerf_colmap/images',help='where are the color images of the base directory? (default=nerf_colmap/images)')
-    parser.add_argument('--colmap_dir',type=str,default='nerf_colmap/colmap/sparse_geo/0',help='where are the images + cameras.txt files? (default=nerf_colmap/colmap/sparse_geo/0)')
-    parser.add_argument('--frame_keyword',type=str,default="frame",help='a keyword to use when parsing the transforms file (default=new)')    
-    args = parser.parse_args()
+def setup_before_and_after_filter(nerfacto_dir, 
+                                  color_dir="nerf_colmap/images", 
+                                  colmap_dir="nerf_colmap/colmap/sparse/0", 
+                                  frame_keyword=None):
+    # Need to build information from the baseline run 
+    #   Specifically we need the fList_base and params variables to be created globally
+    global fList_base, params
 
     from colmap_utils import get_camera_params, build_file_list
-    initial_dir=args.nerfacto_dir.split('outputs')[0]
-    colmap_dir=initial_dir+args.colmap_dir
+    initial_dir=nerfacto_dir.split('outputs')[0]
+    initial_colmap_dir=initial_dir+colmap_dir
     global fList_base, params
     params=get_camera_params(colmap_dir,args.nerfacto_dir)
-    fList_base=build_file_list(initial_dir+args.color_dir,initial_dir+"nerf_colmap/depth",initial_dir,colmap_dir,args.frame_keyword)
+    fList_base=build_file_list(initial_dir+color_dir,initial_dir+"nerf_colmap/depth",initial_dir,initial_colmap_dir,frame_keyword)
     if len(fList_base.keys())==0:
         print("No images found in the base directory - check your frame keyword?")
         raise(Exception("fList_base empty"))
 
-    # cluster_dict=dict()
-    combined_dict=None
-    
-    # for tgtD in args.tgt_dir:
-    #     for prompt in args.queries:
-    #         c_dict,labels=build_cluster_dict(tgtD, prompt.replace(' ','_'))
-    #         pmf_dict[prompt].process_record(c_dict,labels)
-    for tgtD in args.tgt_dir:
-        filterBank=multi_evaluator(tgtD, args.queries)
-        if combined_dict is None:
-            combined_dict=filterBank
-        else:
-            for key1 in filterBank.keys():
-                for key2 in filterBank[key1].keys():
-                    combined_dict[key1][key2].add_stats(filterBank[key1][key2])
+if __name__ == '__main__':
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('tgt_dir', type=str, help='Directory to evaluate')
+    parser.add_argument('--queries', type=str, nargs='*', help="List of queries to evaluate")
+    parser.add_argument('--filters', type=str, nargs='*', default=["prob_mean_filter", "pct_valid_filter", "pcloud_mean_prob", "pcloud_size_filter"],
+                help='Set of target filters to evaluate and save out to json')
+    ## These parameters are all for the before and after filter
+    parser.add_argument('--nerfacto_dir',type=str,default=None,help='location of nerfactor directory containing config.yml and dapaparser_transforms.json. Only necessary if using the before_and_after_filter')
+    parser.add_argument('--color_dir',type=str,default='nerf_colmap/images',help='where are the color images of the base directory? (default=nerf_colmap/images) Only necessary if using the before_and_after_filter')
+    parser.add_argument('--colmap_dir',type=str,default='nerf_colmap/colmap/sparse_geo/0',help='where are the images + cameras.txt files? (default=nerf_colmap/colmap/sparse_geo/0) Only necessary if using the before_and_after_filter')
+    parser.add_argument('--frame_keyword',type=str,default="frame",help='a keyword to use when parsing the transforms file (default=frame)')    
+    args = parser.parse_args()
 
-    for key in filterBank.keys():
-        eval_combo=None
-        print(f"#### {key} ####")
-        for prompt in args.queries:
-            print(f" ****************** {prompt} ****************** ")
-            combined_dict[key][prompt].print_stats()
-            if eval_combo is None:
-                eval_combo=evaluate(combined_dict[key][prompt].threshold)
-            eval_combo.add_stats(combined_dict[key][prompt])
-        
-        print(f" ****************** {key} COMBINED ****************** ")
-        eval_combo.print_stats()
-        print("")
-        print("")
+    if 'before_and_after_filter' in args.filters:
+        setup_before_and_after_filter(args.nerfacto_dir, args.color_dir, args.colmapdir, args.frame_keyword)
+
+    for query in args.queries:
+        fBank=score_all_clusters(args.tgt_dir, query, args.filters)
+        ids = list(fBank[args.filters[0]].scores.keys())
+        print("Filter".ljust(10), end="")
+        for i in ids:
+            print(f"{i}".ljust(10), end="")
+        print()
+
+        # Print each row
+        for filter_name, values in fBank.items():
+            print(filter_name.ljust(10), end=" ")
+            for i in ids:
+                out_val=values.scores[i]
+                print(f"{out_val:.3f}".ljust(10), end=" ")
+            print()
+
+

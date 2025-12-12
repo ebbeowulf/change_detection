@@ -13,6 +13,7 @@ from segmentation_utils.segmentation import image_segmentation
 from PIL import Image
 import pickle
 import sys
+import pdb
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -93,7 +94,7 @@ class dino_segmentation(image_segmentation):
             threshold=threshold
         )[0]
         if results and results['boxes'] is not None and len(results['boxes']) > 0:
-            # Run SAM with YOLO bounding boxes    
+            # Run SAM with DINO bounding boxes    
             sam_results = self.sam_model(pil_image, bboxes=results['boxes'])
             # Pass SAM results and YOLO data to set_data       
             self.set_data(sam_results)
@@ -101,6 +102,10 @@ class dino_segmentation(image_segmentation):
         else:
             print("No objects detected by Dino.")
             return None
+
+    def clear_data(self):
+        self.per_object_masks={}
+        return super().clear_data()
 
     def set_data(self, sam_results):
         """Set internal data from SAM results and optional YOLO data."""
@@ -118,16 +123,14 @@ class dino_segmentation(image_segmentation):
                     # Store bounding box and confidence
                     if cls not in self.boxes:
                         self.boxes[cls] = []
-                    self.boxes[cls].append((confs[i], boxes[i]))
-                    
-                    # Resize mask to original image size
-
-                    # mask_resized = cv2.resize(
-                    #     mask, 
-                    #     (self.image_size[0], self.image_size[1]),  # (width, height)
-                    #     interpolation=cv2.INTER_NEAREST
-                    # )
+                    self.boxes[cls].append((confs[i], boxes[i]))                    
                     prob_array = (sam_results[0].boxes.conf[i] * mask.data).squeeze()
+
+                    # Store per object information
+                    if cls not in self.per_object_mask:
+                        self.per_object_mask[cls] = []
+                    self.per_object_mask.append(mask.data.squeeze())
+
                     # Store mask and probabilities
                     if cls in self.masks:
                         self.masks[cls] = self.masks[cls] + mask.data.squeeze()
@@ -146,7 +149,6 @@ class dino_segmentation(image_segmentation):
     def process_image_numpy(self, image: np.ndarray, threshold=0.25):
         image_pil=Image.fromarray(image)
         return self.process_image(image_pil, threshold=threshold)
-
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()

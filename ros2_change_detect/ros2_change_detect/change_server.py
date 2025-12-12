@@ -9,9 +9,12 @@ from change_pcloud_utils.pcloud_cluster_utils import create_and_merge_clusters, 
 from stretch_srvs.srv import GetCluster, DrawCluster
 from geometry_msgs.msg import Point
 import numpy as np
-
+from change_pcloud_utils.filter_clusters import get_filter_by_name, evaluate
 ABSOLUTE_MIN_CLUSTER_SIZE=100
 GRIDCELL_SIZE=0.01
+import glob
+import os
+import pickle
 
 class change_server(Node):
     def __init__(self,
@@ -81,6 +84,15 @@ class change_server(Node):
             response.message="Not enough points in top1 cluster to satisfy request"
         return response
 
+    def load_clusters_from_file(self, prompt):
+        Q=prompt.replace(" ","_")
+        files=glob.glob(os.path.join(self.exp_params['fList_new'].intermediate_save_dir,Q+"*[0-9].pkl"))
+        self.loaded_clusters['clusters']=[]
+        for file in files:
+            with open(file, 'rb') as handle:
+                A=pickle.load(handle)     
+            self.loaded_clusters['clusters'].append(A['cluster'])
+
     def build_clusters(self, prompt):
         import pickle
         import os
@@ -98,11 +110,12 @@ class change_server(Node):
 
         # Rescale everything ... 
         if self.loaded_clusters['pcloud']['xyz'].shape[0]>ABSOLUTE_MIN_CLUSTER_SIZE:
-            self.loaded_clusters['clusters']=create_and_merge_clusters(self.loaded_clusters['pcloud']['xyz'].cpu().numpy(), GRIDCELL_SIZE)
-            self.loaded_clusters['clusters']=merge_by_bounding_box(self.loaded_clusters['clusters'], self.loaded_clusters['pcloud'], self.exp_params['fList_new'], self.exp_params['fList_renders'], self.exp_params['params'])        
+            self.load_clusters_from_file(prompt)
+            # Were they loaded successfully? If not, build from scratch
+            if len(self.loaded_clusters['clusters'])==0:
+                self.loaded_clusters['clusters']=create_and_merge_clusters(self.loaded_clusters['pcloud']['xyz'].cpu().numpy(), GRIDCELL_SIZE)
+                self.loaded_clusters['clusters']=merge_by_bounding_box(self.loaded_clusters['clusters'], self.loaded_clusters['pcloud'], self.exp_params['fList_new'], self.exp_params['fList_renders'], self.exp_params['params'])        
 
-            for idx in range(len(self.loaded_clusters['clusters'])):
-                self.loaded_clusters['clusters'][idx].estimate_probability(self.loaded_clusters['pcloud']['xyz'],self.loaded_clusters['pcloud']['probs'])
             return True
         else:
             print("Not enough points in point cloud to form clusters")

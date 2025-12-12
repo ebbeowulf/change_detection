@@ -185,6 +185,9 @@ class pcloud_base():
             
             # Identify the boundaries of the segmented zone
             rowS,colS=np.nonzero(sam_mask)
+            # Skip if the mask is empty (no positive pixels)
+            if rowS.size == 0 or colS.size == 0:
+                continue
             sbox=[colS.min(),rowS.min(),colS.max(),rowS.max()]
             if box_iou(box[1],sbox)>0.3:
                 max_prob=0
