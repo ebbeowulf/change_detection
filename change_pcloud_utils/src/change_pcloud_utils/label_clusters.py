@@ -73,14 +73,14 @@ def label_clusters(cluster_dict, query, max_images=21):
     plt.ioff()  # turn off interactive mode when done
     return labels
 
-def build_cluster_label_dict(base_dir, query):
+def build_cluster_label_dict(base_dir, query, suffix="labels.json"):
     """
     Build dict of cluster labels for given query.
     """
     pkl_files = glob.glob(os.path.join(base_dir, f"{query}_*.pkl"))
 
     # Step 1 - try to load labels from an existing file
-    label_file=os.path.join(base_dir,f"{query}.labels.json")
+    label_file=os.path.join(base_dir,f"{query}.{suffix}")
     labels = None
     try:
         if os.path.exists(label_file):
@@ -140,6 +140,8 @@ class evaluate():
     def rebuild_stat_structs(self, threshold_range):
         self.threshold=threshold_range
         length=self.threshold.shape[0]
+        self.tp_object_list={val:[] for val in range(len(self.threshold))}
+        self.fn_object_list={val:[] for val in range(len(self.threshold))}
         self.stats={'TP': np.zeros((length,),dtype=int),
                     'FP': np.zeros((length,),dtype=int),
                     'TN': np.zeros((length,),dtype=int),
@@ -155,6 +157,11 @@ class evaluate():
         result[~np.isfinite(result)] = 0
         return result
 
+    def specificity(self):
+        result = np.true_divide(self.stats['TN'],(self.stats['TN']+self.stats['FP']))
+        result[~np.isfinite(result)] = 0
+        return result
+    
     def F_score(self):        
         R=self.recall()
         P=self.precision()
@@ -175,22 +182,59 @@ class evaluate():
         with np.errstate(divide='ignore', invalid='ignore'):
             R=self.recall()
             P=self.precision()
+            S=self.specificity()
             F1=self.F_score()
+            count_objects=[ len(np.unique(self.tp_object_list[idx])) for idx in self.tp_object_list ]
             whichF=np.argmax(F1)
             print(f"Pct Valid Clusters: {self.count_valid/(self.count_invalid+self.count_valid)}")
             print(f"Initial F-score: {F1[0]}, P/R={P[0]}/{R[0]} ")
             print(f"Max F-score: {F1[whichF]}, P/R={P[whichF]}/{R[whichF]} ")
 
-    def process_filter(self, filter:cluster_filter, labels:dict):        
+            print("Threshold",end=", ")
+            for idx in range(len(self.threshold)):
+                print(self.threshold[idx],end=", ")
+            print("")
+            print("Precision",end=", ")
+            for idx in range(len(self.threshold)):
+                print(P[idx],end=", ")
+            print("")
+            print("Specificity",end=", ")
+            for idx in range(len(self.threshold)):
+                print(S[idx],end=", ")
+            print("")
+            print("Object Count",end=", ")
+            for idx in range(len(self.threshold)):
+                print(count_objects[idx],end=", ")
+            print("")
+
+    def process_filter(self, filter:cluster_filter, labels:dict, dir_label:str=''):        
         for key in filter.scores.keys():
             if key in labels:   # ignore clusters that did not generate any images to be labeled
                 self.count_valid+=1
                 v_pct=filter.scores[key]
                 if labels[key]['changed']:
-                    self.stats['TP']+=self.threshold<=v_pct
+                    pos=self.threshold<=v_pct
+                    neg=self.threshold>v_pct
+                    whichP=np.where(pos)[0]
+                    whichN=np.where(neg)[0]
+                    
+                    # Check for multiple objects in the label
+                    for itm in labels[key]['name'].split(','):
+                        if itm[-1]==' ':    #remove blank spaces
+                            itm=itm[:-1]
+                        if itm[0]==' ':
+                            itm=itm[1:]
+                        # Add to the lists
+                        for pp in whichP:
+                            self.tp_object_list[pp].append(f"{dir_label}-{labels[key]['name']}")
+                        for nn in whichN:
+                            self.fn_object_list[nn].append(f"{dir_label}-{labels[key]['name']}")
+
+                    self.stats['TP']+=pos
                     self.stats['FN']+=self.threshold>v_pct
                 else:
                     self.stats['FP']+=self.threshold<=v_pct
+
                     self.stats['TN']+=self.threshold>v_pct    
             else:
                 self.count_invalid+=1
@@ -203,6 +247,7 @@ if __name__ == '__main__':
                 help='Set of target queries to build point clouds for - default is [General clutter, Small items on surfaces, Floor-level objects, Decorative and functional items, Trash items]')
     parser.add_argument('--filters', type=str, nargs='*', default=["prob_mean_filter", "pct_valid_filter", "pcloud_mean_prob"],
                 help='Set of target filters to evaluate and save out to json')    
+    parser.add_argument('--label_suffix',type=str, default="labels.json", help="ending of the label file")
     args = parser.parse_args()
 
 
@@ -215,14 +260,14 @@ if __name__ == '__main__':
         for query in args.queries:
             Q=query.replace(" ","_")
             # Get the labels - 
-            labels=build_cluster_label_dict(tgt_dir, Q)
+            labels=build_cluster_label_dict(tgt_dir, Q, args.label_suffix)
 
             # Load the filters
             filterBank=score_all_clusters(tgt_dir,Q,args.filters)
 
             # Save to the evaluation function
             for filterName in args.filters:
-                all_results[filterName].process_filter(filterBank[filterName], labels)
+                all_results[filterName].process_filter(filterBank[filterName], labels, tgt_dir)
 
     for key in all_results.keys():
         print(f" ****************** {key} **************** ")

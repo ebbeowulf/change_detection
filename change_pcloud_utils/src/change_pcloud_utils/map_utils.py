@@ -131,7 +131,8 @@ def visualize_combined_xyzrgb(fList:rgbd_file_list, params:camera_params, howman
         depth_mask=(depthT>1e-4)*(depthT<max_depth)
 
         # Rotate the points into the right space
-        M=torch.matmul(rot_matrixT,torch.tensor(fList.get_pose(key),device=DEVICE))
+        # M=torch.matmul(rot_matrixT,torch.tensor(fList.get_pose(key),device=DEVICE))
+        M=torch.tensor(fList.get_pose(key),device=DEVICE)
         pts=torch.stack([x[depth_mask],y[depth_mask],depthT[depth_mask],torch.ones(((depth_mask>0).sum()),device=DEVICE)],dim=1)
         pts_rot=torch.matmul(M,pts.transpose(0,1))
         pts_rot=pts_rot[:3,:].transpose(0,1)

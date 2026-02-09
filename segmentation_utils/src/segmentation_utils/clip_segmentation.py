@@ -123,9 +123,11 @@ if __name__ == '__main__':
     if mask is None:
         print("Something went wrong - no mask to display")
     else:
-        cv_image=np.array(image).astype(np.uint8)
+        cv_image=np.array(image).astype(np.uint8)#[:,:,[2,1,0]]
         #pdb.set_trace()
-        IM=cv2.bitwise_and(cv_image,cv_image,mask=mask.astype(np.uint8))
-        cv2.imshow("res",IM)
-        cv2.waitKey()
+        # IM=cv2.bitwise_and(cv_image,cv_image,mask=mask.astype(np.uint8))
+        cv_image[:,:,0][mask]=255
+        import matplotlib.pyplot as plt
+        plt.imshow(cv_image)
+        plt.show()
     

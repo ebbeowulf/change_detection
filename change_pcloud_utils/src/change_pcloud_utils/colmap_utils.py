@@ -19,7 +19,8 @@ def get_camera_params(colmap_dir, nerfstudio_dir):
         with open(nerfstudio_dir+"/dataparser_transforms.json","r") as fin:
             A = json.load(fin)
         cam_rot_matrix=np.identity(4)
-        cam_rot_matrix[:3,:]=np.array(A['transform'])
+        # cam_rot_matrix[:3,:]=np.array(A['transform']) #broken for some reason
+        cam_rot_matrix[:3,:3]=np.array(A['transform'])[:,:3]
     except Exception as e:
         print("Failed to open cameras.txt in " + colmap_dir + " - exiting")
         sys.exit(-1)
@@ -100,8 +101,11 @@ def build_file_list(color_dir, depth_dir, save_dir, colmap_dir, keyword:str):
         fList.add_file(number,key,f"depth_{uid}.png")    
         rot=np.identity(4)
         rot[:3,:3]=all_poses[key]['rot_cam2world']
-        rot[:3,3]=all_poses[key]['pose']        
+        rot[:3,3]=all_poses[key]['pose']                
         fList.add_pose(number,rot)
+        if key==163:
+            import pdb
+            pdb.set_trace()
 
     X=np.zeros((len(fList.keys())))
     Y=np.zeros((len(fList.keys())))

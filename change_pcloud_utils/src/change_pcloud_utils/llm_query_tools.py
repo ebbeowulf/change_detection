@@ -12,6 +12,8 @@ from PIL import Image
 import cv2
 import json
 import pdb
+import ast
+import json5
 
 HOST = 'localhost'
 PORT = 5001
@@ -74,17 +76,22 @@ class single_level_results_template():
         end_index = message.find('}', start_index + 1)
         json_str=message[start_index:end_index+1].replace('\'','"')
         print(json_str)
-        json_out={key:None for key in self.template}
+        json_out={key:None for key in self.template}        
         try:
-            res=json.loads(json_str)
-            # need to enforce some type constraints at this point
-            for key in self.get_keys():
-                if key in res:
-                    json_out[key]=self.get_type(key, res[key])
-            return json_out
+            res=json5.loads(json_str) #relaxed JSON format - used json5
         except Exception as e:
-            return json_out
-    
+            #json5 failed - try ast           
+            try:
+                res=ast.literal_eval(json_str) #it's not valid JSON - try alternative
+            except Exception as e:
+                print(f"Invalid JSON {json_str} - cannot parse with json5 or ast")
+                return json_out
+            
+        # need to enforce some type constraints at this point
+        for key in self.get_keys():
+            if key in res:
+                json_out[key]=self.get_type(key, res[key])
+        return json_out
 
 # Function for communicating with llm server
 #    accepts both text and images by default

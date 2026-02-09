@@ -104,7 +104,7 @@ class dino_segmentation(image_segmentation):
             return None
 
     def clear_data(self):
-        self.per_object_masks={}
+        self.per_object_mask={}
         return super().clear_data()
 
     def set_data(self, sam_results):
@@ -129,7 +129,7 @@ class dino_segmentation(image_segmentation):
                     # Store per object information
                     if cls not in self.per_object_mask:
                         self.per_object_mask[cls] = []
-                    self.per_object_mask.append(mask.data.squeeze())
+                    self.per_object_mask[cls].append(mask.data.squeeze())
 
                     # Store mask and probabilities
                     if cls in self.masks:
@@ -170,10 +170,11 @@ if __name__ == '__main__':
         sys.exit(-1)
     else:
         print("compiling mask image")                        
-        img=np.array(pil_image)        
-        IM=cv2.bitwise_and(img,img,mask=msk.cpu().numpy().astype(np.uint8))
-
-    cv2.imshow("res",IM)
-    cv2.waitKey()
+        img=np.array(pil_image).astype(np.uint8)[:,:,[2,1,0]]   
+        # IM=cv2.bitwise_and(img,img,mask=msk.cpu().numpy().astype(np.uint8))
+        # cv_image=np.array(image).astype(np.uint8)[:,:,[2,1,0]]
+        img[:,:,2][msk.cpu().numpy()]=255
+        cv2.imshow("res",img)
+        cv2.waitKey()
 
 

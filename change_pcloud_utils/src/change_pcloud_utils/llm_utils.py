@@ -50,6 +50,7 @@ class multi_view_cluster_filter():
                     selected_images = np.random.choice(keys_with_new, NUM_MULTI_IMAGES, replace=False)
                     text_results= send_data_to_llm(self.PROMPT, get_images_from_set(all_images, selected_images.tolist(), self.scale))
                     res=self.RESULTS_TEMPLATE.recover_json(text_results)
+                    res['keys']=selected_images.tolist()
                     if res['is_pickup']:
                         cnt_positive+=1
                     else:
@@ -65,23 +66,29 @@ class multi_view_cluster_filter():
 #   the multi-view-cluster-filter tries to show the LLM a bunch of images of the object
 #   at the same time to remove bad candidates
 class before_and_after_cluster_filter():
-    def __init__(self, description:list=None):
-        self.RESULTS_TEMPLATE=single_level_results_template(["new_object","is_pickup"],
-                                                            [bool,bool],
-                                                            ["<True/False>", "<True/False>"])
+    def __init__(self, description:list=None, image_scale:float=1.0):
+        self.RESULTS_TEMPLATE=single_level_results_template(["is_changed","object_type"],
+                                                            [bool, str],
+                                                            ["<True/False>","<type of object>"])
+        # self.RESULTS_TEMPLATE=single_level_results_template(["new_object","is_pickup"],
+        #                                                     [bool,bool],
+        #                                                     ["<True/False>", "<True/False>"])
         if description is None:
             self.TASK_DESCRIPTION = ['The attached image includes two images of the same location captured at different times.',
                                     'Images might be a little blurry due to either reconstruction error or motion blur.'
-                                    'A blue box is drawn around the same area in both images.',
-                                    'Two questions: (1) Is there a new object present in the right-most image?',
-                                    '(2) Is the new object inside the blue box small enough to be picked up by a robot with a single two fingered gripper with a 3 kg weight limit?']            
+                                    'A blue box is drawn around the same area in both image.',
+                                    'What object is present inside the blue box in the right most image?'
+                                    'And is the area inside the box different from image to image?']
+                                    # '(2) Is the new object inside the blue box small enough to be picked up by a robot with a single two fingered gripper with a 3 kg weight limit?']            
         else:
             self.TASK_DESCRIPTION = description
 
+        self.image_scale=image_scale
         self.PROMPT=""
         for task in self.TASK_DESCRIPTION:
             self.PROMPT+=task
         self.PROMPT+="Return an answer in JSON format as " + self.RESULTS_TEMPLATE.generate_format_prompt()
+        self.all_results=[]
         # print(self.PROMPT)
 
     def merge_images_with_strip(self, img1: np.ndarray, img2: np.ndarray, strip_width: int = 20) -> np.ndarray:
@@ -107,7 +114,10 @@ class before_and_after_cluster_filter():
 
     def evaluate_image_pair(self, before_image:np.ndarray, after_image:np.ndarray):
         merged_image=self.merge_images_with_strip(before_image, after_image)
+        if self.image_scale<1.0:
+            merged_image=cv2.resize(merged_image, (0,0), fx=self.image_scale, fy=self.image_scale)
         text_results=send_data_to_llm(self.PROMPT, [merged_image])
+        tmp=self.RESULTS_TEMPLATE.recover_json(text_results)
         return self.RESULTS_TEMPLATE.recover_json(text_results)
 
     def evaluate_multiple_image_pairs(self, 
@@ -115,24 +125,18 @@ class before_and_after_cluster_filter():
                                       after_key='new', # after image stored under what name in the all_images dict?
                                       before_key='render' # before image stored under what name in the all_images dict?
                                 ):
-        all_results={}
+        self.all_results=[]
+        cnt_changed=0
         cnt_total=0
-        cnt_new=0
-        cnt_is_pickup=0
         for key in all_images:
             if after_key in all_images[key] and before_key in all_images[key]:
-                cnt_total+=1
-                all_results[key]=self.evaluate_image_pair(all_images[key][before_key],all_images[key][after_key])
-                if 'new_object' in all_results[key] and all_results[key]['new_object']:
-                    cnt_new+=1
-                if 'is_pickup' in all_results[key] and all_results[key]['is_pickup']:
-                    cnt_is_pickup+=1
-        
-        if cnt_total>0:
-            return cnt_is_pickup/cnt_total, cnt_new/cnt_total
-        else:
-            return 0, 0
-        # Majority vote - do either pickup or new fail a majority vote?
-        # if cnt_is_pickup<0.5*(cnt_total) or cnt_new<0.5*(cnt_total):
-        #     return False
-        # return True
+                res=self.evaluate_image_pair(all_images[key][before_key],all_images[key][after_key])
+                res['image_name']=key
+                self.all_results.append(res)
+                if 'is_changed' in res:
+                    if res['is_changed']:
+                        cnt_changed+=1
+                    cnt_total+=1    
+        if cnt_total==0:
+            return 0.5
+        return cnt_changed/cnt_total

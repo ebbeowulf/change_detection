@@ -5,16 +5,17 @@ from change_pcloud_utils.camera_params import camera_params
 # from change_pcloud_utils.map_utils import pcloud_from_images, create_object_clusters, calculate_iou
 from change_pcloud_utils.colmap_to_labeled_change_images import setup_change_experiment
 from change_pcloud_utils.pcloud_creation_utils import build_pclouds
-from change_pcloud_utils.pcloud_cluster_utils import create_and_merge_clusters, merge_by_bounding_box
+from change_pcloud_utils.pcloud_cluster_utils import merge_by_bounding_box
 from stretch_srvs.srv import GetCluster, DrawCluster
 from geometry_msgs.msg import Point
 import numpy as np
-from change_pcloud_utils.filter_clusters import get_filter_by_name, evaluate
+# from change_pcloud_utils.filter_clusters import get_filter_by_name, evaluate
 ABSOLUTE_MIN_CLUSTER_SIZE=100
 GRIDCELL_SIZE=0.01
 import glob
 import os
 import pickle
+import pdb
 
 class change_server(Node):
     def __init__(self,
@@ -24,13 +25,14 @@ class change_server(Node):
         self.exp_params=exp_params
 
         # To speed up processing, build the point clouds using
-        #   colmap_to_labeled_change_images 
+        #   colmap_to_labeled_change_images
         self.pcloud_fNames = build_pclouds(exp_params['fList_new'],
                     exp_params['fList_renders'],
                     exp_params['prompts'],
                     exp_params['params'],
                     exp_params['detection_threshold'],
-                    rebuild_pcloud=False)
+                    rebuild_pcloud=False,
+                    classifier_type=exp_params['classifier'])
 
         self.clear_loaded_clusters()
 
@@ -69,6 +71,7 @@ class change_server(Node):
 
         # sample points randomly for now
         if request.num_points < self.loaded_clusters['clusters'][top1_idx].pts.shape[0]:
+            pdb.set_trace()
             pts=self.loaded_clusters['clusters'][top1_idx].pts
             sampled_pts = pts[np.random.choice(pts.shape[0], request.num_points, replace=False)]
             for p_idx in range(sampled_pts.shape[0]):
@@ -112,9 +115,11 @@ class change_server(Node):
         if self.loaded_clusters['pcloud']['xyz'].shape[0]>ABSOLUTE_MIN_CLUSTER_SIZE:
             self.load_clusters_from_file(prompt)
             # Were they loaded successfully? If not, build from scratch
-            if len(self.loaded_clusters['clusters'])==0:
-                self.loaded_clusters['clusters']=create_and_merge_clusters(self.loaded_clusters['pcloud']['xyz'].cpu().numpy(), GRIDCELL_SIZE)
-                self.loaded_clusters['clusters']=merge_by_bounding_box(self.loaded_clusters['clusters'], self.loaded_clusters['pcloud'], self.exp_params['fList_new'], self.exp_params['fList_renders'], self.exp_params['params'])        
+            if len(self.loaded_clusters['clusters'])==0:             
+                # self.loaded_clusters['clusters']=create_and_merge_clusters(self.loaded_clusters['pcloud']['xyz'].cpu().numpy(), GRIDCELL_SIZE)
+                # self.loaded_clusters['clusters']=merge_by_bounding_box(self.loaded_clusters['clusters'], self.loaded_clusters['pcloud'], self.exp_params['fList_new'], self.exp_params['fList_renders'], self.exp_params['params'])        
+                print("No clusters loaded - exiting")
+                exit(-1)
 
             return True
         else:
@@ -141,7 +146,7 @@ class change_server(Node):
             filt=self.loaded_clusters['clusters'][request.which_cluster].filter_points_in_box(self.loaded_clusters['pcloud']['xyz'])
             pts=self.loaded_clusters['pcloud']['xyz'][filt].to('cpu').numpy()
             clr=self.loaded_clusters['pcloud']['rgb'][filt].to('cpu').numpy()
-            pcd_main=pointcloud_open3d(pts,clr)
+            pcd_main=pointcloud_open3d(pts,clr[:,[2,1,0]])
 
             dI=drawn_image(pcd_main)
             fName=f"draw_clusters.{self.loaded_clusters['pcloud']['xyz'].shape[0]}_cl{request.which_cluster}.png"

@@ -71,6 +71,7 @@ class pcloud_base():
                     self.loaded_image['depth_mask']*=(blur>color_blur_threshold)                    
 
                 # Build the rotation matrix
+                # self.loaded_image['M']=torch.tensor(poseM,device=DEVICE)
                 self.loaded_image['M']=torch.matmul(self.rot_matrixT,torch.tensor(poseM,device=DEVICE))
 
                 # Save the key last so we can skip if called again
@@ -359,7 +360,7 @@ class pcloud_openVocab(pcloud_base):
             pcloud['xyz']=pcloud['xyz'].cpu().numpy()
             pcloud['rgb']=pcloud['rgb'].cpu().numpy()
             pcloud['probs']=pcloud['probs'].cpu().numpy()
-            # pdb.set_trace()
+
             # Now save the result so we don't have to keep processing this same cloud
             with open(save_fName,'wb') as handle:
                 pickle.dump(pcloud, handle, protocol=pickle.HIGHEST_PROTOCOL)
@@ -515,7 +516,7 @@ class pcloud_change(pcloud_base):
         # Build the class associated mask for this image - discard any images where the counts are too high as likely 
         #       localization or generative errors. If "change" > 10%, then probably couldn't localize the image very well anyways (DEPRECATED - no longer doing this)
         # max_point_count=self.loaded_image['colorT'].shape[0]*self.loaded_image['colorT'].shape[1]/10
-        cnt_change_pts=dict()
+        cnt_change_pts={tgt_class:0 for tgt_class in prompts}
         for tgt_class in prompts:
             if tgt_class in latest_result and latest_result[tgt_class]['new_prob'] is not None and latest_result[tgt_class]['baseline_prob'] is not None:
                 # Get the change image by subtracting clipseg results
@@ -538,8 +539,6 @@ class pcloud_change(pcloud_base):
                             all_bboxes[tgt_class]=self.generate_boxes_with_sam(deltaT.cpu().numpy(),filtered_maskT.cpu().numpy(),merge_overlap=True)
                         except Exception as e:
                             print(f"Exception {e} caught around generate_boxes_with_sam")
-                            # import pdb
-                            # pdb.set_trace()
                             all_bboxes[tgt_class]=[]
                             continue
 
@@ -634,7 +633,6 @@ def build_change_clouds(params:camera_params,
         except Exception as e:
             print(f"Could not load files associated with key={key}")
             continue
-        
         print(fList_new.get_color_fileName(key))
         pcloud_creator.load_image(colorI_new, depthI, M, str(key),color_blur_threshold=COLOR_BLUR_THRESHOLD, depth_blur_threshold=DEPTH_BLUR_THRESHOLD)
         results, bboxes, pt_counts=pcloud_creator.multi_prompt_change_process(colorI_rendered, prompts, det_threshold,est_bboxes=True,classifier_type=classifier_type)

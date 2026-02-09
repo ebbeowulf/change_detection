@@ -4,6 +4,7 @@ NERFACTO_DIR=$1
 CHANGES_DIR=$2
 THRESHOLD=$3
 DEPTH_DIR=depth_rotated
+SAVE_DIR=save_results_unfiltered
 
 # Remaining arguments (starting from the 4th)
 PROMPTS=()
@@ -19,6 +20,6 @@ conda activate ros2_env
 source ~/ros2_ws/install/setup.bash
 
 # Run your node
-cmd="~/miniconda3/envs/ros2_env/bin/python ~/ros2_ws/install/ros2_change_detect/lib/ros2_change_detect/change_server ${NERFACTO_DIR} ${CHANGES_DIR} --depth_dir ${DEPTH_DIR} --threshold $THRESHOLD --queries ${PROMPTS[@]}"
+cmd="~/miniconda3/envs/ros2_env/bin/python ~/ros2_ws/install/ros2_change_detect/lib/ros2_change_detect/change_server ${NERFACTO_DIR} ${CHANGES_DIR} --depth_dir ${DEPTH_DIR} --threshold $THRESHOLD --queries ${PROMPTS[@]} --classifier sam3 --save_dir save_results_unfiltered"
 echo $cmd
 eval $cmd

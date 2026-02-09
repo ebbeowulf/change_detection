@@ -161,7 +161,7 @@ if __name__ == '__main__':
         delta=blur
     print(f"MAX DELTA={delta.max()}")
     mask=(delta>args.threshold)
-    pdb.set_trace()
+    # pdb.set_trace()
 
     if args.filter=='median':
         print('applying median filtering')
