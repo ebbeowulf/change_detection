@@ -14,6 +14,8 @@ class camera_params():
     def globalXYZ_to_imageRC(self, tX, tY, tZ, globalM:np.array):
         invR=np.linalg.inv(globalM)
         Vi=np.matmul(invR,[tX, tY, tZ, 1])
+        if Vi[2]<0:
+            return -1, -1
         col=Vi[0]*self.fx/Vi[2]+self.cx
         row=Vi[1]*self.fy/Vi[2]+self.cy
         return row,col

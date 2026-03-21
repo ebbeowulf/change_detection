@@ -11,6 +11,7 @@ from change_pcloud_utils.llm_utils import before_and_after_cluster_filter, multi
 from change_pcloud_utils.map_utils import identify_related_images_global_pose
 from PIL import Image
 import torch
+import cv2
 
 def gaussian_dist_function(val1, std1):
     return np.exp(-0.5*np.power(val1/std1,2))
@@ -176,70 +177,37 @@ class combo_filter(cluster_filter):
 #   to those with no detections. 
 #################
 class before_and_after_filter(cluster_filter):
-    def __init__(self, use_render=True):
+    def __init__(self, use_render=True, draw_orig_box=True):
         self.use_render=use_render
-        if self.use_render:
-            self.ba_cluster_filt=before_and_after_cluster_filter(image_scale=0.5)
-            self.before_key='render'
-        else:
-            # desc=['The attached image includes two images of the same location captured at different times.',
-            #         'A blue box is drawn around the object of interest in one image.',
-            #         '(1) Is the object in the blue box not found in both images?',
-            #         '(2) Should a housekeeper pick up the object in the blue box and put it away?']
-            desc=['The attached image includes two images of the same location captured at different times.',
-                    'We are interested in knowing if the area described by a blue box in at least one image has changed.',
-                    'Specifically, answer if  the area inside the box has changed from image to image?'                    
-                    'And what type of object is found inside the blue box?']
-            self.ba_cluster_filt=before_and_after_cluster_filter(desc,image_scale=0.5)
-            self.before_key='before'
+        self.draw_orig_box=draw_orig_box
+        self.model_name="llama4:latest"
+        # self.model_name=None
         super().__init__()
+      
+    # def calculate_score(self,all_images, cluster=None):
+    #     if not self.use_render: # need to add "before" images to all_images
+    #         all_images=self.set_closest_images(all_images,cluster)
+    #     # Need to flip dimensions of the images - they are inverted
+    #     for key in all_images.keys():
+    #         if 'new' in all_images[key]:
+    #             all_images[key]['new']=all_images[key]['new'][:,:,[2,1,0]]
+    #         if 'render' in all_images[key]:
+    #             all_images[key]['render']=all_images[key]['render'][:,:,[2,1,0]]
+    #     return self.ba_cluster_filt.evaluate_multiple_image_pairs(all_images, before_key=self.before_key)
+
+    def calculate_score(self, all_images, cluster=None):
+        print("The before and after filter here is just a stub to support evaluation... use before_and_after_filter.py to calculate")
+        pdb.set_trace()
     
-    def set_closest_images(self, all_images, cluster_centroid):
-        global fList_base, fList_new, params
-
-        # find images in the baseline dataset that can see the target cluster
-        rel_imgs=identify_related_images_global_pose(params, fList_base, cluster_centroid)
-
-        # now find the vector to the object and the associated distance
-        dist_relM=np.zeros((len(rel_imgs)))
-        zVec_relM=np.zeros((3,len(rel_imgs)))
-        for key_idx, rel_key in enumerate(rel_imgs):
-            relM=np.matmul(params.rot_matrix,fList_base.get_pose(int(rel_key)))
-            dist_relM[key_idx]=np.sqrt(((cluster_centroid[:3]-relM[:3,3])**2).sum())
-            zVec_relM[:,key_idx]=np.matmul(relM[:3,:3],[0,0,1])
-        zVec_relM=np.transpose(zVec_relM)
-
-        # step through images that point at the object and calculate     
-        for key in all_images.keys():
-            if 'new' in all_images[key]:
-                M=np.matmul(params.rot_matrix,fList_new.get_pose(int(key)))
-                distM=np.sqrt(((cluster_centroid-M[:3,3])**2).sum())
-                zVecM=np.matmul(M[:3,:3],[0,0,1])
-                angle=zVec_relM@zVecM #dot-product, returns a [N,] vector
-                best_match=rel_imgs[np.argmax(gaussian_dist_function(dist_relM-distM,1.0)*gaussian_dist_function(angle,0.25))]
-                color_fName=fList_base.get_color_fileName(int(best_match))
-                try:
-                    img=Image.open(color_fName)
-                    all_images[key]['before']=np.array(img)
-                except Exception as e:
-                    print(f"Cannot load image {color_fName}- skipping")
-        return all_images
-    
-    def calculate_score(self,all_images, cluster=None):
-        if not self.use_render: # need to add "before" images to all_images
-            all_images=self.set_closest_images(all_images,cluster.centroid)
-        # Need to flip dimensions of the images - they are inverted
-        for key in all_images.keys():
-            if 'new' in all_images[key]:
-                all_images[key]['new']=all_images[key]['new'][:,:,[2,1,0]]
-            if 'render' in all_images[key]:
-                all_images[key]['render']=all_images[key]['render'][:,:,[2,1,0]]
-        return self.ba_cluster_filt.evaluate_multiple_image_pairs(all_images, before_key=self.before_key)
-
     def get_save_file_name(self, tgt_dir, prompt):
         if self.use_render:
-            return f"{tgt_dir}/render_and_after_filter-{prompt}.json"
-        return super().get_save_file_name(tgt_dir, prompt)
+            return f"{tgt_dir}/render_and_after_filter-{prompt}-{self.model_name}.json"
+        if not self.draw_orig_box:
+            if self.model_name is not None:
+                return f"{tgt_dir}/before_unannotated_and_after_filter-{prompt}-{self.model_name}.json"
+            else:
+                return f"{tgt_dir}/before_unannotated_and_after_filter-{prompt}.json"
+        return f"{tgt_dir}/before_and_after_filter-{prompt}-{self.model_name}-{self.model_name}.json"
     
     def clear_results(self):
         self.all_results=dict()
@@ -315,6 +283,10 @@ def get_filter_by_name(filter):
         # need to set fList_base, fList_new, and params global variables 
         #   if going to call the calculate_score function
         return before_and_after_filter(use_render=False)     
+    elif filter=='before_unannotated_and_after_filter':
+        # need to set fList_base, fList_new, and params global variables 
+        #   if going to call the calculate_score function
+        return before_and_after_filter(use_render=False, draw_orig_box=False)     
     elif filter=='combo_pmf_pctV':
         F1=prob_mean_filter()
         F2=pct_valid_filter()
@@ -368,8 +340,8 @@ def score_all_clusters(tgt_dir, query, active_filter_list:list):
     return filterBank
 
 def setup_before_and_after_filter(nerfacto_dir, 
-                                  color_dir="nerf_colmap/images", 
-                                  colmap_dir="nerf_colmap/colmap/sparse/0", 
+                                  color_dir, 
+                                  colmap_dir, 
                                   frame_keyword=None):
     # Need to build information from the baseline run 
     #   Specifically we need the fList_base and params variables to be created globally
@@ -379,8 +351,8 @@ def setup_before_and_after_filter(nerfacto_dir,
     initial_dir=nerfacto_dir.split('outputs')[0]
     initial_colmap_dir=initial_dir+colmap_dir
     global fList_base, params
-    params=get_camera_params(initial_colmap_dir,args.nerfacto_dir)
-    fList_base=build_file_list(initial_dir+color_dir,initial_dir+"nerf_colmap/depth",initial_dir,initial_colmap_dir,frame_keyword)
+    params=get_camera_params(initial_colmap_dir,nerfacto_dir)
+    fList_base=build_file_list(initial_dir+color_dir,"",initial_dir,initial_colmap_dir,frame_keyword)
     if len(fList_base.keys())==0:
         print("No images found in the base directory - check your frame keyword?")
         raise(Exception("fList_base empty"))
@@ -395,8 +367,8 @@ if __name__ == '__main__':
     ## These parameters are all for the before and after filter
     parser.add_argument('--nerfacto_dir',type=str,default=None,help='location of nerfactor directory containing config.yml and dataparser_transforms.json. Only necessary if using the before_and_after_filter')
     parser.add_argument('--color_dir',type=str,default='nerf_colmap/images',help='where are the color images of the base directory? (default=nerf_colmap/images) Only necessary if using the before_and_after_filter')
-    parser.add_argument('--colmap_dir',type=str,default='nerf_colmap/colmap/sparse_geo/0',help='where are the images + cameras.txt files? (default=nerf_colmap/colmap/sparse_geo/0) Only necessary if using the before_and_after_filter')
-    parser.add_argument('--frame_keyword',type=str,default="frame",help='a keyword to use when parsing the transforms file (default=frame)')    
+    parser.add_argument('--colmap_dir',type=str,default='nerf_colmap/colmap/sparse_geo/0', help='where are the images + cameras.txt files? (default = nerf_colmap/colmap/sparse_geo/0) Only necessary if using the before_and_after_filter')
+    parser.add_argument('--frame_keyword',type=str,default="frame",help='a keyword to use when parsing the transforms file to find base directory images (default=frame)')    
     args = parser.parse_args()
 
     if 'before_and_after_filter' in args.filters:

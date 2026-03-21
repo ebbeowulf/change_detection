@@ -14,6 +14,7 @@ import open3d as o3d
 from change_pcloud_utils.rgbd_file_list import rgbd_file_list
 from change_pcloud_utils.camera_params import camera_params
 import torch
+import pdb
 
 ABSOLUTE_MIN_CLUSTER_SIZE=100
 FARTHESTP_SAMPLE_SIZE=100
@@ -58,7 +59,6 @@ def merge_by_bounding_box(clusters,
                           ):
     from shapely import Polygon
     cluster_image_dict=dict()
-
     for cluster_idx1, cluster in enumerate(clusters):
         # Get the set of images where the cluster centroid is visible
         rel_imgs=identify_related_images_global_pose(params,fList_new,cluster.centroid)

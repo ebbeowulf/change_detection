@@ -11,11 +11,28 @@ HOST = 'localhost'
 PORT = 5001
 BUFFER_SIZE = 4096
 
+def get_model_name():
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.connect((HOST, PORT))
+        header = {
+            "operation": "get_model_name"
+        }
+        header_bytes = json.dumps(header).encode()
+        s.sendall(struct.pack('!I', len(header_bytes)))
+        s.sendall(header_bytes)
+
+        response = s.recv(BUFFER_SIZE)
+        return json.loads(response.decode()).get('model_name')
+
+
 def send_data(text, numpy_images):
+    model_name = get_model_name()
+
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.connect((HOST, PORT))
 
         header = {
+            "operation": "query",
             "message": text,
             "image_count": len(numpy_images)
         }
@@ -40,7 +57,11 @@ def send_data(text, numpy_images):
             s.sendall(data)
 
         response = s.recv(BUFFER_SIZE)
-        return json.loads(response.decode())
+        result = json.loads(response.decode())
+        return {
+            'model_name': model_name,
+            'response': result
+        }
 
 
 # 🔧 Test mode: run from terminal
@@ -67,4 +88,5 @@ if __name__ == '__main__':
         image_list.append(cv2.imread(img,-1))
 
     result = send_data(message, image_list)
-    print("Server response:", json.dumps(result, indent=2))
+    print("Model name:", result.get('model_name'))
+    print("Server response:", json.dumps(result.get('response', result), indent=2))

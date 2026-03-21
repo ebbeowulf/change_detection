@@ -4,7 +4,7 @@ from vlm import visual_language_model
 import os
 from PIL import Image
 TMP_STORAGE="/tmp/ollama_images/"
-valid_models = ["llava:13b", "llava-llama3", "llama4:scout", "moondream", "gemma3"]
+valid_models = ["llava:13b", "llava-llama3", "llama4:scout", "moondream", "gemma3:4b", "qwen3.5:9b", "qwen3.5:35b", "gemma3:27b", "llama4:latest", "gemma3:12b" ]
 
 class ollama_lib(visual_language_model):
     def __init__(self, model_name: str  = "llama4:scout"):

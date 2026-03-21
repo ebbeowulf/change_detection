@@ -93,20 +93,37 @@ class single_level_results_template():
                 json_out[key]=self.get_type(key, res[key])
         return json_out
 
-# Function for communicating with llm server
-#    accepts both text and images by default
-def send_data_to_llm(text, numpy_images):
+def get_model_name():
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.connect((HOST, PORT))
-
         header = {
-            "message": text,
-            "image_count": len(numpy_images)
+            "operation": "get_model_name"
         }
         header_bytes = json.dumps(header).encode()
         s.sendall(struct.pack('!I', len(header_bytes)))
         s.sendall(header_bytes)
 
+        response = s.recv(BUFFER_SIZE)
+        return json.loads(response.decode()).get('model_name')
+    
+# Function for communicating with llm server
+#    accepts both text and images by default
+def send_data_to_llm(text, numpy_images):
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.connect((HOST, PORT))
+        print("Connected")
+
+        header = {
+            "operation": "query",
+            "message": text,
+            "image_count": len(numpy_images)
+        }
+        print(header)
+        header_bytes = json.dumps(header).encode()
+        s.sendall(struct.pack('!I', len(header_bytes)))
+        s.sendall(header_bytes)
+
+        print("sending images")
         for idx, arr in enumerate(numpy_images):
             # Convert NumPy array to PNG bytes
             arr_rgb = cv2.cvtColor(arr, cv2.COLOR_BGR2RGB)
@@ -122,6 +139,9 @@ def send_data_to_llm(text, numpy_images):
             s.sendall(name_bytes)
             s.sendall(struct.pack('!I', len(data)))
             s.sendall(data)
+            print("image transmitted")
+
 
         response = s.recv(BUFFER_SIZE)
+        print("response received")
         return json.loads(response.decode())

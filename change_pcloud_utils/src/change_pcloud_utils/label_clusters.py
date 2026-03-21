@@ -8,9 +8,9 @@ import os
 import glob
 import pickle
 from change_pcloud_utils.llm_utils import before_and_after_cluster_filter, multi_view_cluster_filter
-from change_pcloud_utils.map_utils import identify_related_images_global_pose
+# from change_pcloud_utils.map_utils import identify_related_images_global_pose
+from change_pcloud_utils.filter_clusters import cluster_filter
 from PIL import Image
-from change_pcloud_utils.filter_clusters import cluster_filter, get_filter_by_name, score_all_clusters
 
 def gaussian_dist_function(val1, std1):
     return np.exp(-0.5*np.power(val1/std1,2))
@@ -263,6 +263,7 @@ if __name__ == '__main__':
             labels=build_cluster_label_dict(tgt_dir, Q, args.label_suffix)
 
             # Load the filters
+            from change_pcloud_utils.filter_clusters import score_all_clusters
             filterBank=score_all_clusters(tgt_dir,Q,args.filters)
 
             # Save to the evaluation function

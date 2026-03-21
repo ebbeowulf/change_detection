@@ -26,13 +26,26 @@ def receive_all(sock, length):
     return data
 
 def handle_client(conn, VLM):
+    print("Message received")
     header_len = struct.unpack('!I', conn.recv(4))[0]
     header = json.loads(receive_all(conn, header_len).decode())
 
-    text = header['message']
-    image_count = header['image_count']
+    operation = header.get('operation', 'query')
+
+    print(header)
+    if operation == 'get_model_name':
+        result = {'model_name': getattr(VLM, 'model_name', None)}
+        print(result)
+        conn.sendall(json.dumps(result).encode())
+        conn.close()
+        return
+
+    # Default behavior: query the model with message + images
+    text = header.get('message', '')
+    image_count = int(header.get('image_count', 0))
     images = []
 
+    print(f"Expected image count: {image_count}")
     for _ in range(image_count):
         name_len = struct.unpack('!I', conn.recv(4))[0]
         _ = receive_all(conn, name_len)  # discard name
@@ -42,7 +55,9 @@ def handle_client(conn, VLM):
         # Decode image bytes into a PIL Image object
         image = Image.open(io.BytesIO(data)).convert('RGB')
         images.append(image)
+        print("image received")
 
+    print("Query LLM")
     result = query_llm(VLM, text, images)  # Pass PIL images directly
     print(result)
     conn.sendall(json.dumps(result).encode())

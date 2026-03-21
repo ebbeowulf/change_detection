@@ -22,7 +22,7 @@ def get_camera_params(colmap_dir, nerfstudio_dir):
         # cam_rot_matrix[:3,:]=np.array(A['transform']) #broken for some reason
         cam_rot_matrix[:3,:3]=np.array(A['transform'])[:,:3]
     except Exception as e:
-        print("Failed to open cameras.txt in " + colmap_dir + " - exiting")
+        print("Failed to open dataparser_transforms.json in " + colmap_dir + " - exiting")
         sys.exit(-1)
 
     # Load the location csv
@@ -73,7 +73,7 @@ def get_all_poses(colmap_dir, keyword:str):
         else:
             ln=A[ln_idx]
         vals=ln.split(' ')
-        if keyword is None or keyword in vals[-1]:
+        if keyword is None or vals[-1].startswith(keyword):
             quat_xyzw=[float(vals[2]),float(vals[3]),float(vals[4]),float(vals[1])]
             rot=R.from_quat(quat_xyzw) #this is an inverted matrix pointing back towards the center of the camera
             trans=np.array([float(vals[5]),float(vals[6]),float(vals[7])])
@@ -103,9 +103,6 @@ def build_file_list(color_dir, depth_dir, save_dir, colmap_dir, keyword:str):
         rot[:3,:3]=all_poses[key]['rot_cam2world']
         rot[:3,3]=all_poses[key]['pose']                
         fList.add_pose(number,rot)
-        if key==163:
-            import pdb
-            pdb.set_trace()
 
     X=np.zeros((len(fList.keys())))
     Y=np.zeros((len(fList.keys())))
