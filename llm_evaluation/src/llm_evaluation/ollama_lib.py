@@ -4,7 +4,7 @@ from vlm import visual_language_model
 import os
 from PIL import Image
 TMP_STORAGE="/tmp/ollama_images/"
-valid_models = ["llava:13b", "llava-llama3", "llama4:scout", "moondream", "gemma3:4b", "qwen3.5:9b", "qwen3.5:35b", "gemma3:27b", "llama4:latest", "gemma3:12b" ]
+valid_models = ["llava:13b", "llava-llama3", "llama4:scout", "moondream", "gemma3:4b", "qwen3.5:9b", "qwen3.5:35b", "gemma3:27b", "llama4:latest", "gemma3:12b", "llava:34b","nemotron-cascade-2", "qwen2.5vl:7b", "qwen2.5vl:32b" ]
 
 class ollama_lib(visual_language_model):
     def __init__(self, model_name: str  = "llama4:scout"):
@@ -29,11 +29,13 @@ class ollama_lib(visual_language_model):
         return self.run_multi_image_inference(text_message, image_paths)
 
     def run_multi_image_inference(self, prompt: str, image_path_list: list, print_output: bool=False):
+        print("Ollama chat")
         stream = ollama.chat(
             model=self.model_name,
             messages=[{"role": "user", "content": prompt, "images": image_path_list}],
             stream=True,
         )
+        print("Parse stream")
         message=""
         for chunk in stream:
             message+=chunk["message"]["content"]

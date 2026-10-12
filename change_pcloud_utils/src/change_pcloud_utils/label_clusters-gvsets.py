@@ -162,13 +162,11 @@ class evaluate():
         result[~np.isfinite(result)] = 0
         return result
     
-    def F_score(self):        
-        R=self.recall()
-        P=self.precision()
+    def F_score(self, R, P):        
         result = np.true_divide(2*R*P,R+P)
         result[~np.isfinite(result)] = 0
         return result
-    
+        
     def add_stats(self, B):
         assert(self.stats['TP'].shape==B.stats['TP'].shape)
         self.stats['TP']+=B.stats['TP']
@@ -183,13 +181,10 @@ class evaluate():
             R=self.recall()
             P=self.precision()
             S=self.specificity()
-            F1=self.F_score()
+            F1=self.F_score(R,P)
+            F2=self.F_score(R,S)
             # count_objects=[ len(np.unique(self.tp_object_list[idx])) for idx in self.tp_object_list ]
             count_objects=[ len(self.tp_object_list[idx]) for idx in self.tp_object_list ]
-            whichF=np.argmax(F1)
-            print(f"Pct Valid Clusters: {self.count_valid/(self.count_invalid+self.count_valid)}")
-            print(f"Initial F-score: {F1[0]}, P/R={P[0]}/{R[0]} ")
-            print(f"Max F-score: {F1[whichF]}, P/R={P[whichF]}/{R[whichF]} ")
 
             print("Threshold",end=", ")
             for idx in range(len(self.threshold)):
@@ -207,6 +202,11 @@ class evaluate():
             for idx in range(len(self.threshold)):
                 print(count_objects[idx],end=", ")
             print("")
+            whichF=np.argmax(F1)
+            print(f"Pct Valid Clusters: {self.count_valid/(self.count_invalid+self.count_valid)}")
+            print(f"Initial F-score: {F1[0]}, P/R={P[0]}/{R[0]} ")
+            print(f"Max F1(recall,precision): {F1[whichF]}, P/R={P[whichF]}/{R[whichF]} ")
+            print(f"Max F1(recall,specificity): {F2[whichF]}, S/R={S[whichF]}/{R[whichF]} ")
 
     def process_filter(self, filter:cluster_filter, labels:dict, dir_label:str=''):        
         for key in filter.scores.keys():

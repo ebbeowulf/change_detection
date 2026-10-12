@@ -180,7 +180,7 @@ class before_and_after_filter(cluster_filter):
     def __init__(self, use_render=True, draw_orig_box=True):
         self.use_render=use_render
         self.draw_orig_box=draw_orig_box
-        self.model_name="llama4:latest"
+        self.model_name="gemma3:12b"
         # self.model_name=None
         super().__init__()
       

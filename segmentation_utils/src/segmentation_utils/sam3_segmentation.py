@@ -51,13 +51,21 @@ class sam3_segmentation(image_segmentation):
         self.clear_data()
         outputs=None
         try:
+            # Ensure image is in RGB format (no alpha channel)
+            if image.mode != 'RGB':
+                print(f"Converting image from {image.mode} to RGB")
+                image = image.convert('RGB')
+            
+            print(f"Image size: {image.size}, mode: {image.mode}")
             inference_state = self.processor.set_image(image)
             for text in self.prompts:
                 outputs = self.processor.set_text_prompt(state=inference_state, prompt=text)
                 self.set_data(outputs, threshold, self.label2id[text])
         except Exception as e:
-            print("Exception during inference step - returning")
-            return
+            print(f"Exception during inference step: {type(e).__name__}: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
 
         return outputs #only return most recent outputs
 
@@ -93,7 +101,9 @@ if __name__ == '__main__':
     CS=sam3_segmentation([args.tgt_class],args.threshold)
     image = Image.open(args.image)
     outputs=CS.process_image(image, threshold=args.threshold)
-    if args.options is None:
+    if outputs is None:
+        print("Failed to process image - no results to display")
+    elif args.options is None:
         from sam3.visualization_utils import plot_results
         import matplotlib.pyplot as plt
         plot_results(image, outputs)

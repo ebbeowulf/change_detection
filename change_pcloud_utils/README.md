@@ -1,8 +1,8 @@
 ----------------- How to install ---------------------
 Create a conda environment, setup transformers and ultralytics:
 
-conda create -n clipseg python=3.10
-conda activate clipseg
+conda create -n change python=3.12
+conda activate change
 pip install transformers
 pip install ultralytics
 
