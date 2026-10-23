@@ -1,10 +1,6 @@
 ----------------- How to install ---------------------
-Create a conda environment, setup transformers and ultralytics:
-
-conda create -n change python=3.12
+# Create conda environment and install segmentation_utils first, then
 conda activate change
-pip install transformers
-pip install ultralytics
 
 Install the python package:
 pip install -e .

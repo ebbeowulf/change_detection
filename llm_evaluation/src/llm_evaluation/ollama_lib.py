@@ -4,10 +4,10 @@ from vlm import visual_language_model
 import os
 from PIL import Image
 TMP_STORAGE="/tmp/ollama_images/"
-valid_models = ["llava:13b", "llava-llama3", "llama4:scout", "moondream", "gemma3:4b", "qwen3.5:9b", "qwen3.5:35b", "gemma3:27b", "llama4:latest", "gemma3:12b", "llava:34b","nemotron-cascade-2", "qwen2.5vl:7b", "qwen2.5vl:32b" ]
+valid_models = ["llava:13b", "llava-llama3", "moondream", "gemma3:4b", "qwen3.5:9b", "qwen3.5:35b", "gemma3:27b", "llama4:latest", "gemma3:12b", "llava:34b","nemotron-cascade-2", "qwen2.5vl:7b", "qwen2.5vl:32b" ]
 
 class ollama_lib(visual_language_model):
-    def __init__(self, model_name: str  = "llama4:scout"):
+    def __init__(self, model_name: str  = "llama4:latest", think: bool = False, json_format: bool = True):
         if model_name not in valid_models:
             print(f"Error: Invalid model name. Choose from: {', '.join(valid_models)}")
             sys.exit(1)
@@ -15,6 +15,10 @@ class ollama_lib(visual_language_model):
         os.makedirs(TMP_STORAGE, exist_ok=True)
 
         self.model_name=model_name
+        self.think=think                  # let thinking models reason before answering
+        self.json_format=json_format      # constrain replies to a JSON object
+        # name reported to clients: includes the settings, so answers given under different settings are cached apart
+        self.reported_name = model_name + ("+think" if think else "+nothink") + ("+json" if json_format else "")
         ollama.pull(model_name)
 
     def process_input(self, text_message:str, images:list):
@@ -28,20 +32,35 @@ class ollama_lib(visual_language_model):
 
         return self.run_multi_image_inference(text_message, image_paths)
 
-    def run_multi_image_inference(self, prompt: str, image_path_list: list, print_output: bool=False):
+    def run_multi_image_inference(self, prompt: str, image_path_list: list, print_output: bool=False, think: bool=False):
         print("Ollama chat")
+        options = {'think': self.think}
+        if self.json_format:
+            options['format'] = 'json'
         stream = ollama.chat(
             model=self.model_name,
             messages=[{"role": "user", "content": prompt, "images": image_path_list}],
             stream=True,
+            **options,
         )
         print("Parse stream")
+        # message=""
+        # for chunk in stream:
+        #     message+=chunk["message"]["content"]
+        #     if print_output:
+        #         print(chunk["message"]["content"], end="", flush=True)
         message=""
+        thinking=""
+        done_reason=None
         for chunk in stream:
             message+=chunk["message"]["content"]
+            thinking+=chunk["message"].get("thinking") or ""
+            if chunk.get("done"):
+                done_reason=chunk.get("done_reason")
             if print_output:
                 print(chunk["message"]["content"], end="", flush=True)
-        
-        return message
+        # why the reply ended, and how much reasoning came before it
+        print(f"done_reason={done_reason}  answer_chars={len(message)}  thinking_chars={len(thinking)}")
+        return message        
 
 

@@ -34,7 +34,7 @@ def handle_client(conn, VLM):
 
     print(header)
     if operation == 'get_model_name':
-        result = {'model_name': getattr(VLM, 'model_name', None)}
+        result = {'model_name': getattr(VLM, 'reported_name', getattr(VLM, 'model_name', None))}
         print(result)
         conn.sendall(json.dumps(result).encode())
         conn.close()
@@ -58,11 +58,15 @@ def handle_client(conn, VLM):
         print("image received")
 
     print("Query LLM")
-    result = query_llm(VLM, text, images)  # Pass PIL images directly
+    try:
+        result = query_llm(VLM, text, images)  # Pass PIL images directly
+    except Exception as e:                     # model failed: report it to the client, keep serving
+        print(f"Query failed: {type(e).__name__}: {e}")
+        result = f"ERROR: {type(e).__name__}: {e}"
     print(result)
     conn.sendall(json.dumps(result).encode())
     conn.close()
-
+    
 # 🔧 Test mode: run from terminal
 if __name__ == '__main__':
     import argparse
@@ -70,12 +74,14 @@ if __name__ == '__main__':
     parser.add_argument('--host', type=str, default=HOST, help='Host to bind the server')
     parser.add_argument('--port', type=int, default=PORT, help='Port to bind the server')
     parser.add_argument('--llm_library', type=str, default='ollama', help='LLM library to use (e.g., ollama)')
-    parser.add_argument('--llm_model', type=str, default='llama4:scout', help='LLM library to use (e.g., llama4:scout)')
+    parser.add_argument('--llm_model', type=str, default='llama4:scout', help='LLM library to use (e.g., llama4:latest)')
+    parser.add_argument('--think', type=int, default=0, help='1 = let thinking models reason before answering, 0 = answer directly (default=0)')
+    parser.add_argument('--json_format', type=int, default=1, help='1 = constrain replies to a JSON object, 0 = free text (default=1)')    
     args = parser.parse_args()
 
     if args.llm_library == 'ollama':
         from ollama_lib import ollama_lib
-        VLM = ollama_lib(args.llm_model)
+        VLM = ollama_lib(args.llm_model, think=bool(args.think), json_format=bool(args.json_format))        
     else:
         raise Exception(f"LLM library {args.llm_library} not supported")
     

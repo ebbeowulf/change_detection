@@ -1,8 +1,6 @@
-from change_pcloud_utils.llm_query_tools import single_level_results_template, send_data_to_llm, get_model_name
+from cluster_filters.llm_query_tools import single_level_results_template, send_data_to_llm, get_model_name
 import numpy as np
 import cv2
-import pdb
-import matplotlib.pyplot as plt
 
 NUM_MULTI_IMAGES=4  # max number of images to send for processing at a given time
 
@@ -124,8 +122,11 @@ class before_and_after_cluster_filter():
         merged_image=self.merge_images_with_strip(before_image, after_image)
         if self.image_scale<1.0:
             merged_image=cv2.resize(merged_image, (0,0), fx=self.image_scale, fy=self.image_scale)
+        # cv2.imshow("VLM Image",merged_image)
+        # cv2.waitKey(1)
         self.active_model_name()
         text_results=send_data_to_llm(self.PROMPT, [merged_image])
+        print(text_results)
         tmp=self.RESULTS_TEMPLATE.recover_json(text_results)
         return self.RESULTS_TEMPLATE.recover_json(text_results)
 

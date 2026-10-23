@@ -11,12 +11,11 @@ import numpy as np
 from PIL import Image
 import cv2
 import json
-import pdb
 import ast
 import json5
 
 HOST = 'localhost'
-PORT = 5001
+PORT = 5000
 BUFFER_SIZE = 4096
 
 def string_to_bool(input:str):
@@ -72,6 +71,9 @@ class single_level_results_template():
         return self.template.keys()
     
     def recover_json(self, message):
+        if isinstance(message, dict):      # reply arrived already parsed as a JSON object
+            print(message)
+            return {key: (self.get_type(key, message[key]) if key in message else None) for key in self.template}
         start_index = message.find('{')
         end_index = message.find('}', start_index + 1)
         json_str=message[start_index:end_index+1].replace('\'','"')
@@ -142,6 +144,22 @@ def send_data_to_llm(text, numpy_images):
             print("image transmitted")
 
 
-        response = s.recv(BUFFER_SIZE)
-        print("response received")
+        # response = s.recv(BUFFER_SIZE)
+        # print("response received")
+        # return json.loads(response.decode())
+
+        # read until the whole JSON reply has arrived: it can be longer than one recv, or arrive in pieces
+        response = b""
+        while True:
+            chunk = s.recv(BUFFER_SIZE)
+            if not chunk:                      # server closed the connection
+                break
+            response += chunk
+            try:
+                reply = json.loads(response.decode())
+                print("response received")
+                return reply
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                continue                       # incomplete so far - keep reading
+        print(f"response incomplete after {len(response)} bytes: {response[:200]!r}")
         return json.loads(response.decode())
