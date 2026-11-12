@@ -21,6 +21,10 @@
 #     ./run_filter_sequence.sh /data3/datasets/smart_change/s120 'siamese vlm_change' '--siamese_model /data2/.../runs/siamese_s120'
 #     ./run_filter_sequence.sh /data3/datasets/smart_change/s120 'siamese vlm_change' \
 #               '--siamese_model /data2/datasets/change_dataset/runs/siamese_s120 --vlm_change_model qwen3.5:35b+nothink+json'
+#     ./run_filter_sequence.sh /data3/datasets/smart_change/s120 'nb_fusion' \
+#               '--siamese_model /data2/datasets/change_dataset/runs/siamese_s120 --vlm_change_model qwen3.5:35b+nothink+json --nb_fusion_train_root /data3/datasets/smart_change/s120'
+#     ./run_filter_sequence.sh /data3/datasets/smart_change/s120 'siamese vlm_change vlm_pickup' \
+#               '--siamese_model /data2/datasets/change_dataset/runs/siamese_s120'
 # Output folder per run: <config>/filters/<stages joined by +>[__<VLM model>]/
 #   The VLM model name (as the server reports it) is added whenever a VLM stage is in the sequence,
 #   so the same sequence run with different VLMs or VLM settings never overwrites itself.
@@ -66,15 +70,21 @@ conda activate $CONDA_ENV
 
 # output folder name: stages joined by '+'
 FILTER_NAME=$(IFS=+; echo "${STAGE_LIST[*]}")
+# siamese model given in FILTER_ARGS? add its folder name, so results from different models never overwrite each other
+for ((i = 0; i < ${#EXTRA_ARGS[@]}; i++)); do
+    if [ "${EXTRA_ARGS[$i]}" = "--siamese_model" ]; then
+        FILTER_NAME="${FILTER_NAME}__$(basename "${EXTRA_ARGS[$((i + 1))]%/}")"
+    fi
+done
 
 # if a VLM stage is in the sequence: the server must be answering, and its model name goes into the folder name
 # if [[ " ${STAGE_LIST[*]} " == *" vlm_"* ]]; then
 #     MODEL=$(cd "$FILTER_DIR" && python -c "from llm_query_tools import get_model_name; print(get_model_name())" 2>/dev/null)
-if [[ " ${STAGE_LIST[*]} " == *" vlm_"* ]]; then
+if [[ " ${STAGE_LIST[*]} " == *" vlm_"* || " ${STAGE_LIST[*]} " == *" nb_fusion "* ]]; then
     # model named in FILTER_ARGS (--vlm_change_model NAME)? use it; otherwise ask the server
     MODEL=""
     for ((i = 0; i < ${#EXTRA_ARGS[@]}; i++)); do
-        [ "${EXTRA_ARGS[$i]}" = "--vlm_change_model" ] && MODEL=${EXTRA_ARGS[$((i + 1))]}
+        case "${EXTRA_ARGS[$i]}" in --vlm_change_model|--vlm_pickup_model) MODEL=${EXTRA_ARGS[$((i + 1))]} ;; esac
     done
     [ -z "$MODEL" ] && MODEL=$(cd "$FILTER_DIR" && python -c "from llm_query_tools import get_model_name; print(get_model_name())" 2>/dev/null)
     if [ -z "$MODEL" ]; then

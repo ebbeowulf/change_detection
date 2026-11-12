@@ -259,7 +259,7 @@ def parse_args():
     parser.add_argument('--renders_dir', type=str, default='renders', help='name of the Gaussian Splatting "before" render subdirectory (default=renders)')
     parser.add_argument('--render_prefix', type=str, default='rgb', help='filename prefix of the color renders (default=rgb)')
     parser.add_argument('--depth_dir', type=str, default='depth', help='name of the depth image subdirectory, recorded in meta.json (default=depth)')
-    parser.add_argument('--delta_dir', type=str, default='delta_change', help='name of the delta mask subdirectory, recorded in meta.json (default=delta_change)')
+    parser.add_argument('--delta_dir', type=str, default='change2.0_results/delta_sam3_0.1', help='name of the delta mask subdirectory, recorded in meta.json (default=change2.0_results/delta_sam3_0.1)')
     parser.add_argument('--num_points', type=int, default=20, help='points sampled per frame by find_pts_in_image (default=20)')
     parser.add_argument('--min_points', type=int, default=3, help='minimum projected points for a frame to produce a sample (default=3)')
     parser.add_argument('--box_buffer', type=float, default=0.25, help='fraction of box width/height added on each side (default=0.25)')
@@ -267,7 +267,6 @@ def parse_args():
     parser.add_argument('--seed', type=int, default=0, help='random seed set before each cluster so boxes are reproducible (default=0)')
     parser.add_argument('--overwrite', type=int, default=0, help='1 = rebuild sample files that already exist (default=0)')
     return parser.parse_args()
-
 
 if __name__ == '__main__':
     args = parse_args()

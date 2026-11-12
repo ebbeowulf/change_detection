@@ -4,7 +4,6 @@ import os
 import numpy as np
 import cv2
 
-
 def load_split(dataset_root, split_file):
     with open(dataset_root + "/splits/" + split_file) as f:
         return json.load(f)

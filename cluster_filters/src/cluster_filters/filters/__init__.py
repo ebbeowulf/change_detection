@@ -4,5 +4,7 @@ Filter registry: the name used in --stages -> filter class. To add a filter, wri
 """
 from .siamese import SiameseFilter
 from .vlm_change import VLMChangeFilter
+from .nb_fusion import NaiveBayesFusionFilter
+from .vlm_pickup import VLMPickupFilter
 
-FILTERS = {cls.name: cls for cls in (SiameseFilter,VLMChangeFilter)}
+FILTERS = {cls.name: cls for cls in (SiameseFilter, VLMChangeFilter, NaiveBayesFusionFilter, VLMPickupFilter)}

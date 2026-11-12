@@ -1,9 +1,15 @@
+############################
+# Example usage
+# python make_holdout_split.py /data2/datasets/change_dataset holdout_j234_plus2.json \
+#    --test_env j234 --test_include save_results_unfiltered__sam3_0.1_openVocab \
+#    --test_env_train_runs T3__changes__changes1 T2__changes__changes9
+############################
+
 import argparse
 import json
 import os
 import random
 from make_splits import list_runs, count_run, totals, pos_rate, balanced_pick
-
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Leave-one-environment-out split: train/val on the other environments, '
@@ -13,6 +19,7 @@ if __name__ == '__main__':
     parser.add_argument('--test_env', type=str, required=True, help='environment held out for testing (e.g. s120)')
     parser.add_argument('--test_include', type=str, nargs='+', required=True, help='test only on label-source files whose name contains one of these (e.g. save_results_unfiltered__sam3_0.1_openVocab)')
     parser.add_argument('--test_exclude', type=str, nargs='*', default=[], help='skip test label-source files whose name contains one of these (e.g. tight)')
+    parser.add_argument('--test_env_train_runs', type=str, nargs='*', default=[], help='runs of the test environment moved into training, named as under dataset_root/<test_env>/ (e.g. T3__changes__changes1)')
     parser.add_argument('--train_envs', type=str, nargs='*', default=[], help='training environments (default = every other environment in dataset_root)')
     parser.add_argument('--val_runs_per_env', type=int, default=1, help='runs per training environment held out for validation (default=1)')
     parser.add_argument('--min_pos', type=int, default=1, help='minimum positive samples in train and val per environment when picking val runs (default=1)')
@@ -56,8 +63,20 @@ if __name__ == '__main__':
         t, v = totals(train, counts), totals(val, counts)
         print(f"{env}: train {len(train)} runs ({t['pos']} pos / {t['neg']} neg), val {[n.split('/')[1] for n in val]} ({v['pos']} pos / {v['neg']} neg)")
 
-    # test environment: every run, but only the selected label sources
-    for name in [args.test_env + "/" + r for r in list_runs(args.dataset_root, args.test_env)]:
+    # test environment runs moved into training: all label sources, like the other training environments
+    available = list_runs(args.dataset_root, args.test_env)
+    unknown = [r for r in args.test_env_train_runs if r not in available]
+    if unknown:
+        raise ValueError(f"{unknown} are not runs of {args.test_env}; available: {available}")
+    for r in args.test_env_train_runs:
+        name = args.test_env + "/" + r
+        counts[name] = count_run(args.dataset_root, name, delta_model, args.include, args.exclude)
+        split['train'].append(name)
+        c = counts[name]
+        print(f"  {name}: moved to train ({c['pos']} pos / {c['neg']} neg samples)")
+
+    # test environment: every other run, but only the selected label sources
+    for name in [args.test_env + "/" + r for r in available if r not in args.test_env_train_runs]:
         counts[name] = count_run(args.dataset_root, name, delta_model, args.test_include, args.test_exclude)
         c = counts[name]
         if c['pos'] + c['neg'] == 0:
